@@ -38,8 +38,10 @@ DOOR_COMMAND = "OPEN_2F"
 RTP_AUDIO_PORT     = 7200
 RTP_VIDEO_PORT     = 9200
 FFMPEG_VIDEO_PORT  = 19200    # MJPEG ffmpeg legge video qui
-FFMPEG_AV_VIDEO_PORT = 19201  # AV ffmpeg video
-FFMPEG_AV_AUDIO_PORT = 19202  # AV ffmpeg audio
+# ffmpeg apre anche RTCP su porta+1: le porte AV vanno pari e distanziate di 2,
+# altrimenti collidono fra loro e con FFMPEG_VIDEO_PORT ('bind failed', /av vuoto).
+FFMPEG_AV_VIDEO_PORT = 19210  # AV ffmpeg video (RTCP 19211)
+FFMPEG_AV_AUDIO_PORT = 19212  # AV ffmpeg audio (RTCP 19213)
 
 # ─── Push Notifications — opzionale, non necessario per UDP locale ────────────
 PN_APP_ID = "toga-prod"

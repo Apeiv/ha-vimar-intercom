@@ -54,6 +54,8 @@ ACTUATORS: list = []
 # sovrascritti in options (manualmente o dall'importer rubrica.db).
 SGA_TARGET:  str = _const.SGA_TARGET
 PICG_TARGET: str = _const.PICG_TARGET
+# Targa video (PHONEBOOK TYPE='PE'): autoaccensione camera. Vedi configure().
+CAMERA_TARGET: str = _const.CAMERA_TARGET
 
 # ─── URI calcolati da SIP_DOMAIN (popolati in configure) ─────────────────────
 INTERCOM:     str = ""   # sip:<SGA_TARGET>@<domain> — targa esterna citofono
@@ -103,7 +105,7 @@ def configure(data: dict) -> None:
     global INTERCOM, DOOR_ESTERNO
     global DETECTED_MODEL, DETECTED_FW, DETECTED_UA, DETECTED_PRIORITY
     global ACTUATORS
-    global SGA_TARGET, PICG_TARGET
+    global SGA_TARGET, PICG_TARGET, CAMERA_TARGET
     global DEVICE_IMEI, DEVICE_UUID
 
     SIP_USER     = data.get("sip_user", "")
@@ -154,9 +156,15 @@ def configure(data: dict) -> None:
     SGA_TARGET  = (str(data.get("sga_target") or "").strip()) or _const.SGA_TARGET
     PICG_TARGET = (str(data.get("picg_target") or "").strip()) or _const.PICG_TARGET
 
-    # URI calcolati — devono essere aggiornati dopo SIP_DOMAIN e SGA_TARGET
-    INTERCOM     = f"sip:{SGA_TARGET}@{SIP_DOMAIN}"
-    DOOR_ESTERNO = f"sip:{SGA_TARGET}@{SIP_DOMAIN}"
+    configured_camera = str(data.get("camera_target") or "").strip()
+    CAMERA_TARGET = configured_camera or _const.CAMERA_TARGET
+
+    # URI calcolati dopo SIP_DOMAIN/SGA_TARGET. "Chiama" e OPEN_2F passano alla
+    # targa video solo se camera_target è impostato esplicitamente: vuoto = SGA
+    # come sempre (un target sbagliato qui apre, o non apre, una porta vera).
+    _panel = configured_camera or SGA_TARGET
+    INTERCOM     = f"sip:{_panel}@{SIP_DOMAIN}"
+    DOOR_ESTERNO = f"sip:{_panel}@{SIP_DOMAIN}"
 
     # Identità dispositivo: salvata nell'entry al primo avvio. Se manca (entry
     # creato da una versione precedente, o probe/test senza entry) se ne genera

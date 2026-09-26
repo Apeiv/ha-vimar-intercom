@@ -42,6 +42,7 @@ KEY_ACTUATORS      = "actuators"
 KEY_MEDIA_ENC      = "media_enc"
 KEY_SGA_TARGET     = "sga_target"
 KEY_PICG_TARGET    = "picg_target"
+KEY_CAMERA_TARGET  = "camera_target"
 
 DEFAULT_CLOUD_PROXY    = "ipvdes.vimar.cloud"
 DEFAULT_LOCAL_SIP_PORT = 5060
@@ -456,12 +457,15 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             # SGA/PICG: id SIP numerici (es. "55001"). Campo vuoto → fallback al
             # default storico in const.py (gestito da runtime.configure()), quindi
             # qui basta validare il formato quando l'utente scrive qualcosa.
-            sga_target_raw  = str(user_input.get(KEY_SGA_TARGET, "")).strip()
-            picg_target_raw = str(user_input.get(KEY_PICG_TARGET, "")).strip()
+            sga_target_raw    = str(user_input.get(KEY_SGA_TARGET, "")).strip()
+            picg_target_raw   = str(user_input.get(KEY_PICG_TARGET, "")).strip()
+            camera_target_raw = str(user_input.get(KEY_CAMERA_TARGET, "")).strip()
             if sga_target_raw and not sga_target_raw.isdigit():
                 errors[KEY_SGA_TARGET] = "invalid_target"
             if picg_target_raw and not picg_target_raw.isdigit():
                 errors[KEY_PICG_TARGET] = "invalid_target"
+            if camera_target_raw and not camera_target_raw.isdigit():
+                errors[KEY_CAMERA_TARGET] = "invalid_target"
 
             actuators: list[dict] = []
             try:
@@ -502,6 +506,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                         KEY_ACTUATORS:      actuators,
                         KEY_SGA_TARGET:     sga_target_raw,
                         KEY_PICG_TARGET:    picg_target_raw,
+                        KEY_CAMERA_TARGET:  camera_target_raw,
                     },
                 )
 
@@ -542,6 +547,12 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Optional(
                     KEY_PICG_TARGET,
                     default=form.get(KEY_PICG_TARGET) or PICG_TARGET,
+                ): str,
+                # Default vuoto, non CAMERA_TARGET: salvare il form senza toccarlo
+                # non deve spostare "Chiama"/apri-porta dall'SGA.
+                vol.Optional(
+                    KEY_CAMERA_TARGET,
+                    default=form.get(KEY_CAMERA_TARGET, ""),
                 ): str,
             }),
             errors=errors,
@@ -745,6 +756,9 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     KEY_ACTUATORS:      actuators,
                     KEY_SGA_TARGET:     new_sga,
                     KEY_PICG_TARGET:    new_picg,
+                    # rubrica.db non dice nulla sulla targa video (PHONEBOOK non è
+                    # letto da rubrica_import.py): resta quella già configurata.
+                    KEY_CAMERA_TARGET:  current.get(KEY_CAMERA_TARGET, ""),
                 },
             )
 

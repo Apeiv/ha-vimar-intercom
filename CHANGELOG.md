@@ -6,6 +6,23 @@ Italian and are kept as they were written.
 
 ## [Unreleased]
 
+### Added
+
+- Option `camera_target`: SIP id of the video entrance panel (`PHONEBOOK TYPE='PE'`), for plants
+  where it differs from the SGA (e.g. Tab 5S Up 40515: SGA 61000, PICG 60001, panel 55001; the
+  official app sends the video call and `OPEN_2F` to the panel). Empty keeps today's behaviour;
+  when set it is also used by "Chiama" and the door-open command.
+
+### Fixed
+
+- `/api/vimar_intercom/av` never started: ffmpeg binds RTCP on port+1, so the AV ports
+  (19201/19202) collided with each other and with `FFMPEG_VIDEO_PORT` ("bind failed"). Moved to
+  19210/19212.
+- The camera was always blank (#8): it forced MJPEG, which reads `hub.video_frame` (always
+  `None`). It now declares `CameraEntityFeature.STREAM`, so HA plays `/av`; stills come from the
+  stream only during a call.
+- "Chiama Video (esterno)" now calls the video panel instead of the SGA.
+
 ## [1.0.7] - 2026-09-21
 
 Stability release from a full debug pass against the decompiled VIEW app, the SIP logs of

@@ -43,9 +43,8 @@ async def async_setup_entry(
 
     entities: list[ButtonEntity] = [
         VimarCallButton(hub, entry.entry_id),
-        # Targa esterna = SGA configurato, non il letterale "55001": quello
-        # vale solo sull'impianto di sviluppo.
-        VimarCallTargetButton(hub, entry.entry_id, R.SGA_TARGET, "Chiama Video (esterno)", "call_ext"),
+        # Targa esterna = la stessa targa video dell'autoaccensione, non l'SGA.
+        VimarCallTargetButton(hub, entry.entry_id, R.CAMERA_TARGET, "Chiama Video (esterno)", "call_ext"),
         # La targa interna non ha (ancora) un corrispettivo configurabile:
         # resta il default storico, isolato in const. Vedi issue sul tema.
         VimarCallTargetButton(hub, entry.entry_id, C.INTERNAL_PANEL_TARGET,

@@ -6,7 +6,7 @@ import logging
 
 from aiohttp import web
 
-from homeassistant.components.camera import Camera
+from homeassistant.components.camera import Camera, CameraEntityFeature
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -30,13 +30,14 @@ async def async_setup_entry(
 class VimarIntercomCamera(Camera):
     """Intercom camera — streams video from SIP/RTP pipeline.
 
-    Uses MJPEG directly (no RTSP/WebRTC). When the stream is opened
-    (e.g. from Apple Home), the hub auto-calls the intercom.
+    Streams /api/vimar_intercom/av (H.264 MPEG-TS) via HA's stream component.
+    When the stream is opened, the hub auto-calls the intercom.
     """
 
     _attr_has_entity_name = False
     _attr_name = "Intercom"
     _attr_icon = "mdi:doorbell-video"
+    _attr_supported_features = CameraEntityFeature.STREAM
 
     def __init__(self, hub, entry_id: str, hass: HomeAssistant) -> None:
         super().__init__()
@@ -55,10 +56,9 @@ class VimarIntercomCamera(Camera):
         return True
 
     @property
-    def frontend_stream_type(self):
-        """Tell HA frontend to use MJPEG."""
-        from homeassistant.components.camera import StreamType
-        return StreamType.MJPEG
+    def use_stream_for_stills(self) -> bool:
+        """Snapshot dallo stream solo in chiamata: fuori chiamata aprirlo accenderebbe la targa."""
+        return self._hub.in_call
 
     async def stream_source(self) -> str | None:
         """AV stream URL for HomeKit (MPEG-TS with H264 video + PCMU audio)."""

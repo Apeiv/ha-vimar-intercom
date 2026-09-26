@@ -76,13 +76,15 @@
           "media_enc": "Encrypt media (SRTP)",
           "actuators": "Actuators (JSON)",
           "sga_target": "SGA (intercom SIP id/AUTO)",
-          "picg_target": "PICG (GET_INIT_STATUS SIP id)"
+          "picg_target": "PICG (GET_INIT_STATUS SIP id)",
+          "camera_target": "Video panel (PHONEBOOK TYPE='PE' SIP id)"
         },
         "data_description": {
           "media_enc": "Leave off for plain RTP (default, required by most Vimar 2F systems). Enable only if the entry panel/system requires SRTP.",
           "actuators": "JSON list of objects name, msg, target, icon. icon: door|light|switch. target \"AUTO\" uses the default open-door station. Empty = no buttons.",
           "sga_target": "Target for VOICEMAIL;/DND; and the AUTO open-door. Empty = historical default (55001). Change it only if your system uses a different SGA (SYSTEM.MAGIC_APT_INTERCOM in rubrica.db).",
-          "picg_target": "Target for GET_INIT_STATUS. On systems verified so far it matches the SGA. Empty = historical default (55001)."
+          "picg_target": "Target for GET_INIT_STATUS. On systems verified so far it matches the SGA. Empty = historical default (55001).",
+          "camera_target": "The panel that answers with video for camera auto-call (PHONEBOOK TYPE='PE' in rubrica.db). Empty = historical default for video (55100); the \"Call\" button and the open-door command stay on the SGA. Only set this if on your system the video panel does NOT match the SGA: in that case it applies to \"Call\" and open-door too."
         }
       },
       "import_rubrica": {
