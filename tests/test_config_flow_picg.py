@@ -92,3 +92,33 @@ def test_il_riepilogo_e_il_salvataggio_non_divergono_mai(cf):
         for rest in (None, "55001", "55009"):
             info, saved = _confirm(cf, options, rest)
             assert saved in info, (options, rest, info, saved)
+
+
+# ─── camera_target dall'import rubrica — issue #3 ────────────────────────────
+
+def _confirm_camera(cf, options, camera):
+    def mk():
+        f = _flow(cf, options)
+        f._imported = {**f._imported, "camera": camera}
+        return f
+    form = asyncio.run(mk().async_step_import_confirm(None))
+    saved = asyncio.run(mk().async_step_import_confirm({}))
+    return form["description_placeholders"]["camera_info"], saved["data"]
+
+
+def test_import_imposta_la_targa_video_della_rubrica(cf):
+    info, data = _confirm_camera(cf, {}, "55001")
+    assert data["camera_target"] == "55001"
+    assert "55001" in info
+
+
+def test_import_senza_pe_lascia_la_targa_configurata(cf):
+    info, data = _confirm_camera(cf, {"camera_target": "55100"}, None)
+    assert data["camera_target"] == "55100"
+    assert "resta" in info
+
+
+def test_import_non_tocca_il_pannello_interno(cf):
+    """La rubrica non dice quale sia: il valore a mano deve sopravvivere."""
+    _, data = _confirm_camera(cf, {"internal_panel_target": "60001"}, "55001")
+    assert data["internal_panel_target"] == "60001"

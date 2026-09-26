@@ -11,7 +11,6 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from . import const as C
 from .const import DOMAIN
 from .device import device_info
 from . import runtime as R
@@ -43,12 +42,11 @@ async def async_setup_entry(
 
     entities: list[ButtonEntity] = [
         VimarCallButton(hub, entry.entry_id),
-        # Targa esterna = SGA configurato, non il letterale "55001": quello
-        # vale solo sull'impianto di sviluppo.
-        VimarCallTargetButton(hub, entry.entry_id, R.SGA_TARGET, "Chiama Video (esterno)", "call_ext"),
-        # La targa interna non ha (ancora) un corrispettivo configurabile:
-        # resta il default storico, isolato in const. Vedi issue sul tema.
-        VimarCallTargetButton(hub, entry.entry_id, C.INTERNAL_PANEL_TARGET,
+        # Targa video = opzione camera_target (issue #3). Prima era l'SGA, che
+        # riceve i comandi ma non accetta chiamate su tutti gli impianti.
+        VimarCallTargetButton(hub, entry.entry_id, R.CAMERA_TARGET, "Chiama Video (esterno)", "call_ext"),
+        # Pannello interno = opzione internal_panel_target (default in const).
+        VimarCallTargetButton(hub, entry.entry_id, R.INTERNAL_PANEL_TARGET,
                               "Chiama Casa (interno)", "call_int"),
         VimarAnswerButton(hub, entry.entry_id),
         VimarHangupButton(hub, entry.entry_id),
@@ -177,7 +175,7 @@ class VimarActuatorButton(ButtonEntity):
         target = str(act.get("target", _AUTO_TARGET_SENTINEL))
         # target "AUTO" → stesso destinatario di default dell'apri-porta
         # (la targa/porta usata da hub.async_door/servizio open_door, cioè
-        # R.SGA_TARGET = R.INTERCOM/DOOR_ESTERNO senza lo schema sip:).
+        # R.SGA_TARGET = R.DOOR_ESTERNO senza lo schema sip:).
         # Così l'utente non deve conoscere l'id SIP della targa master, e il
         # valore segue eventuali override in options (manuali o da rubrica.db).
         self._target = R.SGA_TARGET if target.upper() == _AUTO_TARGET_SENTINEL else target

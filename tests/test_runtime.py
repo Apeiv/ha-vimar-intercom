@@ -47,10 +47,31 @@ def test_blank_values_fall_back_to_default():
     assert runtime.PICG_TARGET == const.PICG_TARGET
 
 
-def test_intercom_and_door_esterno_use_resolved_sga_target():
+def test_door_esterno_uses_resolved_sga_target():
     runtime.configure(_base_data(sga_target="99999", sip_domain="sip.example.test"))
-    assert runtime.INTERCOM == "sip:99999@sip.example.test"
     assert runtime.DOOR_ESTERNO == "sip:99999@sip.example.test"
+
+
+def test_intercom_calls_the_camera_target_not_the_sga():
+    """Issue #3: le chiamate vanno alla targa video. L'SGA riceve i comandi ma
+    non accetta un INVITE su tutti gli impianti (488 qui, 488/408 sul 40515)."""
+    runtime.configure(_base_data(sga_target="61000", camera_target="55001",
+                                 sip_domain="sip.example.test"))
+    assert runtime.INTERCOM == "sip:55001@sip.example.test"
+    assert runtime.DOOR_ESTERNO == "sip:61000@sip.example.test"
+
+
+def test_camera_and_internal_panel_targets_override():
+    runtime.configure(_base_data(camera_target="55001", internal_panel_target="60001"))
+    assert runtime.CAMERA_TARGET == "55001"
+    assert runtime.INTERNAL_PANEL_TARGET == "60001"
+
+
+def test_camera_and_internal_panel_targets_blank_fall_back():
+    runtime.configure(_base_data(camera_target="  ", internal_panel_target=""))
+    assert runtime.CAMERA_TARGET == const.CAMERA_TARGET
+    assert runtime.INTERNAL_PANEL_TARGET == const.INTERNAL_PANEL_TARGET
+    assert runtime.INTERCOM.startswith(f"sip:{const.CAMERA_TARGET}@")
 
 
 def test_reconfigure_resets_previous_override():

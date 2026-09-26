@@ -6,7 +6,7 @@ import logging
 
 from aiohttp import web
 
-from homeassistant.components.camera import Camera
+from homeassistant.components.camera import Camera, CameraEntityFeature
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -30,11 +30,17 @@ async def async_setup_entry(
 class VimarIntercomCamera(Camera):
     """Intercom camera — streams video from SIP/RTP pipeline.
 
-    Uses MJPEG directly (no RTSP/WebRTC). When the stream is opened
-    (e.g. from Apple Home), the hub auto-calls the intercom.
+    Il frontend usa lo stream di HA (HLS/WebRTC) su `stream_source()`, cioè
+    `/api/vimar_intercom/av` (MPEG-TS H.264 + PCMU). Aprire lo stream fa
+    partire l'autoaccensione verso la targa video (`camera_target`).
+
+    Fino alla 1.0.7 la camera dichiarava MJPEG senza `CameraEntityFeature.STREAM`:
+    HA non apriva mai `stream_source()` e l'MJPEG leggeva `hub.video_frame`,
+    che è sempre None → camera sempre nera (issue #8).
     """
 
     _attr_has_entity_name = False
+    _attr_supported_features = CameraEntityFeature.STREAM
     _attr_name = "Intercom"
     _attr_icon = "mdi:doorbell-video"
 
@@ -55,13 +61,16 @@ class VimarIntercomCamera(Camera):
         return True
 
     @property
-    def frontend_stream_type(self):
-        """Tell HA frontend to use MJPEG."""
-        from homeassistant.components.camera import StreamType
-        return StreamType.MJPEG
+    def use_stream_for_stills(self) -> bool:
+        """Anteprime e `camera.snapshot` dallo stream, ma solo durante una chiamata.
+
+        Da ferma, aprire lo stream vorrebbe dire chiamare la targa e accenderla
+        a ogni aggiornamento della miniatura: meglio nessuna immagine.
+        """
+        return self._hub.in_call
 
     async def stream_source(self) -> str | None:
-        """AV stream URL for HomeKit (MPEG-TS with H264 video + PCMU audio)."""
+        """AV stream URL (MPEG-TS with H264 video + PCMU audio) for HA's stream worker."""
         base = self._hass.config.internal_url or "http://127.0.0.1:8123"
         return f"{base}/api/vimar_intercom/av"
 

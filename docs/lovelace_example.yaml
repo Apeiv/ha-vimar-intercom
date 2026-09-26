@@ -2,12 +2,11 @@
 # Vimar Intercom — card Lovelace "citofono base"
 # Video del pianerottolo + pulsanti Rispondi / Apri porta / Riaggancia.
 #
-# ⚠ ATTENZIONE, leggi prima di aspettarti il video: sulla versione attuale la
-# card `picture-entity` qui sotto NON mostra nulla. L'entità camera non produce
-# immagini né stream MJPEG, perché il video viaggia come NAL H.264 sul WebSocket
-# e il percorso JPEG non è più alimentato (issue #8). La card resta utile per i
-# pulsanti e per lo stato; il riquadro del video sarà vuoto finché la questione
-# non è risolta.
+# Il video: dalla 1.0.8 la camera passa dallo `stream` di Home Assistant
+# (issue #8), e APRIRE LO STREAM CHIAMA LA TARGA (`camera_target`). Per questo
+# la card usa `camera_view: auto` e non `live`: con `live` ogni apertura della
+# dashboard farebbe partire una chiamata. Tocca il riquadro per vedere il video
+# dal vivo; a riposo, senza chiamata, la miniatura resta vuota di proposito.
 #
 # NB: questa card non fa nemmeno audio bidirezionale (parlare): l'audio a 2 vie
 # richiede una card custom su /audio_ws.
@@ -19,10 +18,10 @@
 # ─────────────────────────────────────────────────────────────────────────────
 type: vertical-stack
 cards:
-  # Video live del citofono (MJPEG). Durante la chiamata mostra il pianerottolo.
+  # Video del citofono (stream HA). Toccarlo apre il live e chiama la targa.
   - type: picture-entity
     entity: camera.vimar_intercom_intercom
-    camera_view: live
+    camera_view: auto
     show_name: false
     show_state: false
 

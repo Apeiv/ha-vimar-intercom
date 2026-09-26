@@ -12,8 +12,8 @@ doorbell ring, open the door or gate, view the camera **on demand**, control **v
 > stack in Python/asyncio** that emulates the official **Vimar VIEW** app ("TOGA"): same `User-Agent`,
 > same identity headers (`Mobile-IMEI`, `MyName`) and the proprietary **`Panda`** header. It talks
 > either to the **Flexisip instance running on the Tab** (local UDP :5060) or to the **Vimar cloud over
-> TLS** (SRV `_sips._tcp`). Video arrives **on demand** from the SIP call (H.264 RTP, decoded to MJPEG
-> through ffmpeg), not from an always-on RTSP stream.
+> TLS** (SRV `_sips._tcp`). Video arrives **on demand** from the SIP call (H.264 RTP, remuxed by
+> ffmpeg to MPEG-TS for Home Assistant's `stream`), not from an always-on RTSP stream.
 
 ---
 
@@ -99,12 +99,15 @@ Settings → Vimar Intercom → **Configure**:
 | **Local UDP port** (`local_udp_port`) | default 5060 |
 | **Actuators (JSON)** (`actuators`) | JSON list of `{name, msg, target, icon}`; creates dynamic buttons. Empty = no buttons |
 | **SGA** (`sga_target`) | Recipient of `VOICEMAIL;`/`DND;` and of the "AUTO" door open. Empty = default `55001` |
-| **PICG** (`picg_target`) | Recipient of `GET_INIT_STATUS`. On every plant verified so far it matches the SGA. Empty = default `55001` |
+| **PICG** (`picg_target`) | Recipient of `GET_INIT_STATUS`. On the development plant it matches the SGA; on others it does not (60001 on a 40515). Empty = default `55001` |
+| **Video entrance panel** (`camera_target`) | Panel called by the camera, *Call* and *Call Video (outdoor)*: the `PHONEBOOK` row with `TYPE='PE'`. **Not the SGA.** Empty = default `55100` |
+| **Internal panel** (`internal_panel_target`) | Target of *Call Home (indoor)*. The phonebook does not say which one it is: set it by hand. Empty = default `55002` |
+| **Encrypt media (SRTP)** (`media_enc`) | Off on the development plant; some plants only accept the call with SRTP on (a cloud 40515 in [#3](../../issues/3)). Try it if the camera stays black or the call fails with `488` |
 
 The actuator list and the SGA/PICG values come from your plant's **phonebook** (`rubrica.db`): in the
 options menu pick **"Import actuators from rubrica.db"**, upload the file (you can get it through the
-VIEW app or with root access, see `docs/RUBRICA.md`) and confirm — actuators, SGA and PICG are then
-set automatically. You can also enter the values by hand in the "Settings" step, which is handy if you
+VIEW app or with root access, see `docs/RUBRICA.md`) and confirm — actuators, SGA, PICG and the video
+entrance panel are then set automatically. You can also enter the values by hand in the "Settings" step, which is handy if you
 already know your plant's SGA or want to tweak the imported actuator list.
 
 ---
@@ -113,11 +116,11 @@ already know your plant's SGA or want to tweak the imported actuator list.
 
 | Entity | Platform | Description |
 |---|---|---|
-| Intercom | `camera` | **On-demand** video: opening the stream makes the hub place the SIP call, and the H.264 RTP video is decoded to MJPEG through ffmpeg (no RTSP) |
+| Intercom | `camera` | **On-demand** video through Home Assistant's `stream` (HLS/WebRTC): opening it makes the hub call `camera_target`, and ffmpeg remuxes the H.264/PCMU RTP to MPEG-TS on `/api/vimar_intercom/av`. Thumbnails and snapshots only during a call |
 | Doorbell | `event` | `event` entity (device class DOORBELL), event type `ring`, fired on ring (incoming INVITE) |
 | Lock | `lock` | Opens the door (`OPEN_2F` → outdoor unit); auto-relocks after 5 s (there is no physical feedback) |
 | Call | `button` | SIP call to the default outdoor unit |
-| Call Video (outdoor) / Call Home (indoor) | `button` | Call to 55001 / 55002 |
+| Call Video (outdoor) / Call Home (indoor) | `button` | Call to `camera_target` / `internal_panel_target` |
 | Answer / Hang up | `button` | Answer (200 OK) / end the call (BYE) |
 | Open Door | `button` | `OPEN_2F` to the outdoor unit |
 | *Dynamic actuators* | `button` | One per entry in `options["actuators"]` (F1/F2, stair lights, relays…); sends `MSG` with `Panda: command` |
@@ -207,15 +210,16 @@ automation:
             image: "/api/camera_proxy/camera.vimar_intercom_intercom"
 ```
 
-⚠ **Don't add `camera.snapshot` to it.** It appears to work — the service call succeeds — but it
-writes no file and logs nothing, because the camera entity cannot produce an image on current code
-([#8](../../issues/8)). `camera.record` doesn't work either: it needs the `stream` integration, which
-an MJPEG camera doesn't provide. And don't work around it with a `camera: platform: ffmpeg` pointed
-at `/api/vimar_intercom/av`: that hangs Home Assistant until the ffmpeg probe times out. The package
-file carries the same warnings, with the details.
+⚠ **`camera.snapshot` only works during a call.** Since 1.0.8 the camera goes through Home Assistant's
+`stream` ([#8](../../issues/8)), so snapshots and `camera.record` work **while a call is up**. Outside
+a call there is no picture on purpose: producing one would mean calling the entrance panel and lighting
+it up at every thumbnail refresh. A snapshot on the ring alone therefore still writes nothing — take it
+after answering, or after starting the call. And don't point a `camera: platform: ffmpeg` at
+`/api/vimar_intercom/av`: that hangs Home Assistant until the ffmpeg probe times out. The package file
+carries the same warnings, with the details.
 
 `docs/lovelace_example.yaml` has a basic Lovelace card with the answer / open door / hang up buttons.
-Note that the video pane in it stays empty for the same reason as above.
+Its video pane shows the live stream during a call, and nothing while idle.
 
 ## Known limitations
 

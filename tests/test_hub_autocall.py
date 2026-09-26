@@ -54,7 +54,7 @@ def test_auto_call_usa_il_dominio_attivo(hub, monkeypatch):
 
 
 def test_auto_call_senza_target_chiama_la_targa_video(hub, monkeypatch):
-    """Senza target esplicito si chiama CAMERA_TARGET (55100), non il PICG."""
+    """Senza target esplicito si chiama la targa video configurata, non il PICG."""
     chiamate = []
 
     async def _fake_do_call(target=None):
@@ -63,10 +63,12 @@ def test_auto_call_senza_target_chiama_la_targa_video(hub, monkeypatch):
 
     monkeypatch.setattr(sip, "do_call", _fake_do_call)
     monkeypatch.setattr(R, "SIP_DOMAIN", "impianto.example", raising=False)
+    # Issue #3: su un 40515 la PE è 55001; l'opzione deve vincere sul default.
+    monkeypatch.setattr(R, "CAMERA_TARGET", "55001", raising=False)
 
     asyncio.run(hub._do_auto_call(None))
 
-    assert chiamate == [f"sip:{C.CAMERA_TARGET}@impianto.example"]
+    assert chiamate == ["sip:55001@impianto.example"]
 
 
 # ─── A2: fine chiamata → gli squilli successivi tornano veri ─────────────────

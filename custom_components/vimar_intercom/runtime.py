@@ -55,9 +55,16 @@ ACTUATORS: list = []
 SGA_TARGET:  str = _const.SGA_TARGET
 PICG_TARGET: str = _const.PICG_TARGET
 
+# ─── Targhe da chiamare (da options flow; issue #3) ──────────────────────────
+# CAMERA_TARGET = targa video (PE) chiamata dalla camera, da «Chiama» e da
+# «Chiama Video (esterno)». INTERNAL_PANEL_TARGET = «Chiama Casa (interno)».
+# Vuoto in options → default storico in const.py.
+CAMERA_TARGET:         str = _const.CAMERA_TARGET
+INTERNAL_PANEL_TARGET: str = _const.INTERNAL_PANEL_TARGET
+
 # ─── URI calcolati da SIP_DOMAIN (popolati in configure) ─────────────────────
-INTERCOM:     str = ""   # sip:<SGA_TARGET>@<domain> — targa esterna citofono
-DOOR_ESTERNO: str = ""   # stesso target per comando apertura porta
+INTERCOM:     str = ""   # sip:<CAMERA_TARGET>@<domain> — destinatario di default delle chiamate
+DOOR_ESTERNO: str = ""   # sip:<SGA_TARGET>@<domain> — destinatario dell'apri-porta
 
 # ─── Identità dispositivo (per installazione, dal config entry) ──────────────
 # Popolati da configure() con i valori salvati nell'entry; __init__.py li genera
@@ -104,6 +111,7 @@ def configure(data: dict) -> None:
     global DETECTED_MODEL, DETECTED_FW, DETECTED_UA, DETECTED_PRIORITY
     global ACTUATORS
     global SGA_TARGET, PICG_TARGET
+    global CAMERA_TARGET, INTERNAL_PANEL_TARGET
     global DEVICE_IMEI, DEVICE_UUID
 
     SIP_USER     = data.get("sip_user", "")
@@ -154,8 +162,20 @@ def configure(data: dict) -> None:
     SGA_TARGET  = (str(data.get("sga_target") or "").strip()) or _const.SGA_TARGET
     PICG_TARGET = (str(data.get("picg_target") or "").strip()) or _const.PICG_TARGET
 
-    # URI calcolati — devono essere aggiornati dopo SIP_DOMAIN e SGA_TARGET
-    INTERCOM     = f"sip:{SGA_TARGET}@{SIP_DOMAIN}"
+    CAMERA_TARGET = (
+        (str(data.get("camera_target") or "").strip()) or _const.CAMERA_TARGET
+    )
+    INTERNAL_PANEL_TARGET = (
+        (str(data.get("internal_panel_target") or "").strip())
+        or _const.INTERNAL_PANEL_TARGET
+    )
+
+    # URI calcolati — devono essere aggiornati dopo SIP_DOMAIN e i target.
+    # Le chiamate vanno alla targa video, non all'SGA: l'SGA riceve i MESSAGE
+    # di stato ma non è detto che accetti un INVITE (488 sull'impianto di
+    # sviluppo, 488/408 sul 40515 di #3). L'apri-porta resta sull'SGA, che è
+    # l'unica via verificata sul campo (OPEN_2F → 55001).
+    INTERCOM     = f"sip:{CAMERA_TARGET}@{SIP_DOMAIN}"
     DOOR_ESTERNO = f"sip:{SGA_TARGET}@{SIP_DOMAIN}"
 
     # Identità dispositivo: salvata nell'entry al primo avvio. Se manca (entry

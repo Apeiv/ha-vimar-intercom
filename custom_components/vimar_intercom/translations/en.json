@@ -76,13 +76,17 @@
           "media_enc": "Encrypt media (SRTP)",
           "actuators": "Actuators (JSON)",
           "sga_target": "SGA (intercom SIP id/AUTO)",
-          "picg_target": "PICG (GET_INIT_STATUS SIP id)"
+          "picg_target": "PICG (GET_INIT_STATUS SIP id)",
+          "camera_target": "Video entrance panel (SIP id to call)",
+          "internal_panel_target": "Internal panel (SIP id for “Chiama Casa”)"
         },
         "data_description": {
-          "media_enc": "Leave off for plain RTP (default, required by most Vimar 2F systems). Enable only if the entry panel/system requires SRTP.",
+          "media_enc": "Leave off for plain RTP (default on the development system). Some systems only accept the call with SRTP on (e.g. a Tab 5S Up 40515 over the cloud, issue #3): if the camera stays black or the call fails with 488, try turning it on.",
           "actuators": "JSON list of objects name, msg, target, icon. icon: door|light|switch. target \"AUTO\" uses the default open-door station. Empty = no buttons.",
           "sga_target": "Target for VOICEMAIL;/DND; and the AUTO open-door. Empty = historical default (55001). Change it only if your system uses a different SGA (SYSTEM.MAGIC_APT_INTERCOM in rubrica.db).",
-          "picg_target": "Target for GET_INIT_STATUS. On systems verified so far it matches the SGA. Empty = historical default (55001)."
+          "picg_target": "Target for GET_INIT_STATUS. On systems verified so far it matches the SGA. Empty = historical default (55001).",
+          "camera_target": "Panel called by the camera, by “Chiama” and by “Chiama Video (esterno)”: the PHONEBOOK row with TYPE='PE' in rubrica.db (the phonebook import fills it in). Empty = historical default (55100). This is not the SGA.",
+          "internal_panel_target": "Target of the “Chiama Casa (interno)” button. The phonebook does not say which one it is: enter it by hand. Empty = historical default (55002)."
         }
       },
       "import_rubrica": {
@@ -98,7 +102,7 @@
       },
       "import_confirm": {
         "title": "Confirm import",
-        "description": "Found {count} actuators for GID {gid}: {names}.\n\nDetected SGA (MAGIC_APT_INTERCOM): {sga_info}\n\nPICG detected: {picg_info}\n\nConfirming REPLACES the currently configured actuators and, when detected, updates sga_target/picg_target. To cancel, close this window without confirming."
+        "description": "Found {count} actuators for GID {gid}: {names}.\n\nDetected SGA (MAGIC_APT_INTERCOM): {sga_info}\n\nPICG detected: {picg_info}\n\nVideo entrance panel (camera) detected: {camera_info}\n\nConfirming REPLACES the currently configured actuators and, when detected, updates sga_target/picg_target/camera_target. To cancel, close this window without confirming."
       },
       "fetch_rubrica": {
         "title": "Download from the intercom",

@@ -6,6 +6,52 @@ Italian and are kept as they were written.
 
 ## [Unreleased]
 
+## [1.0.8] - 2026-09-26
+
+Two field reports from a **Tab 5S Up 40515** (2-wire, Wi-Fi, cloud TLS) by @Apeiv, in
+[#3](https://github.com/lollox80/ha-vimar-intercom/issues/3) and
+[#8](https://github.com/lollox80/ha-vimar-intercom/issues/8). The camera fix is his, as he
+proposed and tested it.
+
+### Fixed
+
+- **The camera was always black** ([#8](https://github.com/lollox80/ha-vimar-intercom/issues/8)).
+  Three causes, all fixed:
+  - the camera forced MJPEG and did not declare `CameraEntityFeature.STREAM`, so Home Assistant
+    never used `stream_source()`, while the MJPEG path read `hub.video_frame`, which is always
+    `None`. The camera now declares `STREAM` and goes through HA's stream worker (HLS/WebRTC);
+  - the ffmpeg behind `/api/vimar_intercom/av` could never start: ffmpeg opens RTP **and** RTCP
+    (RTP + 1) for each `m=` line, and with ports 19201/19202 the video RTCP landed on the audio
+    port (`bind failed: Address already in use`). The ports are now 19210/19212;
+  - the reader of ffmpeg's stderr stopped as soon as the process had exited, which is exactly
+    when stderr says why. It now reads to EOF, and a startup failure logs ffmpeg's last lines.
+- **Calls went to the SGA** ([#3](https://github.com/lollox80/ha-vimar-intercom/issues/3)).
+  *Call* and *Call Video (outdoor)* invited the SGA, which takes the state commands but does not
+  necessarily accept a call (`488` on the development plant; `488`/`408` on the 40515, where the
+  SGA is `61000`). They now call the video entrance panel, like the camera.
+
+### Added
+
+- **`camera_target` option**: the video entrance panel called by the camera, *Call* and *Call Video
+  (outdoor)*. Default `55100`. The phonebook import fills it in with the app's own rule:
+  `PHONEBOOK.AUTO` of your apartment row, otherwise the first `PE`/`PE_EXT` row.
+- **`internal_panel_target` option**: the target of *Call Home (indoor)*. Default `55002`. The
+  phonebook does not say which one it is, so the import leaves it alone.
+
+### Changed
+
+- Thumbnails and `camera.snapshot` come from the stream **only during a call**. Outside a call
+  there is no picture on purpose: producing one would mean calling the panel at every thumbnail
+  refresh. A snapshot on the ring alone still writes nothing.
+- **Opening the live view places the call.** A dashboard card with `camera_view: live` now calls
+  the panel every time the dashboard is shown: use `camera_view: auto` (the example card in
+  `docs/lovelace_example.yaml` does).
+- The door command still goes to the SGA: it is the only route verified on the field. On the
+  40515 the report suggests the entrance panel instead; left as it is until someone tests it.
+- `media_enc` (SRTP) description: the 40515 only accepts the call with SRTP **on**, the opposite of
+  the development plant. It is per plant.
+
+
 ## [1.0.7] - 2026-09-21
 
 Stability release from a full debug pass against the decompiled VIEW app, the SIP logs of

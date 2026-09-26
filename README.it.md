@@ -12,7 +12,7 @@ squillo, apri la porta/cancello, guarda la camera **su richiesta**, comanda **se
 > custom in Python/asyncio** che emula l'app ufficiale **Vimar VIEW** ("TOGA"): stesso `User-Agent`,
 > stessi header identità (`Mobile-IMEI`, `MyName`) e l'header proprietario **`Panda`**. Parla o con
 > il **Flexisip locale sul Tab** (UDP :5060) o con il **cloud Vimar in TLS** (SRV `_sips._tcp`).
-> Il video arriva **on‑demand** dalla chiamata SIP (RTP H.264, decodifica ffmpeg → MJPEG), non da uno stream RTSP sempre attivo.
+> Il video arriva **on‑demand** dalla chiamata SIP (RTP H.264, rimpacchettato da ffmpeg in MPEG‑TS per lo `stream` di Home Assistant), non da uno stream RTSP sempre attivo.
 
 ---
 
@@ -100,11 +100,14 @@ Impostazioni → Vimar Intercom → **Configura**:
 | **Porta UDP locale** (`local_udp_port`) | default 5060 |
 | **Attuatori (JSON)** (`actuators`) | lista JSON `{name, msg, target, icon}`; crea bottoni dinamici. Vuoto = nessun bottone |
 | **SGA** (`sga_target`) | destinatario di `VOICEMAIL;`/`DND;` e dell'apri‑porta "AUTO". Vuoto = default `55001` |
-| **PICG** (`picg_target`) | destinatario di `GET_INIT_STATUS`. Sugli impianti verificati coincide con l'SGA. Vuoto = default `55001` |
+| **PICG** (`picg_target`) | destinatario di `GET_INIT_STATUS`. Sull'impianto di sviluppo coincide con l'SGA, su altri no (60001 su un 40515). Vuoto = default `55001` |
+| **Targa video** (`camera_target`) | targa chiamata dalla camera, da *Chiama* e da *Chiama Video (esterno)*: la riga `PHONEBOOK` con `TYPE='PE'`. **Non è l'SGA.** Vuoto = default `55100` |
+| **Pannello interno** (`internal_panel_target`) | destinatario di *Chiama Casa (interno)*. La rubrica non lo dice: va inserito a mano. Vuoto = default `55002` |
+| **Cifra il media (SRTP)** (`media_enc`) | spento sull'impianto di sviluppo; alcuni impianti accettano la chiamata solo con SRTP attivo (un 40515 in cloud, [#3](../../issues/3)). Provalo se la camera resta nera o la chiamata fallisce con `488` |
 
 Gli attuatori e i valori SGA/PICG si ricavano dalla **rubrica dell'impianto** (`rubrica.db`): dal menu
 delle opzioni scegli **"Importa attuatori da rubrica.db"**, carica il file (lo trovi con l'app VIEW o
-via root, vedi `docs/RUBRICA.md`) e conferma — attuatori, SGA e PICG vengono impostati in automatico.
+via root, vedi `docs/RUBRICA.md`) e conferma — attuatori, SGA, PICG e targa video vengono impostati in automatico.
 In alternativa puoi inserire i valori a mano nello step "Impostazioni" (utile se conosci già l'SGA del
 tuo impianto o vuoi modificare la lista attuatori prodotta dall'import).
 
@@ -114,11 +117,11 @@ tuo impianto o vuoi modificare la lista attuatori prodotta dall'import).
 
 | Entità | Piattaforma | Descrizione |
 |---|---|---|
-| Intercom (Videocitofono) | `camera` | Video **on‑demand**: aprendo lo stream l'hub avvia la chiamata SIP, il video RTP H.264 viene decodificato via ffmpeg in MJPEG (no RTSP) |
+| Intercom (Videocitofono) | `camera` | Video **on‑demand** tramite lo `stream` di Home Assistant (HLS/WebRTC): aprendolo l'hub chiama `camera_target` e ffmpeg rimpacchetta l'RTP H.264/PCMU in MPEG‑TS su `/api/vimar_intercom/av`. Anteprime e snapshot solo durante una chiamata |
 | Doorbell (Campanello) | `event` | Entità `event` (device_class DOORBELL), event_type `ring`, allo squillo (INVITE in arrivo) |
 | Serratura | `lock` | Apri porta (`OPEN_2F` → targa); auto‑relock dopo 5 s (nessun feedback fisico) |
 | Chiama | `button` | Chiamata SIP verso la targa di default |
-| Chiama Video (esterno) / Chiama Casa (interno) | `button` | Chiamata verso 55001 / 55002 |
+| Chiama Video (esterno) / Chiama Casa (interno) | `button` | Chiamata verso `camera_target` / `internal_panel_target` |
 | Rispondi / Riaggancia | `button` | Rispondi (200 OK) / termina (BYE) |
 | Apri Porta | `button` | `OPEN_2F` verso la targa |
 | *Attuatori dinamici* | `button` | Uno per voce in `options["actuators"]` (F1/F2, luci scala, relè…); invia `MSG` con `Panda: command` |
@@ -208,15 +211,16 @@ automation:
             image: "/api/camera_proxy/camera.vimar_intercom_intercom"
 ```
 
-⚠ **Non aggiungerci `camera.snapshot`.** Sembra funzionare — la chiamata al servizio riesce — ma non
-scrive nessun file e non logga niente, perché sulla versione attuale l'entità camera non può produrre
-immagini ([#8](../../issues/8)). Nemmeno `camera.record` funziona: richiede l'integrazione `stream`,
-che una camera MJPEG non fornisce. E non aggirare il problema con una `camera: platform: ffmpeg`
-puntata su `/api/vimar_intercom/av`: blocca Home Assistant finché la sonda di ffmpeg non scade. Gli
-stessi avvisi, con i dettagli, sono dentro il file del package.
+⚠ **`camera.snapshot` funziona solo durante una chiamata.** Dalla 1.0.8 la camera passa dallo `stream` di
+Home Assistant ([#8](../../issues/8)), quindi snapshot e `camera.record` funzionano **a chiamata in
+corso**. Fuori da una chiamata l'immagine non c'è, di proposito: produrla vorrebbe dire chiamare la targa
+e accenderla a ogni aggiornamento della miniatura. Uno snapshot sul solo squillo quindi non scrive ancora
+niente: va fatto dopo aver risposto, o dopo aver avviato la chiamata. E non puntare una
+`camera: platform: ffmpeg` su `/api/vimar_intercom/av`: blocca Home Assistant finché la sonda di ffmpeg
+non scade. Gli stessi avvisi, con i dettagli, sono dentro il file del package.
 
 In `docs/lovelace_example.yaml` c'è una card Lovelace di base con i pulsanti rispondi / apri porta /
-riaggancia. Il riquadro del video, per lo stesso motivo di sopra, resta vuoto.
+riaggancia. Il riquadro del video mostra lo stream durante una chiamata, e nulla a riposo.
 
 ## Limiti noti
 

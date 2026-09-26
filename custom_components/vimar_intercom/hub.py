@@ -325,9 +325,9 @@ class VimarIntercomHub:
                 uri = sip_uri(target)
                 ok, msg = await sip.do_call(target=uri)
             else:
-                # Autoaccensione: chiama la TARGA VIDEO (55100), non il PICG 55001
-                # (55001 dava 488 Not Acceptable Here — vedi const.CAMERA_TARGET).
-                uri = sip_uri(C.CAMERA_TARGET)
+                # Autoaccensione: chiama la TARGA VIDEO configurata (camera_target),
+                # non l'SGA/PICG — vedi const.CAMERA_TARGET e issue #3.
+                uri = sip_uri(R.CAMERA_TARGET)
                 ok, msg = await sip.do_call(target=uri)
             if not ok:
                 _LOGGER.error("Auto-call failed: %s", msg)

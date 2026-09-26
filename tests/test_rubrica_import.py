@@ -105,3 +105,54 @@ def test_never_writes_to_the_database(tmp_path):
             con.execute("DELETE FROM ACTUATOR_LIST")
     finally:
         con.close()
+
+
+# ─── Targa video (camera_target) dalla PHONEBOOK — issue #3 ──────────────────
+
+def _make_phonebook(path, rows):
+    """rows: (ID, GID, TYPE, AUTO). Schema ridotto della PHONEBOOK reale."""
+    _make_db(path)
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE PHONEBOOK (ID INTEGER, GID INTEGER, TYPE TEXT, NAME TEXT, "
+                "AUTO INTEGER, ENABLE INTEGER)")
+    con.executemany("INSERT INTO PHONEBOOK VALUES (?,?,?,'x',?,0)", rows)
+    con.commit()
+    con.close()
+
+
+def test_camera_target_prima_pe_se_auto_manca(tmp_path):
+    """Impianto di sviluppo: GA 101 con AUTO NULL, PICG 55001, PE 55100."""
+    db = tmp_path / "rubrica.db"
+    _make_phonebook(db, [(1, 101, "GA", None), (2, 55001, "PICG", None),
+                         (3, 55100, "PE", None), (4, 55200, "P", None)])
+    assert rubrica_import.parse_rubrica_file(str(db), gid="101")["camera"] == "55100"
+
+
+def test_camera_target_40515_la_pe_e_55001(tmp_path):
+    """Il 40515 di #3: la PE è 55001, l'SGA 61000, il GA 3."""
+    db = tmp_path / "rubrica.db"
+    _make_phonebook(db, [(1, 3, "GA", None), (2, 55001, "PE", None), (3, 45001, "RELE", None)])
+    assert rubrica_import.parse_rubrica_file(str(db), gid="3")["camera"] == "55001"
+
+
+def test_camera_target_auto_del_proprio_appartamento_vince(tmp_path):
+    """Regola dell'app: PHONEBOOK.AUTO della riga GID=<mio gid>, se > 0."""
+    db = tmp_path / "rubrica.db"
+    _make_phonebook(db, [(1, 101, "GA", 55002), (2, 55001, "PE", None), (3, 55002, "PE_EXT", None),
+                         (4, 102, "GA", 55001)])
+    assert rubrica_import.parse_rubrica_file(str(db), gid="101")["camera"] == "55002"
+
+
+def test_camera_target_auto_zero_o_negativo_non_conta(tmp_path):
+    db = tmp_path / "rubrica.db"
+    _make_phonebook(db, [(1, 101, "GA", 0), (2, 55007, "PE_EXT", None)])
+    assert rubrica_import.parse_rubrica_file(str(db), gid="101")["camera"] == "55007"
+
+
+def test_camera_target_assente(tmp_path):
+    db = tmp_path / "rubrica.db"
+    _make_db(db)  # nessuna PHONEBOOK
+    assert rubrica_import.parse_rubrica_file(str(db), gid="101")["camera"] is None
+    db2 = tmp_path / "r2.db"
+    _make_phonebook(db2, [(1, 101, "GA", None), (2, 55200, "P", None)])
+    assert rubrica_import.parse_rubrica_file(str(db2), gid="101")["camera"] is None

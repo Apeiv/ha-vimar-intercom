@@ -76,13 +76,17 @@
           "media_enc": "Cifra il media (SRTP)",
           "actuators": "Attuatori (JSON)",
           "sga_target": "SGA (id SIP citofono/AUTO)",
-          "picg_target": "PICG (id SIP GET_INIT_STATUS)"
+          "picg_target": "PICG (id SIP GET_INIT_STATUS)",
+          "camera_target": "Targa video (id SIP da chiamare)",
+          "internal_panel_target": "Pannello interno (id SIP «Chiama Casa»)"
         },
         "data_description": {
-          "media_enc": "Lascia disattivato per RTP in chiaro (default, richiesto dalla maggior parte degli impianti Vimar 2F). Attiva solo se la targa/impianto richiede SRTP.",
+          "media_enc": "Lascia disattivato per RTP in chiaro (default sull'impianto di sviluppo). Alcuni impianti rispondono alla chiamata solo con SRTP attivo (es. un Tab 5S Up 40515 in cloud, issue #3): se la camera non si accende o la chiamata fallisce con 488, prova ad attivarlo.",
           "actuators": "Lista JSON di oggetti name, msg, target, icon. icon: door|light|switch. target \"AUTO\" usa la targa di default dell'apri-porta. Vuoto = nessun bottone.",
           "sga_target": "Destinatario di VOICEMAIL;/DND; e dell'apri-porta AUTO. Vuoto = default storico (55001). Cambialo solo se il tuo impianto usa un altro SGA (SYSTEM.MAGIC_APT_INTERCOM in rubrica.db).",
-          "picg_target": "Destinatario di GET_INIT_STATUS. Sugli impianti verificati finora coincide con l'SGA. Vuoto = default storico (55001)."
+          "picg_target": "Destinatario di GET_INIT_STATUS. Sugli impianti verificati finora coincide con l'SGA. Vuoto = default storico (55001).",
+          "camera_target": "Targa chiamata dalla camera, da «Chiama» e da «Chiama Video (esterno)»: la riga PHONEBOOK con TYPE='PE' in rubrica.db (l'import rubrica la compila da solo). Vuoto = default storico (55100). Non è l'SGA.",
+          "internal_panel_target": "Destinatario del pulsante «Chiama Casa (interno)». La rubrica non lo dice: va inserito a mano. Vuoto = default storico (55002)."
         }
       },
       "import_rubrica": {
@@ -98,7 +102,7 @@
       },
       "import_confirm": {
         "title": "Conferma importazione",
-        "description": "Trovati {count} attuatori per il GID {gid}: {names}.\n\nSGA (MAGIC_APT_INTERCOM) rilevato: {sga_info}\n\nPICG rilevato: {picg_info}\n\nConfermando, questa lista SOSTITUISCE gli attuatori attualmente configurati e, se rilevato, aggiorna sga_target/picg_target. Per annullare, chiudi questa finestra senza confermare."
+        "description": "Trovati {count} attuatori per il GID {gid}: {names}.\n\nSGA (MAGIC_APT_INTERCOM) rilevato: {sga_info}\n\nPICG rilevato: {picg_info}\n\nTarga video (camera) rilevata: {camera_info}\n\nConfermando, questa lista SOSTITUISCE gli attuatori attualmente configurati e, se rilevato, aggiorna sga_target/picg_target/camera_target. Per annullare, chiudi questa finestra senza confermare."
       },
       "fetch_rubrica": {
         "title": "Scarica dal citofono",
