@@ -109,8 +109,49 @@ def test_la_camera_dichiara_lo_stream():
     assert "def stream_source" in src
 
 
-def test_anteprime_dallo_stream_solo_in_chiamata():
-    """Da ferma, una miniatura non deve far chiamare la targa."""
+def test_anteprime_senza_chiamare_la_targa():
+    """Da ferma, una miniatura non deve far chiamare la targa: le foto non vengono
+    dallo stream (use_stream_for_stills resta al default False) ma dal frame
+    grabber, e fuori da chiamata o squillo non c'è immagine."""
     src = _codice("camera.py")
-    corpo = src.split("def use_stream_for_stills", 1)[1].split("def ", 1)[0]
-    assert "return self._hub.in_call" in corpo
+    assert "def use_stream_for_stills" not in src
+    corpo = src.split("def async_camera_image", 1)[1]
+    assert "if not self._hub.video_active:" in corpo
+    assert "return None" in corpo
+
+
+def test_camera_disponibile_e_stream_fermato_a_fine_chiamata():
+    """Dal campo: i 503 voluti di /av a riposo facevano segnare la camera
+    "unavailable", e lo stream di HA restava a riprovare con attese di 10-30 s:
+    al "Vedi esterno" dopo, card bianca. A fine chiamata lo stream si ferma."""
+    import asyncio
+    import sys
+    from types import SimpleNamespace
+
+    ha_camera = sys.modules.get("homeassistant.components.camera")
+    if getattr(sys.modules.get("homeassistant"), "_is_stub", False) and ha_camera is not None:
+        ha_camera.Camera = object  # lo stub di conftest non ha la classe vera
+        ha_camera.CameraEntityFeature = SimpleNamespace(STREAM=2)
+        sys.modules.pop("custom_components.vimar_intercom.camera", None)
+    camera_mod = pytest.importorskip("custom_components.vimar_intercom.camera")
+    hub_mod = pytest.importorskip("custom_components.vimar_intercom.hub")
+
+    fermati = []
+
+    async def _stop():
+        fermati.append(True)
+
+    async def run():
+        hub = hub_mod.VimarIntercomHub()
+        cam = camera_mod.VimarIntercomCamera.__new__(camera_mod.VimarIntercomCamera)
+        cam._hub = hub
+        cam.hass = SimpleNamespace(async_create_task=asyncio.ensure_future)
+        cam.stream = SimpleNamespace(stop=_stop, outputs=dict)
+        hub.register_video_end_callback(cam._stop_stream)
+        hub._was_busy = True
+        hub._on_sip_state_change()  # in_call/calling scendono: fine chiamata
+        await asyncio.sleep(0)
+        assert cam.available == hub.registered
+
+    asyncio.run(run())
+    assert fermati == [True]

@@ -100,16 +100,12 @@ PICG_TARGET             = SGA_TARGET
 # chiave di rubrica.db da cui ricavarlo con certezza, quindi l'importer non lo
 # tocca: si imposta a mano nelle opzioni.
 INTERNAL_PANEL_TARGET   = "55002"
-# SEGRETERIA_TARGET/DND_TARGET non sono più letti dal codice (switch.py usa
-# runtime.SGA_TARGET): restano solo come alias storici/di comodo.
-SEGRETERIA_TARGET       = SGA_TARGET
 SEGRETERIA_ON           = "VOICEMAIL;ON"
 SEGRETERIA_OFF          = "VOICEMAIL;OFF"
 SEGRETERIA_HEADER_NAME  = "Panda"
 SEGRETERIA_HEADER_VALUE = "blue"   # dall'app VIEW: i messaggi di stato usano Panda: blue
 
 # Non disturbare — "DND;ON" / "DND;OFF" verso l'SGA (Panda: blue).
-DND_TARGET              = SGA_TARGET
 DND_ON                  = "DND;ON"
 DND_OFF                 = "DND;OFF"
 
@@ -131,6 +127,9 @@ ACTUATORS = []  # RIMOSSI 18/08/2026: i token ipotizzati (OPEN_F1/OPEN_2/OPEN_2F
 # impianto la PE è 55001: l'importer rubrica la ricava (PHONEBOOK.AUTO del
 # proprio appartamento, altrimenti la prima riga PE) — rubrica_import.py.
 CAMERA_TARGET = "55100"
+
+# Secondi fra lo squillo e la foto: avvio anteprima + esposizione (Tab 5S Up 40515).
+DEFAULT_SNAPSHOT_DELAY = 3
 
 # ─── Comandi di stato (in USCITA, Panda: blue) ───────────────────────────────
 GET_INIT_STATUS = "GET_INIT_STATUS"   # → PICG_TARGET; risposta GET_INIT_STATUS_REPLY

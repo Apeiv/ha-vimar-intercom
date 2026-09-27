@@ -79,7 +79,11 @@
           "picg_target": "PICG (GET_INIT_STATUS SIP id)",
           "camera_target": "Video entrance panel (SIP id to call)",
           "internal_panel_target": "Internal panel (SIP id for “Chiama Casa”)",
-          "door_target": "Entrance panel that opens the door"
+          "door_target": "Entrance panel that opens the door",
+          "away_message_file": "Message if nobody answers (audio file)",
+          "away_message_delay": "After how many seconds of ringing (0 = never)",
+          "snapshot_dir": "Ring snapshot folder",
+          "snapshot_delay": "Seconds after the ring for the snapshot"
         },
         "data_description": {
           "media_enc": "Leave off for plain RTP (default on the development system). Some systems only accept the call with SRTP on (e.g. a Tab 5S Up 40515 over the cloud, issue #3): if the camera stays black or the call fails with 488, try turning it on.",
@@ -88,7 +92,11 @@
           "picg_target": "Target for GET_INIT_STATUS. On systems verified so far it matches the SGA. Empty = historical default (55001).",
           "camera_target": "Panel called by the camera, by “Chiama” and by “Chiama Video (esterno)”: the PHONEBOOK row with TYPE='PE' in rubrica.db (the phonebook import fills it in). Empty = historical default (55100). This is not the SGA.",
           "internal_panel_target": "Target of the “Chiama Casa (interno)” button. The phonebook does not say which one it is: enter it by hand. Empty = historical default (55002).",
-          "door_target": "Where the door-open command goes: the GID_PE of the door actuator in the phonebook (on a 2FV2 it is not the SGA). Filled in by importing or downloading the phonebook. Empty = the door actuator's panel if actuators were imported, otherwise the SGA."
+          "door_target": "Where the door-open command goes: the GID_PE of the door actuator in the phonebook (on a 2FV2 it is not the SGA). Filled in by importing or downloading the phonebook. Empty = the door actuator's panel if actuators were imported, otherwise the SGA.",
+          "away_message_file": "Audio file (mp3, wav...) played to the visitor when nobody answers, e.g. /config/media/citofono/messaggio.mp3. Empty = off.",
+          "away_message_delay": "If it is still ringing after this many seconds (nobody answered from the panel, phone or HA), the integration answers, plays the file and hangs up. Keep it shorter than the Tab's own voicemail, if enabled. 0 = never.",
+          "snapshot_dir": "Folder where the visitor's snapshot is saved (squillo_YYYYMMDD_HHMMSS_mmm.jpg and ultimo_squillo.jpg), e.g. /config/media/citofono. Must be in allowlist_external_dirs or a media folder. Empty = do not save.",
+          "snapshot_delay": "Wait after the ring before the snapshot: the preview must start and the camera adjust its exposure. 3 s suits the Tab 5S Up 40515; increase it if snapshots come out dark."
         }
       },
       "import_rubrica": {
@@ -121,12 +129,17 @@
       "invalid_ip": "Invalid IP address.",
       "sip_registration_failed": "SIP registration failed.",
       "invalid_actuators": "Invalid actuators list: {actuators_error}",
+      "invalid_actuator_target": "Invalid actuator target ({actuators_error}): digits only (e.g. 55001) or AUTO.",
       "rubrica_import_failed": "Import failed. See description above for details.",
       "rubrica_no_actuators": "No actuators found for the specified GID. See description above.",
       "invalid_target": "Invalid value: digits only (e.g. 55001).",
       "no_local_proxy": "The intercom address is missing: set it under \"Network settings and actuators\".",
       "rest_auth_failed": "The intercom rejected the SIP credentials, or does not expose this API. Note: it answers 401 in both cases.",
-      "rest_unavailable": "The intercom is not reachable over HTTP on the local network. If the system only works through the cloud, use the file import instead."
+      "rest_unavailable": "The intercom is not reachable over HTTP on the local network. If the system only works through the cloud, use the file import instead.",
+      "file_not_allowed": "File outside the folders Home Assistant may read: add its folder to allowlist_external_dirs or use a media folder.",
+      "file_not_found": "File not found: use the full path, e.g. /config/media/citofono/messaggio.mp3.",
+      "path_not_allowed": "Home Assistant cannot write to this folder: add it to allowlist_external_dirs or use a media folder.",
+      "path_public": "Public folder: /config/www is served on /local without login. Use e.g. /config/media/citofono."
     }
   },
   "entity": {
@@ -224,6 +237,10 @@
       "name": "Answer",
       "description": "Answer an incoming call."
     },
+    "simulate_ring": {
+      "name": "Test ring",
+      "description": "Simulate a doorbell ring (doorbell event and automations) without the entrance panel."
+    },
     "hangup": {
       "name": "Hang up",
       "description": "End the active call."
@@ -240,6 +257,16 @@
           "name": "Command",
           "description": "Door-open command"
         }
+      }
+    },
+    "fetch_local": {
+      "name": "Local HTTP fetch",
+      "description": "GET (Digest sipID/password) to the intercom's local web interface. Admins only.",
+      "fields": {
+        "path": {"name": "Path", "description": "E.g. rest/get_info.php?action=status"},
+        "save_as": {"name": "Save as", "description": "File name only, saved in /config/vimar_intercom/"},
+        "host": {"name": "Host", "description": "Private or loopback IP (default: the intercom)"},
+        "scheme": {"name": "Scheme", "description": "http or https"}
       }
     }
   }

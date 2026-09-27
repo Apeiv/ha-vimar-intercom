@@ -1,11 +1,19 @@
 """Stub minimi di Home Assistant per eseguire i test senza HA installato.
-Aggiunge la radice del repo a sys.path così `custom_components.vimar_intercom` è importabile."""
+Aggiunge la radice del repo a sys.path così `custom_components.vimar_intercom` è importabile.
+
+Marker (esclusi di default da pyproject, come `live`): `media` vuole ffmpeg/ffprobe e
+aiohttp, `browser` vuole Playwright e aiohttp. Se mancano, i test si saltano da soli.
+"""
 from __future__ import annotations
 
 import importlib.machinery
+import importlib.util
+import shutil
 import sys
 import types
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 COMPONENT = ROOT / "custom_components" / "vimar_intercom"
@@ -77,13 +85,48 @@ def _stub_ha() -> None:
     ha.config_entries.OptionsFlow = _Any
     ha.const.Platform = _Any()
     _mod("voluptuous", Schema=_Any, Required=_Any, Optional=_Any, All=_Any, Coerce=_Any, In=_Any, Range=_Any)
-    _mod("aiohttp", web=_Any(), ClientSession=_Any)
 
 
 _stub_ha()
 
-# pycryptodome è un requirement reale: se manca, i test che lo usano vengono saltati
 try:
-    import Crypto  # noqa: F401
-except Exception:  # pragma: no cover
-    pass
+    import aiohttp  # noqa: F401
+    REAL_AIOHTTP = True
+except ImportError:  # __init__.py lo importa: basta uno stub (le view usano harness.web.WEB)
+    _mod("aiohttp", web=_Any(), ClientSession=_Any)
+    REAL_AIOHTTP = False
+
+_MISSING = {
+    "media": None if REAL_AIOHTTP and shutil.which("ffmpeg") and shutil.which("ffprobe")
+    else "servono ffmpeg, ffprobe e aiohttp",
+    "browser": None if REAL_AIOHTTP and importlib.util.find_spec("playwright")
+    else "servono playwright e aiohttp",
+}
+
+
+def pytest_collection_modifyitems(config, items):
+    for item in items:
+        for marker, reason in _MISSING.items():
+            if reason and marker in item.keywords:
+                item.add_marker(pytest.mark.skip(reason=reason))
+
+
+@pytest.fixture
+def hub(monkeypatch):
+    """Hub vero con SIP finto: registrato, a riposo; do_call riuscita e registrata in hub.chiamate."""
+    from custom_components.vimar_intercom import hub as hub_mod
+    sip = hub_mod.sip
+    h = hub_mod.VimarIntercomHub()
+    monkeypatch.setattr(h, "_touch", lambda: None)
+    monkeypatch.setattr(sip, "registered", True)
+    monkeypatch.setattr(sip, "in_call", False)
+    monkeypatch.setattr(sip, "calling", False)
+    monkeypatch.setitem(sip.pending_incoming, "active", False)
+    h.chiamate = []
+
+    async def _fake_do_call(target=None):
+        h.chiamate.append(target)
+        return True, "200"
+
+    monkeypatch.setattr(sip, "do_call", _fake_do_call)
+    return h

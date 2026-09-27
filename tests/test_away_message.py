@@ -1,0 +1,153 @@
+"""Messaggio di assenza: dopo N s di squillo senza risposta, file audio e riaggancio."""
+from __future__ import annotations
+
+import asyncio
+import os
+import shutil
+import subprocess
+import tempfile
+
+import pytest
+
+hub_mod = pytest.importorskip("custom_components.vimar_intercom.hub")
+from custom_components.vimar_intercom import media_handler as mh  # noqa: E402
+
+sip = hub_mod.sip
+R = hub_mod.R
+
+
+@pytest.fixture
+def hub(monkeypatch):
+    h = hub_mod.VimarIntercomHub()
+    monkeypatch.setattr(h, "_touch", lambda: None)
+    monkeypatch.setattr(R, "AWAY_MESSAGE_FILE", "/x/messaggio.mp3")
+    monkeypatch.setattr(R, "AWAY_MESSAGE_DELAY", 0)
+    monkeypatch.setitem(sip.pending_incoming, "active", True)
+    monkeypatch.setitem(sip.pending_incoming, "cid", "ring-1")
+    monkeypatch.setattr(sip, "in_call", False)
+    monkeypatch.setitem(sip.call_state, "call_id", None)
+    return h
+
+
+def _fakes(hub, monkeypatch, pcm=b"\0" * 640, fine_a_meta=False):
+    azioni = []
+
+    async def _load(path):
+        azioni.append("load")
+        return pcm
+
+    async def _answer():
+        azioni.append("answer")
+        sip.in_call = True
+        sip.call_state["call_id"] = sip.pending_incoming["cid"]
+        sip.pending_incoming["active"] = False
+        return True, "200"
+
+    async def _send(data, alive):
+        azioni.append("send")
+        if fine_a_meta:
+            sip.in_call = False  # la targa riaggancia durante il messaggio
+        azioni.append(f"alive={alive()}")
+
+    async def _hangup():
+        azioni.append("hangup")
+
+    monkeypatch.setattr(mh, "load_pcm", _load)
+    monkeypatch.setattr(mh, "send_pcm", _send)
+    monkeypatch.setattr(sip, "do_answer_incoming", _answer)
+    monkeypatch.setattr(hub, "async_hangup", _hangup)
+    return azioni
+
+
+def test_squilla_ancora_risponde_suona_e_riaggancia(hub, monkeypatch):
+    azioni = _fakes(hub, monkeypatch)
+    asyncio.run(hub._away_message("ring-1"))
+    assert azioni == ["load", "answer", "send", "alive=True", "hangup"]
+
+
+def test_se_qualcuno_ha_risposto_non_fa_nulla(hub, monkeypatch):
+    azioni = _fakes(hub, monkeypatch)
+    sip.pending_incoming["active"] = False  # CANCEL: ha risposto il Tab
+    asyncio.run(hub._away_message("ring-1"))
+    assert azioni == []
+
+
+def test_timer_di_un_altro_squillo_non_risponde(hub, monkeypatch):
+    azioni = _fakes(hub, monkeypatch)
+    asyncio.run(hub._away_message("ring-vecchio"))
+    assert azioni == []
+
+
+def test_file_illeggibile_non_risponde(hub, monkeypatch):
+    azioni = _fakes(hub, monkeypatch, pcm=None)
+    asyncio.run(hub._away_message("ring-1"))
+    assert azioni == ["load"]  # lascia squillare: niente risposta muta
+
+
+def test_chiamata_finita_a_meta_non_riaggancia_altre(hub, monkeypatch):
+    azioni = _fakes(hub, monkeypatch, fine_a_meta=True)
+    asyncio.run(hub._away_message("ring-1"))
+    assert "hangup" not in azioni
+
+
+def test_rispondi_durante_il_messaggio_prende_la_chiamata(hub, monkeypatch):
+    azioni = _fakes(hub, monkeypatch)
+
+    async def _send_lungo(data, alive):
+        azioni.append("send")
+        await asyncio.sleep(10)
+
+    monkeypatch.setattr(mh, "send_pcm", _send_lungo)
+
+    async def _run():
+        hub._away_task = asyncio.create_task(hub._away_message("ring-1"))
+        while "send" not in azioni:
+            await asyncio.sleep(0)
+        ok, _ = await hub.async_answer()
+        await asyncio.gather(hub._away_task, return_exceptions=True)
+        return ok
+
+    assert asyncio.run(_run())
+    assert "hangup" not in azioni  # la chiamata resta a chi ha risposto
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg non installato")
+def test_load_e_send_pcm_a_pacchetti_da_20ms(monkeypatch):
+    path = os.path.join(tempfile.mkdtemp(), "msg.mp3")
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "sine=d=0.2",
+                    "-y", path], check=True)
+    pacchetti = []
+    monkeypatch.setattr(mh, "send_audio", pacchetti.append)
+
+    async def _run():
+        pcm = await mh.load_pcm(path)
+        await mh.send_pcm(pcm, lambda: True)
+        return pcm
+
+    pcm = asyncio.run(_run())
+    assert pcm and len(pcm) >= 0.19 * 8000 * 2  # ~0,2 s a 8 kHz, 16 bit
+    assert all(len(p) <= 320 for p in pacchetti)
+    assert b"".join(pacchetti) == pcm
+
+
+def test_load_pcm_file_mancante():
+    assert asyncio.run(mh.load_pcm("/non/esiste.mp3")) is None
+
+
+def test_load_pcm_passa_il_file_come_url_file(monkeypatch):
+    """Un nome che comincia con «-» non deve diventare un'opzione di ffmpeg."""
+    argv = []
+
+    class _Proc:
+        returncode = 0
+
+        async def communicate(self):
+            return b"\0" * 320, b""
+
+    async def _exec(*args, **kw):
+        argv.extend(args)
+        return _Proc()
+
+    monkeypatch.setattr(mh.asyncio, "create_subprocess_exec", _exec)
+    assert asyncio.run(mh.load_pcm("/config/media/-strano.mp3"))
+    assert argv[argv.index("-i") + 1] == "file:/config/media/-strano.mp3"
