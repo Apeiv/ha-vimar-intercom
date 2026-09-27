@@ -84,3 +84,25 @@ def test_sequenza_di_pacchetti_in_ordine():
 
 def test_pacchetto_troppo_corto_non_solleva_eccezioni():
     assert _ctx().unprotect(b"\x80\x00\x00\x01") is None
+
+
+def _rtp_ssrc(seq: int, ssrc: int) -> bytes:
+    return bytes([0x80, 0x00]) + seq.to_bytes(2, "big") + bytes(4) + ssrc.to_bytes(4, "big") + b"x" * 20
+
+
+def test_rollover_della_sequenza():
+    tx, rx = _ctx(), _ctx()
+    for seq in list(range(65530, 65536)) + list(range(0, 6)):
+        pkt = _rtp(seq)
+        assert rx.unprotect(tx.protect(pkt)) == pkt
+
+
+def test_nuovo_ssrc_con_sequenza_lontana_si_autentica():
+    """Un flusso che riparte (nuovo SSRC, sequenza altrove) ha ROC 0 dal mittente:
+    con lo stato unico il ricevitore stimava ROC 1 e scartava tutto il flusso."""
+    tx_a, tx_b, rx = _ctx(), _ctx(), _ctx()
+    for seq in range(40000, 40010):
+        assert rx.unprotect(tx_a.protect(_rtp_ssrc(seq, 1))) is not None
+    for seq in range(5, 15):
+        pkt = _rtp_ssrc(seq, 2)
+        assert rx.unprotect(tx_b.protect(pkt)) == pkt

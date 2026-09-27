@@ -58,47 +58,29 @@ class SRTPContext:
         self.auth_key = _kdf(self.master_key, self.master_salt, 0x01, 20)
         self.salt = _kdf(self.master_key, self.master_salt, 0x02, 14)
 
-        # ROC (Rollover Counter) — tracks SEQ wraparounds
-        self.roc = 0
-        self._last_seq = None
-        self._initialized = False
+        # ROC (Rollover Counter) per SSRC, come libsrtp: un flusso che riparte
+        # con un SSRC nuovo (encoder riavviato, relay che cambia sorgente) ha il
+        # suo ROC e la sua sequenza. Con uno stato unico il primo pacchetto del
+        # nuovo flusso poteva ricevere il ROC sbagliato, e da lì in poi ogni
+        # pacchetto falliva l'autenticazione (lo stato si aggiorna solo sui buoni).
+        self._streams: dict[int, tuple[int, int]] = {}  # ssrc -> (roc, last_seq)
 
-    def _estimate_index(self, seq: int) -> tuple[int, int]:
-        """Estimate packet index using libsrtp-style algorithm (RFC 3711 §3.3.1).
+    def _estimate_index(self, ssrc: int, seq: int) -> tuple[int, int]:
+        """(ROC, indice) più vicino all'ultimo indice buono del flusso (RFC 3711 §3.3.1)."""
+        state = self._streams.get(ssrc)
+        if state is None:
+            return 0, seq
+        roc, last_seq = state
+        last_idx = (roc << 16) | last_seq
+        _, r = min((abs(((r << 16) | seq) - last_idx), r)
+                   for r in (roc, roc + 1, roc - 1) if r >= 0)
+        return r, (r << 16) | seq
 
-        Returns (estimated_roc, packet_index) — handles out-of-order packets
-        correctly by picking the ROC that produces the closest index to the
-        last known good index.
-        """
-        if not self._initialized:
-            return self.roc, (self.roc << 16) | seq
-
-        last_idx = (self.roc << 16) | self._last_seq
-
-        # Three candidate ROCs: current, current-1, current+1
-        # Pick the one that produces the index closest to last_idx
-        candidates = []
-        for roc_delta in (0, 1, -1):
-            r = self.roc + roc_delta
-            if r < 0:
-                continue
-            idx = (r << 16) | seq
-            candidates.append((abs(idx - last_idx), r, idx))
-
-        candidates.sort()
-        return candidates[0][1], candidates[0][2]
-
-    def _update_roc(self, seq: int, estimated_roc: int):
-        """Update ROC and last_seq after successful authentication."""
-        if not self._initialized:
-            self._last_seq = seq
-            self._initialized = True
-            return
-        estimated_idx = (estimated_roc << 16) | seq
-        current_idx = (self.roc << 16) | self._last_seq
-        if estimated_idx > current_idx:
-            self._last_seq = seq
-            self.roc = estimated_roc
+    def _update_roc(self, ssrc: int, seq: int, roc: int):
+        """Dopo un pacchetto buono: avanza lo stato del flusso se l'indice è nuovo."""
+        state = self._streams.get(ssrc)
+        if state is None or (roc << 16) | seq > (state[0] << 16) | state[1]:
+            self._streams[ssrc] = (roc, seq)
 
     def _compute_iv(self, ssrc: int, packet_index: int) -> bytes:
         """Compute IV for AES-CM encryption (RFC 3711 §4.1)."""
@@ -139,7 +121,7 @@ class SRTPContext:
         seq = struct.unpack_from("!H", authenticated_portion, 2)[0]
         ssrc = struct.unpack_from("!I", authenticated_portion, 8)[0]
 
-        est_roc, idx = self._estimate_index(seq)
+        est_roc, idx = self._estimate_index(ssrc, seq)
 
         # Verify auth tag with estimated ROC
         expected_tag = self._compute_auth_tag(authenticated_portion, est_roc)
@@ -147,7 +129,7 @@ class SRTPContext:
             return None
 
         # Auth passed — update ROC state
-        self._update_roc(seq, est_roc)
+        self._update_roc(ssrc, seq, est_roc)
 
         # Decrypt payload — single native AES-CTR call
         header = authenticated_portion[:hdr_len]
@@ -170,8 +152,8 @@ class SRTPContext:
         seq = struct.unpack_from("!H", rtp_packet, 2)[0]
         ssrc = struct.unpack_from("!I", rtp_packet, 8)[0]
 
-        est_roc, idx = self._estimate_index(seq)
-        self._update_roc(seq, est_roc)
+        est_roc, idx = self._estimate_index(ssrc, seq)
+        self._update_roc(ssrc, seq, est_roc)
 
         # Encrypt payload — single native AES-CTR call
         header = rtp_packet[:hdr_len]
@@ -180,6 +162,6 @@ class SRTPContext:
         encrypted = _aes_cm_xor(self.cipher_key, iv, payload)
 
         srtp_no_tag = header + encrypted
-        auth_tag = self._compute_auth_tag(srtp_no_tag, self.roc)
+        auth_tag = self._compute_auth_tag(srtp_no_tag, est_roc)
 
         return srtp_no_tag + auth_tag

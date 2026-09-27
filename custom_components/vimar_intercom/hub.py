@@ -73,6 +73,8 @@ class VimarIntercomHub:
         self._hangup_task: asyncio.Task | None = None
         self._call_timeout_task: asyncio.Task | None = None
         self._keyframe_task: asyncio.Task | None = None
+        self._keyframe_now: asyncio.Task | None = None
+        media.request_keyframe = self._request_keyframe  # pacchetto video perso
         self._auto_called = False
         self._auto_call_target: str | None = None
 
@@ -372,6 +374,10 @@ class VimarIntercomHub:
                 self._auto_called = False
         except asyncio.CancelledError:
             pass
+
+    def _request_keyframe(self):
+        """Pacchetto video perso (media_handler): keyframe subito, non al giro dei 5 s."""
+        self._keyframe_now = asyncio.create_task(sip.send_keyframe_request())
 
     def _start_keyframe_loop(self):
         """Send periodic keyframe requests during calls for video recovery."""
