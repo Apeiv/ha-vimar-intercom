@@ -19,7 +19,7 @@ code, not in tests, not in issue attachments. Scrub logs before posting them
 above `DEBUG` level.
 
 **3. Keep the HTTP endpoints locked down.**
-`/video` and `/av` stay behind `_is_local_request()`; the `/audio_ws` WebSocket
+`/av` stays behind `_is_local_request()`; the `/audio_ws` WebSocket
 stays `requires_auth = True`. A PR that loosens either needs a very good reason
 in its description.
 
@@ -48,6 +48,22 @@ python -m py_compile custom_components/vimar_intercom/*.py
 Tests don't need a real Home Assistant instance: the modules under test are pure
 Python. If you touch `sip_client.py`, `hub.py`, `runtime.py` or `qr_decoder.py`,
 add a test — those are the parts that break silently on other plants.
+
+### Tests
+
+- `python -m pytest` runs the unit tests and the SIP end-to-end tests (`tests/test_e2e_sip.py`):
+  the real `sip_client`, hub, media and HTTP views against a fake panel on 127.0.0.1
+  (`tests/harness/`). No network, no ffmpeg, no browser: this is what CI runs.
+- `python -m pytest -m media` adds real media (`tests/test_e2e_media.py`): H.264 from ffmpeg,
+  SRTP, the real `/av` ffmpeg behind a real aiohttp server, frames counted with ffprobe. Needs
+  `ffmpeg`/`ffprobe` and `aiohttp`. If the first `ffmpeg` in your PATH is a launcher that runs
+  the real binary as a child (Chocolatey on Windows: `kill()` stops the launcher, the real ffmpeg
+  keeps `/av` open), point `FFMPEG` at the real binaries' folder:
+  `FFMPEG=C:/ProgramData/chocolatey/lib/ffmpeg/tools/ffmpeg/bin python -m pytest -m media`.
+- `python -m pytest -m browser` runs the dashboard card in Chromium and WebKit
+  (`tests/test_e2e_card.py`). Needs `playwright` (`playwright install chromium webkit`) and `aiohttp`.
+- `python -m pytest -m "media or browser or not live"` runs everything except the `live` tests,
+  which need the real panel on the network. Missing tools skip their tests instead of failing.
 
 `tools/sip_probe.py` lets you test protocol behaviour from a PC without touching
 your Home Assistant install:

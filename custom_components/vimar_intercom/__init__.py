@@ -5,12 +5,14 @@ import ipaddress
 import json
 import logging
 import os
+from pathlib import Path
 
 from aiohttp import web
 
 import voluptuous as vol
 
-from homeassistant.components.http import HomeAssistantView
+from homeassistant.components.frontend import add_extra_js_url
+from homeassistant.components.http import HomeAssistantView, StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse, callback
 import homeassistant.helpers.config_validation as cv
@@ -24,6 +26,7 @@ from . import validate
 from .hub import VimarIntercomHub
 from . import av_stream
 from . import media_handler as media
+from . import ring_log
 from . import push_sender
 from . import sip_client as sip
 from . import runtime
@@ -44,6 +47,22 @@ SERVICE_HANGUP = "hangup"
 SERVICE_OPEN_DOOR = "open_door"
 SERVICE_FETCH_LOCAL = "fetch_local"
 SERVICE_SIMULATE_RING = "simulate_ring"
+
+CARD_URL = "/vimar_intercom/vimar-intercom-card.js"
+
+
+async def _register_card(hass: HomeAssistant) -> None:
+    """Card del citofono (www/vimar-intercom-card.js): servita e caricata dal
+    frontend da sola, una volta sola anche dopo un reload dell'entry."""
+    if hass.data.get(f"{DOMAIN}_card"):
+        return
+    path = str(Path(__file__).parent / "www" / "vimar-intercom-card.js")
+    await hass.http.async_register_static_paths([StaticPathConfig(CARD_URL, path, False)])
+    # ?v= cambia a ogni modifica del file, così browser e app non tengono la versione vecchia.
+    mtime = int(await hass.async_add_executor_job(os.path.getmtime, path))
+    add_extra_js_url(hass, f"{CARD_URL}?v={mtime}")
+    hass.data[f"{DOMAIN}_card"] = True
+
 
 def _sip_id(value) -> str:
     """Id SIP numerico, o errore leggibile nel servizio (non un 500)."""
@@ -203,8 +222,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     hass.http.register_view(VimarAVStreamView(hass))
     hass.http.register_view(VimarAudioWSView(hass))
+    await _register_card(hass)
     hass.http.register_view(VimarPushTokenView())
     hass.http.register_view(VimarDebugView())
+    hass.http.register_view(VimarRingsView(hass))
+    hass.http.register_view(VimarRingPhotoView(hass))
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -401,6 +423,8 @@ class VimarAudioWSView(HomeAssistantView):
 
     Binary messages:
       Server → Client: 0x01 + PCM16LE (intercom audio, 8kHz mono)
+      Server → Client: 0x03 + 00 00 00 01 + NAL H.264 (video, Annex B; la card lo
+                       decodifica con WebCodecs, l'app iOS con VideoToolbox)
       Client → Server: 0x02 + PCM16LE (mic audio, 8kHz mono)
 
     Text messages (JSON):
@@ -451,6 +475,10 @@ class VimarAudioWSView(HomeAssistantView):
         clients = self._ws_clients
         clients.add(ws)
         _LOGGER.info("Audio WS client connected (%d total)", len(clients))
+        # Video già in corso (squillo, chiamata): il GOP corrente subito, senza
+        # aspettare il prossimo IDR. Anche per chi non è admin: è la vista della card.
+        if media.video_proto:
+            media.video_proto.replay_gop_ws(ws.send_bytes)
 
         # Send initial state
         await ws.send_str(json.dumps({
@@ -703,6 +731,48 @@ class VimarDebugView(HomeAssistantView):
             n = 100
         text = "\n".join(_debug_log[-n:])
         return web.Response(text=text, content_type="text/plain")
+
+
+class VimarRingsView(HomeAssistantView):
+    """Ultimi squilli (registro accanto alle foto), dal più recente. Per la card.
+    Senza cartella foto nelle opzioni: lista vuota."""
+
+    url = "/api/vimar_intercom/rings"
+    name = "api:vimar_intercom:rings"
+    requires_auth = True
+
+    def __init__(self, hass: HomeAssistant):
+        self._hass = hass
+
+    async def get(self, request: web.Request) -> web.Response:
+        if not runtime.SNAPSHOT_DIR:
+            return web.json_response([])
+        try:  # ?limit=: 10 se manca o non è un numero, fra 1 e 50
+            limit = max(1, min(50, int(request.query.get("limit") or 10)))
+        except ValueError:
+            limit = 10
+        rings = await self._hass.async_add_executor_job(
+            ring_log.recent_rings, runtime.SNAPSHOT_DIR, limit)
+        return web.json_response(rings)
+
+
+class VimarRingPhotoView(HomeAssistantView):
+    """Foto di uno squillo. Solo squillo_AAAAMMGG_HHMMSS.jpg dentro la cartella foto:
+    nessun altro file è raggiungibile. La card la carica con un percorso firmato."""
+
+    url = "/api/vimar_intercom/rings/{name}"
+    name = "api:vimar_intercom:ring_photo"
+    requires_auth = True
+
+    def __init__(self, hass: HomeAssistant):
+        self._hass = hass
+
+    async def get(self, request: web.Request, name: str) -> web.StreamResponse:
+        path = await self._hass.async_add_executor_job(
+            ring_log.ring_photo_path, runtime.SNAPSHOT_DIR, name)
+        if path is None:
+            return web.Response(status=404)
+        return web.FileResponse(path)
 
 
 class VimarAVStreamView(HomeAssistantView):
