@@ -3,6 +3,7 @@ send_command:
   description: >-
     Invia un SIP MESSAGE arbitrario al citofono Vimar (es. OPEN_2F con header
     "Panda: command"). Utile per sperimentare comandi non ancora mappati.
+    Solo amministratori (e automazioni).
   fields:
     body:
       name: Comando (body)
@@ -13,8 +14,7 @@ send_command:
         text:
     target:
       name: Destinatario
-      description: ID SIP (55001 targa esterna, 55002 targa interna, 60001 monitor) o URI sip completo
-      default: "55001"
+      description: ID SIP o URI sip completo. Vuoto = l'SGA configurato.
       example: "55001"
       selector:
         text:
@@ -36,7 +36,7 @@ call:
   fields:
     target:
       name: Destinatario
-      description: ID SIP (default targa esterna 55001)
+      description: ID SIP numerico. Vuoto = la targa video (camera_target).
       example: "55001"
       selector:
         text:
@@ -44,6 +44,10 @@ call:
 answer:
   name: Rispondi
   description: Risponde alla chiamata in arrivo.
+
+simulate_ring:
+  name: Squillo di prova
+  description: Simula uno squillo del citofono (evento doorbell e automazioni) senza la targa.
 
 hangup:
   name: Riaggancia
@@ -65,13 +69,14 @@ open_door:
           custom_value: true
     command:
       name: Comando
+      description: Solo comandi di apertura (OPEN, OPEN_2F, ...).
       default: OPEN_2F
       selector:
         text:
 
 fetch_local:
   name: Fetch HTTP locale
-  description: GET (Digest sipID/password) verso l'interfaccia locale del citofono (home mode).
+  description: GET (Digest sipID/password) verso l'interfaccia locale del citofono (home mode). Solo amministratori.
   fields:
     path:
       name: Path

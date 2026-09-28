@@ -11,6 +11,7 @@ import os
 import random
 import socket
 import tempfile
+from pathlib import Path
 
 import voluptuous as vol
 from homeassistant import config_entries
@@ -21,6 +22,7 @@ from homeassistant.helpers import selector
 
 from .const import (
     CAMERA_TARGET,
+    DEFAULT_SNAPSHOT_DELAY,
     DOMAIN,
     INTERNAL_PANEL_TARGET,
     PICG_TARGET,
@@ -29,6 +31,7 @@ from .const import (
 from . import qr_decoder
 from . import rest_client
 from . import rubrica_import
+from . import validate
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -51,6 +54,10 @@ KEY_PICG_TARGET    = "picg_target"
 KEY_CAMERA_TARGET  = "camera_target"
 KEY_INTERNAL_PANEL_TARGET = "internal_panel_target"
 KEY_DOOR_TARGET    = "door_target"
+KEY_AWAY_FILE      = "away_message_file"
+KEY_AWAY_DELAY     = "away_message_delay"
+KEY_SNAP_DIR       = "snapshot_dir"
+KEY_SNAP_DELAY     = "snapshot_delay"
 
 DEFAULT_CLOUD_PROXY    = "ipvdes.vimar.cloud"
 DEFAULT_LOCAL_SIP_PORT = 5060
@@ -60,12 +67,16 @@ DEFAULT_LOCAL_UDP_PORT = 5060
 ALLOWED_ACTUATOR_ICONS = ("door", "light", "switch")
 
 
+class InvalidActuatorTarget(ValueError):
+    """Target di un attuatore non numerico (né AUTO): errore «invalid_actuator_target»."""
+
+
 def _parse_actuators(raw: str) -> list[dict]:
     """Valida la lista attuatori incollata come JSON nell'options flow.
 
     Solleva ValueError con un messaggio parlante se il JSON non è una lista di
     dict con le chiavi ``name``, ``msg``, ``target``, ``icon`` (icon nel set
-    ammesso). Stringa vuota → lista vuota (nessun bottone).
+    ammesso, target numerico o AUTO). Stringa vuota → lista vuota (nessun bottone).
     """
     raw = (raw or "").strip()
     if not raw:
@@ -89,10 +100,15 @@ def _parse_actuators(raw: str) -> list[dict]:
                 f"Elemento #{i}: icon '{icon}' non valida "
                 f"(ammesse: {', '.join(ALLOWED_ACTUATOR_ICONS)})"
             )
+        # Stessa regola di hub.sip_uri: il target finisce nella request line del
+        # MESSAGE. "AUTO" = la targa dell'apri-porta (button.py).
+        target = str(item["target"]).strip()
+        if target.upper() != "AUTO" and not validate.sip_target(target):
+            raise InvalidActuatorTarget(f"elemento #{i}, target '{target}'")
         result.append({
             "name":   str(item["name"]),
             "msg":    str(item["msg"]),
-            "target": str(item["target"]),
+            "target": target,
             "icon":   str(icon),
         })
     return result
@@ -243,6 +259,11 @@ async def _test_sip_registration(
 
 
 # ─── Config Flow ─────────────────────────────────────────────────────────────
+
+
+def _inside(path: str, folder: str) -> bool:
+    """True se path è folder o sta sotto (link risolti; /config/www2 non conta)."""
+    return Path(path).resolve().is_relative_to(Path(folder).resolve())
 
 class VimarIntercomConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Gestisce l'onboarding dell'integrazione Vimar Intercom."""
@@ -465,31 +486,38 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             # SGA/PICG: id SIP numerici (es. "55001"). Campo vuoto → fallback al
             # default storico in const.py (gestito da runtime.configure()), quindi
             # qui basta validare il formato quando l'utente scrive qualcosa.
-            sga_target_raw  = str(user_input.get(KEY_SGA_TARGET, "")).strip()
-            picg_target_raw = str(user_input.get(KEY_PICG_TARGET, "")).strip()
-            if sga_target_raw and not sga_target_raw.isdigit():
-                errors[KEY_SGA_TARGET] = "invalid_target"
-            if picg_target_raw and not picg_target_raw.isdigit():
-                errors[KEY_PICG_TARGET] = "invalid_target"
-            # Targhe da chiamare (issue #3): stessa regola, vuoto = default.
-            camera_target_raw = str(user_input.get(KEY_CAMERA_TARGET, "")).strip()
-            internal_target_raw = str(
-                user_input.get(KEY_INTERNAL_PANEL_TARGET, "")).strip()
-            if camera_target_raw and not camera_target_raw.isdigit():
-                errors[KEY_CAMERA_TARGET] = "invalid_target"
-            if internal_target_raw and not internal_target_raw.isdigit():
-                errors[KEY_INTERNAL_PANEL_TARGET] = "invalid_target"
-            # Targa che apre la porta: vuota di default, così runtime ripiega
-            # sull'attuatore porta salvato e poi sull'SGA.
-            door_target_raw = str(user_input.get(KEY_DOOR_TARGET, "")).strip()
-            if door_target_raw and not door_target_raw.isdigit():
-                errors[KEY_DOOR_TARGET] = "invalid_target"
+            targets = {}
+            for key in (KEY_SGA_TARGET, KEY_PICG_TARGET, KEY_CAMERA_TARGET,
+                        KEY_INTERNAL_PANEL_TARGET, KEY_DOOR_TARGET):
+                targets[key] = str(user_input.get(key, "")).strip()
+                if targets[key] and not validate.sip_target(targets[key]):
+                    errors[key] = "invalid_target"
+
+            away_file  = str(user_input.get(KEY_AWAY_FILE, "")).strip()
+            away_delay = user_input.get(KEY_AWAY_DELAY, 0)
+            # Come snapshot_dir: solo cartelle che HA può leggere (allowlist_external_dirs,
+            # media). Il percorso va dritto a `ffmpeg -i`.
+            if away_file and not self.hass.config.is_allowed_path(away_file):
+                errors[KEY_AWAY_FILE] = "file_not_allowed"
+            elif away_file and not await self.hass.async_add_executor_job(os.path.isfile, away_file):
+                errors[KEY_AWAY_FILE] = "file_not_found"
+
+            snap_dir   = str(user_input.get(KEY_SNAP_DIR, "")).strip()
+            snap_delay = user_input.get(KEY_SNAP_DELAY, DEFAULT_SNAPSHOT_DELAY)
+            if snap_dir and not self.hass.config.is_allowed_path(snap_dir):
+                errors[KEY_SNAP_DIR] = "path_not_allowed"
+            elif snap_dir and await self.hass.async_add_executor_job(
+                    _inside, snap_dir, self.hass.config.path("www")):
+                # /config/www è servita su /local SENZA login: la foto della strada
+                # finirebbe leggibile da internet.
+                errors[KEY_SNAP_DIR] = "path_public"
 
             actuators: list[dict] = []
             try:
                 actuators = _parse_actuators(actuators_raw)
             except ValueError as exc:
-                errors[KEY_ACTUATORS] = "invalid_actuators"
+                errors[KEY_ACTUATORS] = ("invalid_actuator_target" if isinstance(exc, InvalidActuatorTarget)
+                                         else "invalid_actuators")
                 self._actuators_error = str(exc)
 
             # Il test SIP live va fatto solo se cambiano davvero i parametri SIP:
@@ -522,11 +550,11 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                         KEY_LOCAL_UDP_PORT: local_udp_port,
                         KEY_MEDIA_ENC:      media_enc,
                         KEY_ACTUATORS:      actuators,
-                        KEY_SGA_TARGET:     sga_target_raw,
-                        KEY_PICG_TARGET:    picg_target_raw,
-                        KEY_CAMERA_TARGET:  camera_target_raw,
-                        KEY_INTERNAL_PANEL_TARGET: internal_target_raw,
-                        KEY_DOOR_TARGET:    door_target_raw,
+                        **targets,
+                        KEY_AWAY_FILE:      away_file,
+                        KEY_AWAY_DELAY:     away_delay,
+                        KEY_SNAP_DIR:       snap_dir,
+                        KEY_SNAP_DELAY:     snap_delay,
                     },
                 )
 
@@ -582,6 +610,22 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     KEY_DOOR_TARGET,
                     default=form.get(KEY_DOOR_TARGET) or "",
                 ): str,
+                vol.Optional(
+                    KEY_AWAY_FILE,
+                    default=form.get(KEY_AWAY_FILE, ""),
+                ): str,
+                vol.Optional(
+                    KEY_AWAY_DELAY,
+                    default=form.get(KEY_AWAY_DELAY, 0),
+                ): vol.All(vol.Coerce(int), vol.Range(min=0, max=60)),
+                vol.Optional(
+                    KEY_SNAP_DIR,
+                    default=form.get(KEY_SNAP_DIR, ""),
+                ): str,
+                vol.Optional(
+                    KEY_SNAP_DELAY,
+                    default=form.get(KEY_SNAP_DELAY, DEFAULT_SNAPSHOT_DELAY),
+                ): vol.All(vol.Coerce(int), vol.Range(min=0, max=30)),
             }),
             errors=errors,
             description_placeholders={
@@ -783,6 +827,9 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             return self.async_create_entry(
                 title="",
                 data={
+                    # Le altre opzioni (messaggio di assenza, foto...)
+                    # non vengono dalla rubrica: restano quelle configurate.
+                    **self._entry.options,
                     KEY_LOCAL_PROXY:    current.get(KEY_LOCAL_PROXY, ""),
                     KEY_USE_LOCAL_UDP:  current.get(KEY_USE_LOCAL_UDP, True),
                     KEY_LOCAL_UDP_PORT: current.get(KEY_LOCAL_UDP_PORT, DEFAULT_LOCAL_UDP_PORT),

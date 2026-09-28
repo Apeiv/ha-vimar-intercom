@@ -4,14 +4,12 @@ from __future__ import annotations
 
 import logging
 
-from aiohttp import web
-
 from homeassistant.components.camera import Camera, CameraEntityFeature
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from . import frame_grabber
 from .const import DOMAIN
 from .device import device_info
 
@@ -40,9 +38,9 @@ class VimarIntercomCamera(Camera):
     """
 
     _attr_has_entity_name = False
-    _attr_supported_features = CameraEntityFeature.STREAM
     _attr_name = "Intercom"
     _attr_icon = "mdi:doorbell-video"
+    _attr_supported_features = CameraEntityFeature.STREAM
 
     def __init__(self, hub, entry_id: str, hass: HomeAssistant) -> None:
         super().__init__()
@@ -51,23 +49,30 @@ class VimarIntercomCamera(Camera):
         self._attr_unique_id = f"{entry_id}_camera"
         self._attr_device_info = device_info(entry_id)
 
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self.async_on_remove(self._hub.register_video_end_callback(self._stop_stream))
+
+    @callback
+    def _stop_stream(self) -> None:
+        """Finiti chiamata o squillo si ferma lo stream di HA. Resterebbe a riprovare
+        su /av (503 a riposo, niente chiamate da solo) con attese di 10, 20, 30 s, e al
+        "Vedi esterno" dopo la card restava bianca; fermo, il prossimo riquadro video
+        ne apre uno nuovo che parte subito."""
+        # Non durante una registrazione (camera.record): fermarlo la butterebbe via.
+        if self.stream and "recorder" not in self.stream.outputs():
+            self.hass.async_create_task(self.stream.stop())
+
+    @property
+    def available(self) -> bool:
+        """Registrato = disponibile. HA segnerebbe la camera "unavailable" per i 503
+        voluti di /av a riposo, e il frontend non aprirebbe più il video."""
+        return self._hub.registered
+
     @property
     def is_streaming(self) -> bool:
         """True when there's an active SIP call with video."""
-        return self._hub.in_call
-
-    @property
-    def is_on(self) -> bool:
-        return True
-
-    @property
-    def use_stream_for_stills(self) -> bool:
-        """Anteprime e `camera.snapshot` dallo stream, ma solo durante una chiamata.
-
-        Da ferma, aprire lo stream vorrebbe dire chiamare la targa e accenderla
-        a ogni aggiornamento della miniatura: meglio nessuna immagine.
-        """
-        return self._hub.in_call
+        return self._hub.video_active
 
     async def stream_source(self) -> str | None:
         """AV stream URL (MPEG-TS with H264 video + PCMU audio) for HA's stream worker."""
@@ -77,38 +82,11 @@ class VimarIntercomCamera(Camera):
     async def async_camera_image(
         self, width: int | None = None, height: int | None = None
     ) -> bytes | None:
-        """Return the latest cached JPEG frame (no auto-call).
+        """L'ultimo fotogramma della chiamata o dell'anteprima dello squillo.
 
-        This is called by Apple Home for the thumbnail on the home screen.
-        We only return whatever frame we already have — no SIP call triggered.
-        The live stream (user taps camera) goes through stream_source/MJPEG view
-        which triggers auto-call there.
+        Fuori da lì None: aprire il video per una miniatura farebbe chiamare la
+        targa. Istantaneo: lo tiene aggiornato il frame grabber di media_handler.
         """
-        return self._hub.video_frame
-
-    async def handle_async_mjpeg_stream(
-        self, request: web.Request
-    ) -> web.StreamResponse | None:
-        """Serve MJPEG stream directly to the HA frontend.
-
-        Does NOT auto-call — only shows video if a call is already active.
-        Use the Call button to start a call first.
-        """
-        import asyncio
-
-        response = web.StreamResponse()
-        response.content_type = "multipart/x-mixed-replace; boundary=frame"
-        await response.prepare(request)
-        try:
-            while True:
-                frame = self._hub.video_frame
-                if frame:
-                    await response.write(
-                        b"--frame\r\n"
-                        b"Content-Type: image/jpeg\r\n\r\n"
-                        + frame + b"\r\n"
-                    )
-                await asyncio.sleep(0.1)
-        except (ConnectionResetError, asyncio.CancelledError):
-            pass
-        return response
+        if not self._hub.video_active:
+            return None
+        return await frame_grabber.wait_frame()

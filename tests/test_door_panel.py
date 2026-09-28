@@ -13,6 +13,7 @@ GET_INIT_STATUS) restano all'SGA/PICG, le chiamate alla targa video.
 from __future__ import annotations
 
 import asyncio
+import re
 import sqlite3
 import sys
 import types
@@ -312,10 +313,22 @@ def test_open_door_senza_target_non_ripiega_sull_sga():
     """Con default = SGA il servizio mandava sempre al 61000 su un 2FV2."""
     src = (COMPONENT / "__init__.py").read_text(encoding="utf-8")
     blocco = src.split("OPEN_DOOR_SCHEMA = vol.Schema({", 1)[1].split("})", 1)[0]
-    assert 'vol.Optional("target"): cv.string' in blocco
+    assert 'vol.Optional("target"):' in blocco and "default=_default_sga_target" not in blocco
     yaml = (COMPONENT / "services.yaml").read_text(encoding="utf-8")
     open_door = yaml.split("open_door:", 1)[1].split("\n\n", 1)[0]
     assert 'default: "55001"' not in open_door
+
+
+def test_open_door_accetta_open_e_open_2f_ma_non_altri_message():
+    """`command: OPEN` (la colonna MSG dell'attuatore porta) e `OPEN_2F` passano;
+    un MESSAGE qualsiasi no, il servizio è aperto a ogni utente."""
+    src = (COMPONENT / "__init__.py").read_text(encoding="utf-8")
+    blocco = src.split("OPEN_DOOR_SCHEMA = vol.Schema({", 1)[1]
+    pattern = re.search(r'"command".*vol\.Match\(r"([^"]+)"\)', blocco).group(1)
+    for ok in ("OPEN", "OPEN_2F", "OPEN_3F"):
+        assert re.match(pattern, ok), ok
+    for no in ("VOICEMAIL;ON", "OPEN_", "open", "OPEN_2F\r\nX: y", "OPEN_" + "A" * 17):
+        assert not re.match(pattern, no), no
 
 
 def test_pulsante_auto_segue_la_targa_della_porta():

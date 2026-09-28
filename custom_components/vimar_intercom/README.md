@@ -18,7 +18,7 @@ Testato su **Elvox Tab 7S 2F+ WiFi (art. 40507)**. Altri Tab/impianti Vimar 2F/I
 
 ## Requisiti
 
-- Home Assistant **2024.1** o successivo, Python 3.11+.
+- Home Assistant **2024.1** o successivo, Python 3.12+.
 - ffmpeg sull'host HA (dipendenza dichiarata nel manifest) per la camera.
 - Il **QR di abbinamento** dell'impianto Vimar (dall'app VIEW) **oppure** i parametri SIP manuali
   (id, password, domain, cloud proxy).

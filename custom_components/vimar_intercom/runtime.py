@@ -55,6 +55,12 @@ ACTUATORS: list = []
 # sovrascritti in options (manualmente o dall'importer rubrica.db).
 SGA_TARGET:  str = _const.SGA_TARGET
 PICG_TARGET: str = _const.PICG_TARGET
+# Messaggio di assenza: file audio fatto sentire se dopo N s squilla ancora (0 = mai).
+AWAY_MESSAGE_FILE: str = ""
+AWAY_MESSAGE_DELAY: int = 0
+# Foto di chi suona: cartella (vuoto = non salvare) e secondi dopo lo squillo.
+SNAPSHOT_DIR: str = ""
+SNAPSHOT_DELAY: int = _const.DEFAULT_SNAPSHOT_DELAY
 
 # ─── Targhe da chiamare (da options flow; issue #3) ──────────────────────────
 # CAMERA_TARGET = targa video (PE) chiamata dalla camera, da «Chiama» e da
@@ -128,6 +134,7 @@ def configure(data: dict) -> None:
     global ACTUATORS
     global SGA_TARGET, PICG_TARGET
     global CAMERA_TARGET, INTERNAL_PANEL_TARGET, DOOR_TARGET
+    global AWAY_MESSAGE_FILE, AWAY_MESSAGE_DELAY, SNAPSHOT_DIR, SNAPSHOT_DELAY
     global DEVICE_IMEI, DEVICE_UUID
 
     SIP_USER     = data.get("sip_user", "")
@@ -185,7 +192,6 @@ def configure(data: dict) -> None:
         (str(data.get("internal_panel_target") or "").strip())
         or _const.INTERNAL_PANEL_TARGET
     )
-
     # Apri-porta: opzione door_target (compilata dall'import rubrica o a mano);
     # se vuota, la targa dell'attuatore porta fra quelli salvati — le entry
     # che hanno importato la rubrica con la 1.0.7 hanno gli attuatori ma non il
@@ -201,6 +207,11 @@ def configure(data: dict) -> None:
     # comandi di stato (VOICEMAIL;, DND;, GET_INIT_STATUS) restano all'SGA/PICG.
     INTERCOM     = f"sip:{CAMERA_TARGET}@{SIP_DOMAIN}"
     DOOR_ESTERNO = f"sip:{DOOR_TARGET}@{SIP_DOMAIN}"
+
+    AWAY_MESSAGE_FILE  = str(data.get("away_message_file") or "").strip()
+    AWAY_MESSAGE_DELAY = int(data.get("away_message_delay") or 0)
+    SNAPSHOT_DIR   = str(data.get("snapshot_dir") or "").strip()
+    SNAPSHOT_DELAY = int(data.get("snapshot_delay", _const.DEFAULT_SNAPSHOT_DELAY))
 
     # Identità dispositivo: salvata nell'entry al primo avvio. Se manca (entry
     # creato da una versione precedente, o probe/test senza entry) se ne genera
@@ -220,7 +231,3 @@ def configure(data: dict) -> None:
     DETECTED_UA       = data.get("detected_ua", "") or ""
     DETECTED_PRIORITY = 99 if not DETECTED_MODEL else int(data.get("detected_priority", 98))
 
-
-def is_configured() -> bool:
-    """True se le credenziali obbligatorie sono state caricate."""
-    return bool(SIP_USER and SIP_DOMAIN and (SIP_HA1 or SIP_PASSWORD))

@@ -10,7 +10,7 @@ non usa librerie SIP esterne: parla direttamente con il **Flexisip** dell'impian
 Elementi distintivi del protocollo Vimar (dedotti dal reverse dell'app, vedi `docs/PROTOCOL.md`):
 header identità `Mobile-IMEI` / `MyName`, `User-Agent` TOGA, e l'header proprietario **`Panda`**
 (`command` per gli attuatori, `blue` per i messaggi di stato/sistema). Il video arriva **on‑demand**
-dalla chiamata SIP (RTP H.264 + PCMU), decodificato da ffmpeg in MJPEG.
+dalla chiamata SIP (RTP H.264 + PCMU), servito come MPEG‑TS su `/av` allo stream di HA; durante lo squillo arriva già come anteprima (early media).
 
 ---
 
@@ -18,14 +18,14 @@ dalla chiamata SIP (RTP H.264 + PCMU), decodificato da ffmpeg in MJPEG.
 
 ```text
 vimar_intercom/
-├── __init__.py         Setup/teardown entry, registrazione servizi, HTTP views (/video, /av, /audio_ws, /push_token, /debug)
+├── __init__.py         Setup/teardown entry, registrazione servizi, HTTP views (/av, /audio_ws, /push_token, /debug)
 ├── sip_client.py       Stack SIP asyncio: REGISTER/INVITE/MESSAGE/OPTIONS/BYE/INFO, digest, UDP+TLS, parsing (~1300 righe)
 ├── hub.py              VimarIntercomHub: orchestrazione, stats, callback entità, async_door/async_send_command, keepalive
 ├── runtime.py          R.*: credenziali/impostazioni dinamiche dalla config entry (SIP_USER, domain, ACTUATORS…)
 ├── config_flow.py      Config flow (QR o manuale) + options flow (rete SIP + attuatori dinamici)
 ├── qr_decoder.py       Decodifica QR di abbinamento Vimar (AES)
 ├── const.py            Costanti, comandi (OPEN_2F, VOICEMAIL/DND), SGA_TARGET, header, User-Agent
-├── camera.py           Camera on-demand (MJPEG da pipeline RTP/ffmpeg)
+├── camera.py           Camera on-demand (STREAM su /av; foto dal frame grabber)
 ├── event.py            Entità event "doorbell" (event_type ring)
 ├── lock.py             Serratura (unlock = SIP MESSAGE, auto-relock)
 ├── button.py           Bottoni: chiama/rispondi/riaggancia/apri porta + ATTUATORI DINAMICI
@@ -63,7 +63,7 @@ vimar_intercom/
 - **INVITE in arrivo** (targa preme il campanello) → hub attiva callback → entità `event` `ring` + `binary_sensor` squillo + statistiche; auto‑answer configurabile.
 - **INVITE in uscita** (`call`, o apertura della camera) → negoziazione SDP → RTP H.264/PCMU.
 - La **camera** non ha uno stream permanente: quando HA apre lo stream, l'hub avvia la chiamata e la
-  pipeline RTP→ffmpeg produce MJPEG. Keyframe via SIP INFO (`picture_fast_update`, estensione nostra).
+  pipeline RTP→ffmpeg produce MPEG‑TS per /av; un secondo ffmpeg per chiamata tiene l'ultimo fotogramma completo come JPEG. Keyframe via SIP INFO (`picture_fast_update`, estensione nostra).
 
 Dettaglio completo del vocabolario MESSAGE, piano di numerazione e messaggi in ingresso: `docs/PROTOCOL.md`.
 
@@ -80,15 +80,15 @@ Tab/Cloud Flexisip ──SIP(UDP/TLS)──▶ sip_client (asyncio, stato di mod
                           ┌─────────────┼───────────────┐
                           ▼             ▼               ▼
                    entità HA      servizi HA       HTTP views
-             (sensor/switch/    (send_command,   (/video,/av,
+             (sensor/switch/    (send_command,   (/av,
               button/lock/…)     call, open_door)  /audio_ws)
                                         ▲
                                         │ RTP H.264/PCMU
-                                  media_handler + ffmpeg ─▶ camera (MJPEG)
+                                  media_handler + ffmpeg ─▶ camera (stream)
 ```
 
 `runtime.py` (`R.*`) è popolato da `configure(entry.data)` all'avvio: credenziali, target calcolati
-(`INTERCOM`/`DOOR_ESTERNO = sip:55001@<domain>`) e la lista `ACTUATORS`.
+(`INTERCOM` = targa di `camera_target` o 55100, `DOOR_ESTERNO` = targa di `door_target`, altrimenti l'attuatore porta importato, altrimenti l'SGA) e la lista `ACTUATORS`.
 
 ---
 
@@ -104,7 +104,7 @@ Tab/Cloud Flexisip ──SIP(UDP/TLS)──▶ sip_client (asyncio, stato di mod
 ## Sicurezza
 
 - Credenziali cifrate nella config entry; `ha1` supportato per evitare la password in chiaro.
-- `/video` e `/av` filtrati solo‑LAN (`_is_local_request`); `/audio_ws` con auth HA.
+- `/av` filtrato solo‑LAN (`_is_local_request`); `/audio_ws` con auth HA.
 - Il payload del QR non è loggato a INFO; il traffico SIP va a `_LOGGER.debug`.
 
 ---

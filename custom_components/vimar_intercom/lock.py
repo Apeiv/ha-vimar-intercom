@@ -8,6 +8,7 @@ import logging
 from homeassistant.components.lock import LockEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import const as C
@@ -77,7 +78,8 @@ class VimarIntercomLock(LockEntity):
                 self._relock_task.cancel()
             self._relock_task = asyncio.create_task(self._auto_relock())
         else:
-            _LOGGER.error("Door open failed: %s", msg)
+            # Errore al chiamante (card, automazione): prima la card mostrava "Aperto".
+            raise HomeAssistantError(f"Apertura non riuscita: {msg}")
 
     async def async_will_remove_from_hass(self) -> None:
         """Cancella il task di richiusura automatica se l'entità viene rimossa."""

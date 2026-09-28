@@ -38,7 +38,9 @@ def test_const_non_espone_un_dominio_sip():
     assert not hasattr(C, "SIP_DOMAIN")
 
 
-def test_auto_call_usa_il_dominio_attivo(hub, monkeypatch):
+def test_auto_call_chiama_la_targa_video(hub, monkeypatch):
+    """L'autoaccensione usa il default di do_call, R.INTERCOM = sip:<camera_target>@dominio
+    (vedi test_runtime), non il PICG."""
     chiamate = []
 
     async def _fake_do_call(target=None):
@@ -46,29 +48,8 @@ def test_auto_call_usa_il_dominio_attivo(hub, monkeypatch):
         return True, "200"
 
     monkeypatch.setattr(sip, "do_call", _fake_do_call)
-    monkeypatch.setattr(R, "SIP_DOMAIN", "impianto.example", raising=False)
-
-    asyncio.run(hub._do_auto_call("55100"))
-
-    assert chiamate == ["sip:55100@impianto.example"]
-
-
-def test_auto_call_senza_target_chiama_la_targa_video(hub, monkeypatch):
-    """Senza target esplicito si chiama la targa video configurata, non il PICG."""
-    chiamate = []
-
-    async def _fake_do_call(target=None):
-        chiamate.append(target)
-        return True, "200"
-
-    monkeypatch.setattr(sip, "do_call", _fake_do_call)
-    monkeypatch.setattr(R, "SIP_DOMAIN", "impianto.example", raising=False)
-    # Issue #3: su un 40515 la PE è 55001; l'opzione deve vincere sul default.
-    monkeypatch.setattr(R, "CAMERA_TARGET", "55001", raising=False)
-
-    asyncio.run(hub._do_auto_call(None))
-
-    assert chiamate == ["sip:55001@impianto.example"]
+    asyncio.run(hub._do_auto_call())
+    assert chiamate == [None]
 
 
 # ─── A2: fine chiamata → gli squilli successivi tornano veri ─────────────────
@@ -106,6 +87,28 @@ def test_squillo_dopo_una_chiamata_chiusa_non_viene_soppresso(hub, monkeypatch):
     assert not declines
 
 
+def test_squillo_insieme_al_bye_della_targa_non_e_un_eco(hub, monkeypatch):
+    """La targa chiude la vista e fa squillare nello stesso istante: il ring arriva
+    mentre stop_media chiude ancora ffmpeg, prima del call_ended. Fino a qui era
+    preso per l'eco dell'auto-call e rifiutato con 603 (chiuso anche sul Tab)."""
+    declines = []
+
+    async def _fake_decline():
+        declines.append(True)
+
+    monkeypatch.setattr(sip, "do_decline_incoming", _fake_decline)
+    monkeypatch.setattr(sip, "calling", False, raising=False)
+    monkeypatch.setattr(sip, "in_call", True, raising=False)
+    squilli = []
+    hub.register_ring_callback(lambda: squilli.append(True))
+    hub._auto_called = True
+    hub._on_sip_state_change()                         # in chiamata
+    monkeypatch.setattr(sip, "in_call", False, raising=False)
+    hub._on_sip_state_change()                         # BYE della targa: in_call scende
+    asyncio.run(hub._handle_broadcast("ring", ""))     # ...e il call_ended non è ancora arrivato
+    assert squilli and not declines
+
+
 # ─── A3: il retry dello stato iniziale deve restare raggiungibile ────────────
 
 def test_init_status_non_si_marca_inviato_se_fallisce(hub, monkeypatch):
@@ -128,3 +131,56 @@ def test_init_status_si_marca_inviato_se_riesce(hub, monkeypatch):
     asyncio.run(hub._request_init_status())
 
     assert hub._init_status_sent is True
+
+
+# ─── Squillo in corso: aprire lo stream non risponde e non chiama ────────────
+
+def test_stream_durante_lo_squillo_non_risponde_ne_chiama(hub, monkeypatch):
+    """Una card o un tablet con lo stream aperto non deve rubare lo squillo al
+    Tab (rispondere) né prendersi un 603 (chiamare la targa che squilla)."""
+    azioni = []
+
+    async def _fake_answer():
+        azioni.append("answer")
+        return True, "200"
+
+    async def _fake_do_call(target=None):
+        azioni.append("call")
+        return True, "200"
+
+    monkeypatch.setattr(hub, "async_answer", _fake_answer)
+    monkeypatch.setattr(sip, "do_call", _fake_do_call)
+    monkeypatch.setattr(sip, "registered", True)
+    monkeypatch.setitem(sip.pending_incoming, "active", True)
+
+    async def _run():
+        await hub.stream_opened()
+        await asyncio.sleep(0)
+
+    asyncio.run(_run())
+
+    assert azioni == []
+    assert not hub._auto_called
+
+
+def test_due_stream_insieme_una_sola_chiamata(hub, monkeypatch):
+    """go2rtc e lo stream worker aprono /av nello stesso istante."""
+    chiamate = []
+
+    async def _fake_do_call(target=None):
+        chiamate.append(target)
+        return True, "200"
+
+    monkeypatch.setattr(sip, "do_call", _fake_do_call)
+    monkeypatch.setattr(sip, "registered", True)
+    monkeypatch.setitem(sip.pending_incoming, "active", False)
+    monkeypatch.setattr(R, "SIP_DOMAIN", "impianto.example", raising=False)
+
+    async def _run():
+        await hub.stream_opened()
+        await hub.stream_opened()
+        await asyncio.sleep(0)
+
+    asyncio.run(_run())
+
+    assert len(chiamate) == 1

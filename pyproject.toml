@@ -6,8 +6,12 @@ requires-python = ">=3.11"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q -m 'not live'"
-markers = ["live: richiede il Tab reale in rete (escluso di default)"]
+addopts = "-m 'not live and not media and not browser'"
+markers = [
+    "live: richiede il Tab reale in rete (escluso di default)",
+    "media: media vero con ffmpeg e aiohttp (escluso di default: -m media)",
+    "browser: la card in Chromium/WebKit con playwright e aiohttp (escluso di default: -m browser)",
+]
 
 [tool.ruff]
 line-length = 120

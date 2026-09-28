@@ -4,7 +4,233 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [semver](ht
 Newest entries on top. **Entries are written in English from 1.0.1 onwards**; earlier ones are in
 Italian and are kept as they were written.
 
-## [Unreleased]
+## [1.0.9] - 2026-09-28
+
+Builds on 1.0.8. Field-tested on a Tab 5S Up 40515 (cloud TLS + SRTP).
+
+### Added
+
+- Video preview while the doorbell rings (early media): the ring gets `183 Session Progress` with
+  our SDP instead of a bare `180 Ringing`, so the panel streams video before anyone answers, as
+  the VIEW app's preview does. Snapshots and `/av` work during the ring; answering reuses the same
+  SDP and SRTP keys. Not done during one of our own calls. A UDP retransmission of the same
+  INVITE gets the same response instead of counting as a new ring; a ring whose CANCEL never
+  arrives ends after 90 s; placing a call while it rings is refused ("Squillo in corso").
+- Away message: options `away_message_file` (mp3, wav...) and `away_message_delay` (seconds,
+  0 = off, max 60). If that ring is still ringing after the delay (nobody answered from the panel,
+  a phone or HA), the file is decoded first (max 30 s; an unreadable file leaves it ringing), then
+  the integration answers, plays it at real time (8 kHz, 20 ms RTP packets, SRTP included) and
+  hangs up only its own call. `answer` during the message takes the call over.
+- Ring snapshot: options `snapshot_dir` (folder, must be writable by HA; empty = off) and
+  `snapshot_delay` (seconds after the ring, default 3 for the Tab 5S Up 40515). On every ring the
+  integration saves the visitor's photo from the preview as `squillo_YYYYMMDD_HHMMSS_mmm.jpg` and
+  `ultimo_squillo.jpg`.
+- Dashboard card `custom:vimar-intercom-card`, loaded by the integration (no Resources entry):
+  live video only during a ring or call (opening the card never calls the panel), **Vedi
+  esterno** when idle, buttons that follow the call state, **Apri** with two taps, and two-way
+  audio over `/api/vimar_intercom/audio_ws` (signed path, 8 kHz PCM, browser echo cancellation).
+  The microphone needs HTTPS; over HTTP the card still answers (video only). Microphone and
+  WebSocket close when the call ends or never starts.
+- Card: one row without video (photo of the last ring, name, state, last ring, buttons); the 4:3
+  video pane appears on ringing / calling / in call and goes away when idle (1.5 s after a
+  hang-up, buttons off, so a second tap does not land on the card below). The buttons keep their
+  slots. Option `layout`: `overlay` (default, the card is the video, buttons on a dark strip at
+  the bottom) or `sotto` (video above the row, buttons under it). Visual editor (camera, name,
+  layout, history); the card is "Citofono Vimar" in the card picker, with a preview. Errors
+  replace the state line for a few seconds instead of a permanent line under the buttons.
+- Card: low-latency video. Over HTTPS, with WebCodecs (Chrome, Edge, Firefox, Safari/iOS 16.4+),
+  the card decodes the panel's H.264 NALs from `audio_ws` and paints them on a canvas: first
+  frame about 0.1 s after the panel sends it (HA's stream took 2-4 s, past half of the ~10 s the
+  40515 allows), without opening `/av`. A ring joined mid-GOP gets the current GOP replayed, so
+  the first frame does not wait for the next IDR. No WebCodecs, or an unsupported codec: HA's
+  stream as before. A decoder error or a dropped WebSocket does not fall back (HA's stream is
+  blank off-LAN, no TURN): the decoder restarts at the next IDR, the WebSocket reopens and gets
+  the current GOP again. Frames are dropped down to the next IDR when the decoder falls behind.
+  RTP the panel still sends after our BYE is discarded until the next call (it used to reach the
+  card and the replayed GOP); a call placed during the 1.5 s hold gets a fresh player; a card
+  HA detaches and re-attaches during a call (view switch) shows the video again at once.
+- Card option `anchor` (default `citofono`, empty = off): with `#citofono` in the URL (e.g. a
+  notification opening `/lovelace/camera#citofono`) the card scrolls itself into view, also on a
+  later hash change.
+- Ring history: with `snapshot_dir` set, every ring is logged in `squillo.json` next to the photos
+  (time, photo, caller, outcome; last 200), and the outcome becomes `answered` on `answer` or
+  `away` when the away message picks up. New authenticated endpoints `GET /api/vimar_intercom/rings`
+  (newest first, `?limit=` max 50) and `GET /api/vimar_intercom/rings/<name>` (only
+  `squillo_YYYYMMDD_HHMMSS_mmm.jpg` inside `snapshot_dir`). The card shows the latest rings (option
+  `history`, default 8, 0 = off) with photo, time and outcome; a tap opens the photo large. The
+  ring photo is now named after the ring time, not the moment it was taken.
+- "Vedi esterno" lasts as long as the panel allows (about 10 s on the Tab 5S Up 40515): when the
+  panel hangs up the video ends and the card closes. To look again, press "Vedi esterno" again, as
+  on the in-home monitor.
+- Admin service `vimar_intercom.simulate_ring`: fires the doorbell event (and the automations
+  on it) without the entrance panel. No SIP, push, WebSocket broadcast or statistics.
+
+### Fixed
+
+- Stills (`camera.snapshot`, notifications) come from a per-call frame grabber instead of the
+  stream: one ffmpeg decodes the H.264 NALs from the first SPS of the call (or ring preview) and
+  keeps the latest JPEG, so a snapshot is instant instead of waiting for the next IDR (>8 s at
+  night on the 40515). They also work during the ring. No image and no call outside a call.
+- `/av` clients share one ffmpeg: go2rtc (WebRTC) and HA's stream worker open it together, and
+  each new client used to kill the previous one's ffmpeg. A slow client is dropped instead of
+  corrupting the MPEG-TS for everyone. Two simultaneous opens place one call, not two.
+- First decodable frame in about 1 s instead of the next in-band IDR (~8 s on the 40515, past
+  the panel's hang-up): SPS/PPS are cached even with no WebSocket client and written to the AV
+  SDP (`sprop-parameter-sets`), and a keyframe is requested when `/av` attaches.
+- Local UDP mode: in-dialog requests (BYE, re-INVITE, INFO) from the panel's own address are
+  accepted when the plant has no Record-Route: the source filter also allows the hosts of the
+  current dialog (Contact/Via of the ring, Contact of the call). Before, HA stayed "in call" and
+  the panel kept retransmitting its BYE.
+- Auth retries are capped (at most 2 per INVITE or INFO, and only on `stale=true` or a new
+  nonce): a retransmitted 407 no longer produces an INVITE storm. The proxy challenge is cached,
+  so the keyframe INFOs are sent with `Proxy-Authorization` from the first one (no 407 for each
+  of the 8 in the initial burst), and an authenticated resend waits for its own answer.
+- Incoming INVITEs are keyed on (Call-ID, Via branch): the second branch of a forked ring (the
+  cloud relay sends two INVITEs a few ms apart) gets `482 Loop Detected` on its own Via, and a
+  CANCEL is matched on the branch too. The relay's CANCEL of its duplicate branch, sent ~70 ms
+  after our 200 OK, no longer ends the call just answered. The 200 OK is not retransmitted and a
+  missing ACK never turns into a BYE: over the cloud relay the ACK of our 200 never arrives.
+- Frame grabber: the first IDR is kept as the photo until a later one replaces it (with an IDR
+  every ~3 s, or >8 s at night, a ~10 s view could end with no photo); a re-INVITE with a new
+  SDP restarts the grabber without clearing the photo already taken.
+- The GOP cached for the `/av` replay is filled after the reorder filter: an old keyframe
+  resent by the 40515 no longer resets it to "old IDR fragment + new P frames".
+- `away_message_file` must be inside a folder HA may read (`is_allowed_path`, like
+  `snapshot_dir`) and is passed to ffmpeg as `file:<path>`.
+- `/av`: ffmpeg is spawned off the event loop and its stderr reader task is kept referenced.
+- Card: the video WebSocket reopens with a backoff (1, 2, 4... s, max 10) and stops when the
+  player is closed; the microphone is released if the card left the page while the browser asked
+  for permission; a failed photo tap shows its error on the card.
+- A single RTP packet lost on the cloud path (`FU-A seq gap ... gap=1, continuing` in the log)
+  produced a NAL with a hole and smeared video on the card until the next IDR (~3 s). A gap
+  inside an FU-A now drops that NAL, P slices are dropped for the WebSocket clients, the frame
+  grabber and the GOP replay until the next IDR (the canvas freezes on the last good frame
+  instead), and a keyframe is requested at once (at most one per second). `/av` still gets the
+  raw RTP: ffmpeg does its own concealment.
+- `/av` waits up to 25 s for the call (cloud call setup sometimes takes ~15 s), and a client
+  that leaves early no longer leaves the viewer count, and so the auto-hangup, stuck.
+- Card: each button keeps its place (call | voice | door), so "Riaggancia" no longer slides under
+  the finger that meant "Parla". Failed services (`{ok: false}`) and a failed door opening (the
+  lock now raises an error) show on the card; a double tap on Parla/Rispondi places one call; the
+  microphone is released on failure; "Audio interrotto" when the audio channel drops; iOS/Safari
+  audio works (AudioContext created in the tap); the second tap of Apri after the 3 s re-arm works.
+- Speaking into the card's microphone takes the call: the away message no longer hangs it up and
+  an auto-call is no longer hung up when the video closes. An INVITE during a call no longer turns
+  the state into "ringing", and `answer` during a call is refused instead of breaking it.
+- SIP: hanging up while the panel rings sends CANCEL (before, the call went up anyway on the late
+  200 OK); a late or orphan 200 OK gets ACK + BYE, a retransmitted 200 OK of the current call gets
+  its ACK again, the ACK of a 4xx/6xx uses the INVITE's branch, and a 45 s INVITE timeout sends
+  CANCEL. re-INVITE and UPDATE inside the call get 200 OK instead of a new ring. A second INVITE
+  while busy gets `486 Busy Here` (a 603 made the PBX cancel the call on the other phones too); a
+  ring that times out gets `480`. Responses to other methods no longer reach the INVITE
+  transaction. A retransmitted 407 is only ACKed.
+- TLS: the reader no longer deadlocks on reconnect (the new REGISTER waited for responses only the
+  reader itself could read: ~2.5 min deaf after every server close); it uses the same dispatcher
+  as UDP; a negative Content-Length no longer freezes the event loop.
+- Media: outgoing voice leaves in 20 ms packets from a pacer (the browser sent 43 ms bursts against
+  our `a=ptime:20`); no voice during the ring preview or when the panel says `sendonly`; never
+  plain RTP inside an SRTP session. Video: the reorder buffer no longer stalls on old or restarted
+  sequence numbers, SRTP keeps rollover state per SSRC, RTP header extensions are skipped, and
+  video reaches ffmpeg as PT 96 whatever the panel's payload type (black `/av` before).
+- HTTP views follow the active config entry (after removing and re-adding the integration they
+  answered 503 until HA restarted); WebSocket broadcasts no longer fail when a client connects
+  mid-send. `fetch_local` has its service strings.
+- A retransmitted INVITE after we answered gets the 200 OK again instead of silence (a lost 200
+  over UDP used to end the call), and the 90 s ring timer is cancelled when the ring ends.
+- Hanging up during a ring no longer stops its preview, so a later answer has audio and video. A
+  malformed SDP in the ring no longer silences the doorbell (the preview is skipped instead). A
+  second INVITE or a failed 200 OK no longer leaves the preview running.
+- The ring photo folder can't be under `/config/www` (served on `/local` without login); disk
+  errors are logged, and a reload during the delay cancels the photo.
+- While the doorbell is ringing, opening the stream neither calls the panel (603) nor answers:
+  a dashboard or wall tablet with the camera open would otherwise steal the ring from the
+  in-home panel. Answer explicitly with the `answer` service.
+- The `open_door` service default follows the lock's door target.
+- A BYE for another dialog no longer ends the active call (481 instead of 200).
+- Answering clears the pending ring before the first await, so two answers (timer + user) can't
+  send two 200 OKs.
+- `send_command` defaults to the configured SGA instead of a hardcoded 55001; a WebSocket panel
+  switch can no longer leave SIP broadcasts muted if cancelled.
+- A doorbell ring right after the panel ended a view call got `603 Decline`, which the PBX
+  propagated, cancelling the ring on the Tab too. Only a call we are placing or holding now
+  suppresses a ring.
+- `/av` answers 503 as soon as nothing is coming (call refused, cancelled or ended) instead of
+  spinning for 25 s and counting as a viewer. With the iOS app's WebSocket connected it still waits
+  (up to 25 s) for the call the app places. The call end reaches HA without the 3 s wait for
+  ffmpeg to quit.
+- BYE is retransmitted over UDP like the other requests (a lost BYE left the panel busy, 486 on
+  the next view), waits only for its own response (not the 200 of a keyframe INFO), and the call
+  is closed locally even when the BYE can't be sent (TLS down): before, it stayed "in call" with
+  the media on and every ring got 486. Crossed BYEs no longer tear down what came next. Declining
+  a ring with the connection down ends the ring anyway.
+- The INVITE is retransmitted over UDP (Timer A): a lost first INVITE made "Vedi esterno" wait
+  45 s. Closing the camera while the call is still connecting cancels it after the usual delay
+  (it stayed up, unwatched, until the 5-minute cap).
+- An incoming call without SDP in the INVITE (late offer) takes the panel's answer from the ACK;
+  before, the call was up with no audio or video.
+- `/av` keeps one continuous RTP stream towards ffmpeg when the panel restarts its stream (new
+  SSRC or sequence numbers): ffmpeg dropped every packet as "too late" and the video froze.
+- One reconnection at a time: reader, keepalive and the WebSocket `reconnect` action each opened a
+  TLS connection and closed the other's. Unloading the integration stops a pending reconnection.
+- The cloud unreachable at startup (HA up before the router after a power cut) makes HA retry the
+  setup by itself (`ConfigEntryNotReady`) instead of leaving the entry failed until a manual reload.
+- Card: if the ring ends while the browser asks for the microphone after "Rispondi", the card
+  says the ring is over instead of calling the panel. When the panel refuses a call the
+  card closes the video pane and says so ("La targa non ha accettato, riprova.") instead of
+  staying on "Collegamento…".
+- Hanging up while the panel ends the call at the same moment (crossed BYEs) returns at once
+  instead of waiting 5 s for a response that no longer comes.
+- A malformed `squillo.json` (entries that are not objects) no longer breaks the ring list or the
+  next ring's entry; the log is rewritten through a fresh temporary file (a symlink planted in the
+  folder is not followed).
+- Local UDP mode: the SDP of a 183/200 to our INVITE is held to the same LAN-only rule as a ring
+  (a 200 pointing the media outside the LAN is ACKed and closed with BYE), and a late ACK no longer
+  restarts the media of a call that has ended in the meantime.
+
+### Removed
+
+- The MJPEG path: the camera's stream override and the `/api/vimar_intercom/video` view. Both
+  looped on `hub.video_frame` (always `None`) and never wrote a frame; the view also needed no
+  login and placed a call to the panel. Also the unused `FFMPEG_VIDEO_PORT`, `do_door` (no
+  callers), the UDP re-register every 3400 s (the 120 s keepalive already re-registers) and the
+  constants `SEGRETERIA_TARGET`/`DND_TARGET`.
+
+### Changed
+
+- The camera no longer calls the panel by itself on a reconnection: go2rtc and HA's stream
+  worker reopen `/av` as soon as a stream ends, and each reopen placed a new call (486 from the
+  still-busy panel, then another). Now, for 60 s after any call ends (answered, cancelled or
+  refused), after a failed auto-call or after a watched ring preview, a reopen of `/av` within
+  5 s of the last viewer leaving places no call and gets 503 at once. Opening the camera later
+  (dashboard, HomeKit) calls as before; `/av` still waits for the video when a call is up or
+  being placed.
+- H.264: the answer to a ring mirrors the panel's offer (payload type, `packetization-mode`,
+  `profile-level-id`), and our own offer proposes both modes (96 mode 1, 97 mode 0). The 2F
+  panel (baresip, Tab 7S 40507) offers and accepts only mode 0: answering mode 1 left it with no
+  common format and no video at all. Video is still re-stamped to PT 96 towards ffmpeg.
+- `packages/vimar_intercom.yaml`: the ring notification has "Rispondi" (answers and opens the
+  camera) and "Apri" (device authentication on iOS only, and only within 3 minutes of the ring).
+  The visitor's photo comes from the `snapshot_dir` option instead of an automation.
+
+### Security
+
+- Local UDP mode drops SIP packets that don't come from the intercom. Before, any host on the LAN
+  could send an INVITE; with the ring preview that would also have started media towards it,
+  saved its picture as the visitor's photo and played it the away message.
+- `/audio_ws` debug actions (`command`, `probe`, `scan`, `register`, `reconnect`) are admin-only,
+  and the received actions are logged at DEBUG instead of INFO.
+- `send_command` (arbitrary SIP MESSAGE) and `fetch_local` (Digest with the SIP password towards a
+  LAN host) are admin-only; automations still work. They bypassed the `/audio_ws` restriction.
+- Every SIP id used for calls, the door, buttons and actuators must be numeric (`sip_uri`):
+  `x@other.domain` no longer changes the request URI. `open_door` accepts only `OPEN` and `OPEN_*`
+  commands (the `MSG` of the door actuator, or `OPEN_2F`).
+- In local UDP mode, media from a ring goes only to LAN addresses: a spoofed INVITE could point
+  the preview, the away message and the card's microphone at an outside address.
+
+### Requirements
+
+- Home Assistant **2024.7** or later (`hacs.json`): the card's static path needs
+  `async_register_static_paths`.
 
 ## [1.0.8] - 2026-09-26
 

@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 
 from custom_components.vimar_intercom import const as C
-from custom_components.vimar_intercom import media_handler as media
+from custom_components.vimar_intercom import av_stream
 
 COMPONENT = Path(__file__).resolve().parents[1] / "custom_components" / "vimar_intercom"
 
@@ -49,18 +49,27 @@ def test_porte_av_non_toccano_quelle_della_chiamata():
 
 
 def test_l_sdp_di_ffmpeg_usa_le_costanti(tmp_path, monkeypatch):
-    monkeypatch.setattr(media, "_AV_SDP_PATH", str(tmp_path / "av.sdp"))
-    sdp = Path(media._write_av_sdp()).read_text()
+    monkeypatch.setattr(av_stream, "_AV_SDP_PATH", str(tmp_path / "av.sdp"))
+    sdp = Path(av_stream._write_av_sdp()).read_text()
     porte = {int(p) for p in re.findall(r"^m=\w+ (\d+) ", sdp, flags=re.M)}
     assert porte == {C.FFMPEG_AV_VIDEO_PORT, C.FFMPEG_AV_AUDIO_PORT}
+
+
+def test_l_sdp_di_ffmpeg_porta_sps_e_pps(tmp_path, monkeypatch):
+    """SPS/PPS già visti vanno nell'SDP: ffmpeg decodifica dal primo IDR, non da quello
+    che li porta in banda (~8 s sulla 40515, oltre la chiamata)."""
+    from custom_components.vimar_intercom import media_handler as media
+    monkeypatch.setattr(av_stream, "_AV_SDP_PATH", str(tmp_path / "av.sdp"))
+    monkeypatch.setattr(media, "video_proto", type("V", (), {"sps_pps": lambda self: (bytes([0x67, 0x42]), bytes([0x68, 0xCE]))})())
+    assert "sprop-parameter-sets=Z0I=,aM4=" in Path(av_stream._write_av_sdp()).read_text()
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg non installato")
 def test_ffmpeg_riesce_a_fare_il_bind(tmp_path, monkeypatch):
     """Prova vera: ffmpeg apre l'SDP e resta in ascolto (con le porte vecchie
     usciva subito con «bind failed»)."""
-    monkeypatch.setattr(media, "_AV_SDP_PATH", str(tmp_path / "av.sdp"))
-    sdp = media._write_av_sdp()
+    monkeypatch.setattr(av_stream, "_AV_SDP_PATH", str(tmp_path / "av.sdp"))
+    sdp = av_stream._write_av_sdp()
     proc = subprocess.Popen(
         ["ffmpeg", "-loglevel", "error", "-protocol_whitelist", "file,udp,rtp",
          "-i", sdp, "-c", "copy", "-f", "mpegts", "-y", str(tmp_path / "out.ts")],
@@ -84,7 +93,7 @@ def test_lo_stderr_si_legge_anche_da_processo_morto():
         stderr=subprocess.PIPE)
     proc.wait()
     tail: collections.deque[str] = collections.deque(maxlen=5)
-    asyncio.run(media._read_av_ffmpeg_stderr(proc, tail))
+    asyncio.run(av_stream._read_av_ffmpeg_stderr(proc, tail))
     assert list(tail) == ["bind failed"]
 
 
@@ -100,8 +109,49 @@ def test_la_camera_dichiara_lo_stream():
     assert "def stream_source" in src
 
 
-def test_anteprime_dallo_stream_solo_in_chiamata():
-    """Da ferma, una miniatura non deve far chiamare la targa."""
+def test_anteprime_senza_chiamare_la_targa():
+    """Da ferma, una miniatura non deve far chiamare la targa: le foto non vengono
+    dallo stream (use_stream_for_stills resta al default False) ma dal frame
+    grabber, e fuori da chiamata o squillo non c'è immagine."""
     src = _codice("camera.py")
-    corpo = src.split("def use_stream_for_stills", 1)[1].split("def ", 1)[0]
-    assert "return self._hub.in_call" in corpo
+    assert "def use_stream_for_stills" not in src
+    corpo = src.split("def async_camera_image", 1)[1]
+    assert "if not self._hub.video_active:" in corpo
+    assert "return None" in corpo
+
+
+def test_camera_disponibile_e_stream_fermato_a_fine_chiamata():
+    """Dal campo: i 503 voluti di /av a riposo facevano segnare la camera
+    "unavailable", e lo stream di HA restava a riprovare con attese di 10-30 s:
+    al "Vedi esterno" dopo, card bianca. A fine chiamata lo stream si ferma."""
+    import asyncio
+    import sys
+    from types import SimpleNamespace
+
+    ha_camera = sys.modules.get("homeassistant.components.camera")
+    if getattr(sys.modules.get("homeassistant"), "_is_stub", False) and ha_camera is not None:
+        ha_camera.Camera = object  # lo stub di conftest non ha la classe vera
+        ha_camera.CameraEntityFeature = SimpleNamespace(STREAM=2)
+        sys.modules.pop("custom_components.vimar_intercom.camera", None)
+    camera_mod = pytest.importorskip("custom_components.vimar_intercom.camera")
+    hub_mod = pytest.importorskip("custom_components.vimar_intercom.hub")
+
+    fermati = []
+
+    async def _stop():
+        fermati.append(True)
+
+    async def run():
+        hub = hub_mod.VimarIntercomHub()
+        cam = camera_mod.VimarIntercomCamera.__new__(camera_mod.VimarIntercomCamera)
+        cam._hub = hub
+        cam.hass = SimpleNamespace(async_create_task=asyncio.ensure_future)
+        cam.stream = SimpleNamespace(stop=_stop, outputs=dict)
+        hub.register_video_end_callback(cam._stop_stream)
+        hub._was_busy = True
+        hub._on_sip_state_change()  # in_call/calling scendono: fine chiamata
+        await asyncio.sleep(0)
+        assert cam.available == hub.registered
+
+    asyncio.run(run())
+    assert fermati == [True]
