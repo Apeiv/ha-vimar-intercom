@@ -144,7 +144,17 @@ async def _run(enc, standby: bytes, is_live, on_live, port: int) -> None:
     t0, n = loop.time(), 0
     cancelled = False
     _pcm.clear()
-    media.pcm_tap = _tap
+    # Incatenato a un pcm_tap già presente (es. frame_grabber, che tappa il PCM per il
+    # clip dello squillo) invece di sostituirlo: altrimenti chi parte per secondo vince
+    # e l'altro resta muto, in un ordine che dipende solo da quando arriva un client qui.
+    prev_tap = media.pcm_tap
+
+    def tap(pcm: bytes) -> None:
+        if prev_tap:
+            prev_tap(pcm)
+        _tap(pcm)
+
+    media.pcm_tap = tap
     try:
         audio = await _audio_in(port)
         while not pump.done():
@@ -165,7 +175,7 @@ async def _run(enc, standby: bytes, is_live, on_live, port: int) -> None:
         cancelled = True
         raise
     finally:
-        media.pcm_tap = None
+        media.pcm_tap = prev_tap
         _pcm.clear()
         if audio:
             audio.close()
