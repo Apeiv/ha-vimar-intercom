@@ -14,6 +14,7 @@
 // `card_entities` della camera. Scritte e esistenti, vincono quelle della config.
 //   anchor: citofono      (URL con #citofono: la card si porta in vista; "" = no)
 //   history: 8            (ultimi squilli con foto e clip, se c'è la cartella foto; 0 = no)
+//   confirm_open: true    (Apri chiede un secondo tocco; false = apre al primo)
 //   layout: overlay       (o "sotto"; anche dall'editor visuale)
 //
 //   layout: overlay   (default) "Video a tutta card": da fermo riga da 72 px (foto dell'ultimo
@@ -412,6 +413,7 @@ const DEFAULTS = {
   anchor: "citofono",
   history: 8,
   layout: "overlay",  // o "sotto"
+  confirm_open: true,
 };
 
 class VimarIntercomCard extends HTMLElement {
@@ -719,10 +721,10 @@ class VimarIntercomCard extends HTMLElement {
     this._video = el;
   }
 
-  // Doppio tocco: il primo arma per 3 s, il secondo apre. La pressione lunga su iOS
+  // Doppio tocco (confirm_open, default): il primo arma per 3 s, il secondo apre. La pressione lunga su iOS
   // litiga con VoiceOver e col menu contestuale; confirm() si conferma di riflesso.
   async _openDoor() {
-    if (!this._armed) {
+    if (this._cfg.confirm_open && !this._armed) {
       this._resetOpen();
       this._armed = true;
       this._openTimer = setTimeout(() => this._resetOpen(), 3000);
@@ -908,8 +910,10 @@ const SCHEMA = [
     { value: "sotto", label: "Tasti sotto il video" },
   ] } } },
   { name: "history", selector: { number: { min: 0, max: 50, mode: "box" } } },
+  { name: "confirm_open", selector: { boolean: {} } },
 ];
-const FIELD = { camera: "Telecamera", name: "Nome", layout: "In diretta", history: "Squilli in cronologia (0 = niente)" };
+const FIELD = { camera: "Telecamera", name: "Nome", layout: "In diretta", history: "Squilli in cronologia (0 = niente)",
+  confirm_open: "Apri con doppio tocco" };
 
 class VimarIntercomCardEditor extends HTMLElement {
   setConfig(config) {
