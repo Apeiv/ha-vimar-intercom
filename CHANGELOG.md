@@ -125,6 +125,17 @@ Small follow-up to 1.0.9, from the first days of use on the 2F (Tab 7S 40507).
   `tx=` packet count says packets leave, not that they carry a voice, so a muted or wrong
   microphone can now be told apart from a panel that does not play it.
 
+### Fixed
+
+- Ring photo: a panel calling for the first time since the HA restart that shipped the
+  per-panel SPS/PPS cache (or after an update from the older, single-pair storage format)
+  had nothing cached for it, and its first IDR often arrives without in-band SPS/PPS (the
+  40515 sends those only every ~6 s): the photo failed with "anteprima video non arrivata"
+  even though video was flowing. The old single-pair storage is now migrated instead of
+  discarded, and a cache miss for the calling panel falls back to any other panel's cached
+  SPS/PPS (the resolution rarely differs) instead of none. The ring photo also keeps waiting
+  for a decodable frame for as long as the ring lasts, not just 6 s.
+
 ### Changed
 
 - `/av` audio is AAC-LC (48 kHz mono, 32 kb/s) instead of the panel's raw G.711. In MPEG-TS

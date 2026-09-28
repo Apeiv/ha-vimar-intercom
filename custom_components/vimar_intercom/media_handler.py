@@ -262,8 +262,13 @@ class RTPVideoProtocol(asyncio.DatagramProtocol):
 
     def sps_pps(self) -> tuple[bytes, bytes] | None:
         """Gli ultimi SPS e PPS di questa targa (anche dalla chiamata prima), se ci sono
-        entrambi: con quelli ffmpeg (/av, foto) decodifica dal primo IDR."""
-        return (self._last_sps, self._last_pps) if self._last_sps and self._last_pps else None
+        entrambi: con quelli ffmpeg (/av, foto) decodifica dal primo IDR. Se questa targa
+        non ne ha ancora mai mandati (mai chiamata prima, o cache persa a un aggiornamento),
+        quelli di un'altra: la risoluzione cambia raramente, meglio una foto con quelli
+        che nessuna foto ad aspettare l'SPS in banda (fino a 6 s sulla 40515)."""
+        if self._last_sps and self._last_pps:
+            return self._last_sps, self._last_pps
+        return next((ps for ps in self._ps_by_panel.values() if all(ps)), None)
 
     def set_panel(self, panel: str | None) -> None:
         """Chiamata (o anteprima) con questa targa: si riparte dai suoi SPS/PPS."""
@@ -666,7 +671,14 @@ async def restore_sps_pps(store) -> None:
             str(k): (base64.b64decode(v["sps"]), base64.b64decode(v["pps"]))
             for k, v in saved["panels"].items()}
     except (TypeError, KeyError, ValueError, AttributeError):
-        pass  # niente di salvato (o rotto): si aspetta la targa come prima
+        try:  # formato di prima di 787bb87 (una sola coppia, non per targa): tenuta
+            # come fallback generico invece di perderla al primo riavvio dopo
+            # l'aggiornamento (altrimenti la prima targa a chiamare non ha nulla,
+            # né sua né di un'altra, finché non manda l'SPS in banda).
+            video_proto._ps_by_panel = {
+                "": (base64.b64decode(saved["sps"]), base64.b64decode(saved["pps"]))}
+        except (TypeError, KeyError, ValueError):
+            pass  # niente di salvato (o rotto): si aspetta la targa come prima
     video_proto.on_sps_pps = lambda: store.async_delay_save(
         lambda: {"panels": {k: {"sps": base64.b64encode(s).decode(), "pps": base64.b64encode(p).decode()}
                             for k, (s, p) in video_proto._ps_by_panel.items()}}, 5)

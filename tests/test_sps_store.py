@@ -6,10 +6,12 @@ import asyncio
 import base64
 
 from custom_components.vimar_intercom import av_stream
+from custom_components.vimar_intercom import frame_grabber
 from custom_components.vimar_intercom import media_handler as media
 
 SPS = bytes([0x67, 0x42, 0x80, 0x1F, 0xDA, 0x01, 0x40, 0x16, 0xE8, 0x40])
 PPS = bytes([0x68, 0xCE, 0x38, 0x80])
+IDR = bytes([0x65, 0x01, 0x02, 0x03])  # tipo 5, senza SPS/PPS davanti (come sul campo)
 
 
 def b64(n: bytes) -> str:
@@ -49,7 +51,7 @@ def test_round_trip_per_targa_e_sprop_alla_prima_av(monkeypatch, tmp_path):
         # Un'altra targa chiama: niente SPS/PPS di quella prima; i suoi vanno a parte.
         pps2 = PPS + b""
         vp.set_panel("55002")
-        assert vp.sps_pps() is None
+        assert vp.sps_pps() == (SPS, PPS)
         vp._emit_nal(SPS)
         vp._emit_nal(pps2)
         assert store.saves == 2 and store.data["panels"]["55002"]["pps"] == b64(pps2)
@@ -74,6 +76,78 @@ def test_round_trip_per_targa_e_sprop_alla_prima_av(monkeypatch, tmp_path):
         vp2._emit_nal(pps3)
         assert store2.data["panels"] == {"55001": {"sps": b64(SPS), "pps": b64(PPS)},
                                          "55002": {"sps": b64(SPS), "pps": b64(pps3)}} and store2.saves == 1
+
+    asyncio.run(s())
+
+
+def _finto_ffmpeg_cattura_stdin(monkeypatch):
+    """create_subprocess_exec finto che registra i byte scritti su stdin del grabber:
+    basta a vedere se un NAL è stato messo in coda o scartato, senza ffmpeg vero.
+    stdout non finisce mai da solo (altrimenti _grab esce e annulla il feeder subito,
+    prima che scriva niente): lo stop() del test ferma tutto col cancel del task."""
+    written = bytearray()
+
+    class _Pipe:
+        async def read(self, n):
+            await asyncio.sleep(0.05)
+            return b"\x00"
+
+        def write(self, b):
+            written.extend(b)
+
+        async def drain(self):
+            pass
+
+        def close(self):
+            pass
+
+    class _Proc:
+        returncode = 0
+
+        def __init__(self):
+            self.stdin, self.stdout = _Pipe(), _Pipe()
+
+    async def _exec(*a, **k):
+        return _Proc()
+
+    monkeypatch.setattr(frame_grabber.asyncio, "create_subprocess_exec", _exec)
+    return written
+
+
+def test_ring_2040_idr_senza_sps_pps_usa_la_cache_di_un_altra_targa(monkeypatch):
+    """Nota ring-2040 (squillo reale del 2026-09-28): primo IDR 1,2 s dopo lo squillo,
+    SENZA SPS/PPS in banda (arrivano solo 4 s dopo, come sulla 40515). La targa (60002)
+    non aveva mai chiamato da quando lo storage era stato migrato al formato per targa
+    (787bb87): nello storage c'era ancora la coppia vecchia (formato "piatto", quello che
+    il codice scriveva prima di 787bb87). Senza un fallback la foto falliva pur con video
+    che arrivava; con la coppia migrata l'IDR iniziale si mette subito in coda."""
+    async def s():
+        store = FakeStore({"sps": b64(SPS), "pps": b64(PPS)})  # formato vecchio, pre-787bb87
+        vp = media.RTPVideoProtocol()
+        monkeypatch.setattr(media, "video_proto", vp)
+        await media.restore_sps_pps(store)
+
+        vp.set_panel("60002")  # mai vista prima: niente di sua, solo il fallback migrato
+        assert vp.sps_pps() == (SPS, PPS)
+
+        written = _finto_ffmpeg_cattura_stdin(monkeypatch)
+        frame_grabber.start(vp)
+        await asyncio.sleep(0.05)
+        assert bytes(written).count(PPS) == 1, "la coppia migrata va in coda subito, all'avvio"
+
+        vp._emit_nal(IDR)  # campo: nessun SPS/PPS davanti
+        await asyncio.sleep(0.05)
+        assert IDR in bytes(written), "col fallback l'IDR iniziale non va scartato"
+
+        # SPS/PPS in banda 4 s dopo: la cache si aggiorna solo per questa targa, la
+        # coppia migrata resta buona per la prossima targa mai vista.
+        SPS2, PPS2 = SPS + b"\x10", PPS + b"\x20"
+        vp._emit_nal(SPS2)
+        vp._emit_nal(PPS2)
+        assert vp._ps_by_panel["60002"] == (SPS2, PPS2)
+        assert vp._ps_by_panel[""] == (SPS, PPS)
+
+        frame_grabber.stop(vp)
 
     asyncio.run(s())
 

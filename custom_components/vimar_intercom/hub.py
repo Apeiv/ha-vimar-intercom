@@ -837,8 +837,12 @@ class VimarIntercomHub:
         col nome (ora dello squillo) già scritto nel registro: il primo fotogramma appena
         decodificato (~1 s dallo squillo: notifiche e card la vedono subito), poi, se
         SNAPSHOT_DELAY > 0, dopo quei secondi quello con l'esposizione regolata sullo
-        stesso file (il primo IDR della targa è scuro: la telecamera si è appena accesa)."""
-        jpeg = await frame_grabber.wait_frame()
+        stesso file (il primo IDR della targa è scuro: la telecamera si è appena accesa).
+        Aspetta quanto dura lo squillo (non i soliti 6 s): un primo IDR senza SPS/PPS in
+        banda (né in cache) va scartato, e il prossimo buono può arrivare più tardi (targa
+        40515: SPS ogni ~6 s) — sempre entro lo squillo, perché wait_frame esce comunque
+        appena il grabber muore (fine squillo/chiamata, frame_grabber.stop)."""
+        jpeg = await frame_grabber.wait_frame(timeout=sip.RING_MAX_S)
         if not jpeg:
             _LOGGER.warning("Foto squillo: nessuna immagine (anteprima video non arrivata)")
             return
