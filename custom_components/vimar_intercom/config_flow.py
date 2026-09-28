@@ -32,6 +32,7 @@ from . import qr_decoder
 from . import rest_client
 from . import rubrica_import
 from . import validate
+from .runtime import MEDIA_ENC_MODES, media_enc_mode
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -479,7 +480,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             local_proxy    = user_input.get("local_proxy", "").strip()
             use_local_udp  = user_input.get("use_local_udp", True)
             local_udp_port = int(user_input.get("local_udp_port", DEFAULT_LOCAL_UDP_PORT))
-            media_enc      = bool(user_input.get(KEY_MEDIA_ENC, False))
+            media_enc      = media_enc_mode(user_input.get(KEY_MEDIA_ENC))
             actuators_raw  = user_input.get(KEY_ACTUATORS, "")
             actuators_default = actuators_raw  # rimostra ciò che l'utente ha scritto
 
@@ -580,10 +581,15 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     "local_udp_port",
                     default=form.get(KEY_LOCAL_UDP_PORT, DEFAULT_LOCAL_UDP_PORT)
                 ): vol.All(vol.Coerce(int), vol.Range(min=1024, max=65535)),
+                # auto (segue il media_enc dichiarato dall'impianto) / on / off (issue #4).
                 vol.Optional(
                     KEY_MEDIA_ENC,
-                    default=form.get(KEY_MEDIA_ENC, False)
-                ): bool,
+                    default=media_enc_mode(form.get(KEY_MEDIA_ENC)),
+                ): selector.SelectSelector(selector.SelectSelectorConfig(
+                    options=list(MEDIA_ENC_MODES),
+                    translation_key="media_enc",
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )),
                 vol.Optional(
                     KEY_ACTUATORS,
                     default=actuators_default,
@@ -833,7 +839,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     KEY_LOCAL_PROXY:    current.get(KEY_LOCAL_PROXY, ""),
                     KEY_USE_LOCAL_UDP:  current.get(KEY_USE_LOCAL_UDP, True),
                     KEY_LOCAL_UDP_PORT: current.get(KEY_LOCAL_UDP_PORT, DEFAULT_LOCAL_UDP_PORT),
-                    KEY_MEDIA_ENC:      current.get(KEY_MEDIA_ENC, False),
+                    KEY_MEDIA_ENC:      media_enc_mode(current.get(KEY_MEDIA_ENC)),
                     KEY_ACTUATORS:      actuators,
                     KEY_SGA_TARGET:     new_sga,
                     KEY_PICG_TARGET:    new_picg,

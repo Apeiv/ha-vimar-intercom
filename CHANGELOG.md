@@ -4,6 +4,35 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [semver](ht
 Newest entries on top. **Entries are written in English from 1.0.1 onwards**; earlier ones are in
 Italian and are kept as they were written.
 
+## [1.0.11] - 2026-09-28
+
+Closes [#9](https://github.com/lollox80/ha-vimar-intercom/issues/9) and
+[#4](https://github.com/lollox80/ha-vimar-intercom/issues/4), with the long `GET_INIT_STATUS_REPLY`
+that @CPietro published from a Tab 5S Up 40515 / 2FV2.
+
+### Changed
+
+- **Voicemail and Do Not Disturb no longer show a guess as a fact** (#9). After a command that
+  the plant accepted, the switch shows the commanded value for at most 10 s, and meanwhile
+  asks the plant for its state (`GET_INIT_STATUS`). The Tab's announcement (`VOICEMAIL;`/`DND;`)
+  or the reply replaces it at once, even when it says nothing changed. With neither, the state
+  becomes *unknown* instead of keeping the commanded value forever. After a restart only a state
+  the Tab had confirmed is restored, not the last command. A failed command now raises an error.
+- **`media_enc` has three values: Automatic (new default), On, Off** (#4). Automatic follows the
+  `media_enc` the plant declares in the long reply (`"srtp"` → SRTP); a plant with the short reply
+  (40507 / 2F) stays on plain RTP. Entries saved as on by earlier versions stay on; off becomes
+  Automatic, which on plants that do not declare it is the same thing.
+
+### Added
+
+- **Voicemail delay** `select` (#4): `vm_timeout`, with the values the plant itself declares in
+  `vm_timeout_values`, written with `SET_APT_PARAMS` (`Panda: set`) and changed only when the reply
+  says `ERR_NONE` (no reply or no `ERRCODE` is a failure, as in the VIEW app). The entity is
+  created when the plant first sends the list, so it does not appear at all on plants with the
+  short reply. `APT_PARAMS_CHANGED` from the Tab or the app updates it.
+- The state sensor shows the apartment `GID`, `apt_names`, the declared `media_enc` and whether
+  SRTP is in use, on plants that send them.
+
 ## [1.0.10] - 2026-09-28
 
 Small follow-up to 1.0.9, from the first days of use on the 2F (Tab 7S 40507).

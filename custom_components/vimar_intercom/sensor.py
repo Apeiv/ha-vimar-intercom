@@ -20,6 +20,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from .const import DOMAIN
 from .device import device_info
 from .hub import sip_id_name
+from . import runtime as R
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -50,6 +51,11 @@ def _status_attrs(hub) -> dict:
         "ultimo_errore": st.get("last_error"),
         "ultimo_errore_ora": st.get("last_error_time"),
         "avviato_il": st.get("started_at"),
+        # Solo dagli impianti con la risposta lunga di GET_INIT_STATUS (issue #4).
+        "gid_appartamento": st.get("apt_gid"),
+        "nomi_appartamento": st.get("apt_names"),
+        "cifratura_impianto": st.get("media_enc"),
+        "srtp_attivo": R.MEDIA_ENC,
     }
 
 

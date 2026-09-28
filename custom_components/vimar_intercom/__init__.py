@@ -37,7 +37,7 @@ _LOGGER = logging.getLogger(__name__)
 _debug_log = _log_buffer.debug_log
 _log_buffer.install()
 
-PLATFORMS = ["camera", "lock", "button", "event", "binary_sensor", "sensor", "switch"]
+PLATFORMS = ["camera", "lock", "button", "event", "binary_sensor", "sensor", "switch", "select"]
 
 # ─── Servizi ──────────────────────────────────────────────────────────────────
 SERVICE_SEND_COMMAND = "send_command"

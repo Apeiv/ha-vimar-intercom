@@ -71,6 +71,7 @@ def _stub_ha() -> None:
         "helpers.restore_state", "helpers.device_registry", "helpers.storage", "helpers.event", "helpers.aiohttp_client",
         "helpers.config_validation", "components", "components.http", "components.camera", "components.sensor",
         "components.binary_sensor", "components.switch", "components.button", "components.event", "components.lock",
+        "components.select",
         "components.ffmpeg", "util", "util.dt",
     ]:
         m = _mod(f"homeassistant.{sub}")
@@ -84,6 +85,12 @@ def _stub_ha() -> None:
     ha.config_entries.ConfigFlow = _Any
     ha.config_entries.OptionsFlow = _Any
     ha.const.Platform = _Any()
+    # selector: il config flow ne usa classi e attributi (SelectSelectorMode.DROPDOWN)
+    # al momento di costruire lo schema, non solo all'import.
+    sel = _mod("homeassistant.helpers.selector",
+               SelectSelector=_Any, SelectSelectorConfig=_Any, SelectSelectorMode=_Any(),
+               FileSelector=_Any, FileSelectorConfig=_Any)
+    ha.helpers.selector = sel
     _mod("voluptuous", Schema=_Any, Required=_Any, Optional=_Any, All=_Any, Coerce=_Any, In=_Any, Range=_Any)
 
 

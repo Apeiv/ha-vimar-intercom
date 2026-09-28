@@ -73,7 +73,7 @@
           "local_proxy": "IP del citofono",
           "use_local_udp": "Usa SIP UDP locale",
           "local_udp_port": "Porta UDP locale",
-          "media_enc": "Cifra il media (SRTP)",
+          "media_enc": "Cifratura del media (SRTP)",
           "actuators": "Attuatori (JSON)",
           "sga_target": "SGA (id SIP segreteria/DND)",
           "picg_target": "PICG (id SIP GET_INIT_STATUS)",
@@ -86,7 +86,7 @@
           "snapshot_delay": "Secondi dopo lo squillo per la foto"
         },
         "data_description": {
-          "media_enc": "Lascia disattivato per RTP in chiaro (default sull'impianto di sviluppo). Alcuni impianti rispondono alla chiamata solo con SRTP attivo (es. un Tab 5S Up 40515 in cloud, issue #3): se la camera non si accende o la chiamata fallisce con 488, prova ad attivarlo.",
+          "media_enc": "Automatico: segue quello che dichiara l'impianto nella risposta a GET_INIT_STATUS (\"media_enc\": \"srtp\" su un Tab 5S Up 40515 in cloud); se l'impianto non lo dichiara (risposta corta, come sul 40507) resta in chiaro. Attivo/Disattivo forzano. Se la camera non si accende o la chiamata fallisce con 488, prova Attivo.",
           "actuators": "Lista JSON di oggetti name, msg, target, icon. icon: door|light|switch. target \"AUTO\" usa la targa che apre la porta. Vuoto = nessun bottone.",
           "sga_target": "Destinatario di VOICEMAIL;/DND;, e dell'apertura porta se «Targa che apre la porta» è vuota. Vuoto = default storico (55001). Cambialo solo se il tuo impianto usa un altro SGA (SYSTEM.MAGIC_APT_INTERCOM in rubrica.db).",
           "picg_target": "Destinatario di GET_INIT_STATUS. Sugli impianti verificati finora coincide con l'SGA. Vuoto = default storico (55001).",
@@ -263,10 +263,31 @@
       "name": "Fetch HTTP locale",
       "description": "GET (Digest sipID/password) verso l'interfaccia locale del citofono. Solo amministratori.",
       "fields": {
-        "path": {"name": "Path", "description": "Es. rest/get_info.php?action=status"},
-        "save_as": {"name": "Salva come", "description": "Solo il nome del file, in /config/vimar_intercom/"},
-        "host": {"name": "Host", "description": "IP privato o di loopback (default: il citofono)"},
-        "scheme": {"name": "Schema", "description": "http o https"}
+        "path": {
+          "name": "Path",
+          "description": "Es. rest/get_info.php?action=status"
+        },
+        "save_as": {
+          "name": "Salva come",
+          "description": "Solo il nome del file, in /config/vimar_intercom/"
+        },
+        "host": {
+          "name": "Host",
+          "description": "IP privato o di loopback (default: il citofono)"
+        },
+        "scheme": {
+          "name": "Schema",
+          "description": "http o https"
+        }
+      }
+    }
+  },
+  "selector": {
+    "media_enc": {
+      "options": {
+        "auto": "Automatico (dall'impianto)",
+        "on": "Attivo (SRTP)",
+        "off": "Disattivo (RTP in chiaro)"
       }
     }
   }

@@ -73,7 +73,7 @@
           "local_proxy": "Intercom IP address",
           "use_local_udp": "Use local SIP UDP",
           "local_udp_port": "Local UDP port",
-          "media_enc": "Encrypt media (SRTP)",
+          "media_enc": "Media encryption (SRTP)",
           "actuators": "Actuators (JSON)",
           "sga_target": "SGA (voicemail/DND SIP id)",
           "picg_target": "PICG (GET_INIT_STATUS SIP id)",
@@ -86,7 +86,7 @@
           "snapshot_delay": "Seconds after the ring for the snapshot"
         },
         "data_description": {
-          "media_enc": "Leave off for plain RTP (default on the development system). Some systems only accept the call with SRTP on (e.g. a Tab 5S Up 40515 over the cloud, issue #3): if the camera stays black or the call fails with 488, try turning it on.",
+          "media_enc": "Automatic: follows what the system declares in its GET_INIT_STATUS reply (\"media_enc\": \"srtp\" on a cloud Tab 5S Up 40515); when the system does not declare it (short reply, as on the 40507) media stays plain. On/Off force it. If the camera stays black or the call fails with 488, try On.",
           "actuators": "JSON list of objects name, msg, target, icon. icon: door|light|switch. target \"AUTO\" uses the panel that opens the door. Empty = no buttons.",
           "sga_target": "Target for VOICEMAIL;/DND;, and for the door-open command when “Entrance panel that opens the door” is empty. Empty = historical default (55001). Change it only if your system uses a different SGA (SYSTEM.MAGIC_APT_INTERCOM in rubrica.db).",
           "picg_target": "Target for GET_INIT_STATUS. On systems verified so far it matches the SGA. Empty = historical default (55001).",
@@ -263,10 +263,31 @@
       "name": "Local HTTP fetch",
       "description": "GET (Digest sipID/password) to the intercom's local web interface. Admins only.",
       "fields": {
-        "path": {"name": "Path", "description": "E.g. rest/get_info.php?action=status"},
-        "save_as": {"name": "Save as", "description": "File name only, saved in /config/vimar_intercom/"},
-        "host": {"name": "Host", "description": "Private or loopback IP (default: the intercom)"},
-        "scheme": {"name": "Scheme", "description": "http or https"}
+        "path": {
+          "name": "Path",
+          "description": "E.g. rest/get_info.php?action=status"
+        },
+        "save_as": {
+          "name": "Save as",
+          "description": "File name only, saved in /config/vimar_intercom/"
+        },
+        "host": {
+          "name": "Host",
+          "description": "Private or loopback IP (default: the intercom)"
+        },
+        "scheme": {
+          "name": "Scheme",
+          "description": "http or https"
+        }
+      }
+    }
+  },
+  "selector": {
+    "media_enc": {
+      "options": {
+        "auto": "Automatic (from the system)",
+        "on": "On (SRTP)",
+        "off": "Off (plain RTP)"
       }
     }
   }

@@ -37,8 +37,50 @@ LOCAL_UDP_PORT: int  = 5060   # porta UDP locale su HA
 # False (default) = RTP in chiaro (RTP/AVP, nessun a=crypto). Verificato sul
 # campo 20/08/2026: la targa baresip di questo impianto NON accetta SRTP.
 # True = SRTP AES_CM_128_HMAC_SHA1_80 (RTP/SAVP + a=crypto) per impianti che lo
-# negoziano (media_enc). In futuro ricavabile da GET_INIT_STATUS_REPLY.
+# negoziano (media_enc).
+#
+# Dalla 1.0.11 l'opzione ha tre valori (issue #4): "auto" (default) segue il
+# `media_enc` che l'impianto dichiara nel GET_INIT_STATUS_REPLY lungo ("srtp" su
+# un 40515/2FV2 in cloud); senza dichiarazione (risposta corta, come sul 40507)
+# resta in chiaro. "on" / "off" forzano. MEDIA_ENC è il valore effettivo, quello
+# che legge sip_client.build_sdp.
+MEDIA_ENC_MODES = ("auto", "on", "off")
+MEDIA_ENC_OPTION: str = "auto"
+MEDIA_ENC_PLANT: bool | None = None   # None = l'impianto non l'ha dichiarato
 MEDIA_ENC: bool = False
+
+
+def media_enc_mode(value) -> str:
+    """Valore salvato nelle options → "auto" | "on" | "off".
+
+    Fino alla 1.0.10 era un booleano: True → "on"; False (il vecchio default, che
+    nessuno distingueva da "non toccato") → "auto".
+    """
+    if value is True:
+        return "on"
+    if isinstance(value, str) and value.strip().lower() in MEDIA_ENC_MODES:
+        return value.strip().lower()
+    return "auto"
+
+
+def _recompute_media_enc() -> None:
+    global MEDIA_ENC
+    if MEDIA_ENC_OPTION == "on":
+        MEDIA_ENC = True
+    elif MEDIA_ENC_OPTION == "off":
+        MEDIA_ENC = False
+    else:
+        MEDIA_ENC = bool(MEDIA_ENC_PLANT)
+
+
+def set_plant_media_enc(value) -> bool:
+    """`media_enc` dal GET_INIT_STATUS_REPLY ("srtp", "none", ...). Restituisce True
+    se il valore effettivo è cambiato."""
+    global MEDIA_ENC_PLANT
+    before = MEDIA_ENC
+    MEDIA_ENC_PLANT = None if value is None else str(value).strip().lower() == "srtp"
+    _recompute_media_enc()
+    return MEDIA_ENC != before
 
 # ─── Attuatori dinamici (da options flow, ricavati dalla rubrica) ────────────
 # Lista di dict {"name","msg","target","icon"} prodotta da tools/parse_rubrica.py
@@ -128,7 +170,7 @@ def configure(data: dict) -> None:
     global LOCAL_DOMAIN, CLOUD_DOMAIN
     global SIP_PROXY, LOCAL_PROXY
     global GID, PLANT_TYPE, MAC_CITOFONO
-    global USE_LOCAL_UDP, LOCAL_UDP_PORT, MEDIA_ENC
+    global USE_LOCAL_UDP, LOCAL_UDP_PORT, MEDIA_ENC_OPTION, MEDIA_ENC_PLANT
     global INTERCOM, DOOR_ESTERNO
     global DETECTED_MODEL, DETECTED_FW, DETECTED_UA, DETECTED_PRIORITY
     global ACTUATORS
@@ -149,7 +191,9 @@ def configure(data: dict) -> None:
 
     USE_LOCAL_UDP  = bool(data.get("use_local_udp", True))
     LOCAL_UDP_PORT = int(data.get("local_udp_port", 5060))
-    MEDIA_ENC      = bool(data.get("media_enc", False))
+    MEDIA_ENC_OPTION = media_enc_mode(data.get("media_enc"))
+    MEDIA_ENC_PLANT  = None   # lo ridice l'impianto al prossimo GET_INIT_STATUS_REPLY
+    _recompute_media_enc()
 
     # ─── Scelta del dominio SIP attivo ───────────────────────────────────────
     # Il QR porta due domini: «domain» (locale del Tab) e «cdomain» (cloud).

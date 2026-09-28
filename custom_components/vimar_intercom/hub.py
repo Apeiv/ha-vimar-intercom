@@ -139,6 +139,9 @@ class VimarIntercomHub:
         # Evita di iniettare hass nell'hub, coerente con ring/state callbacks.
         self._event_callbacks: list[Callable] = []
         self._init_status_sent = False
+        # SET_APT_PARAMS in attesa della risposta, per MSGID (PROTOCOL §3: l'unico
+        # comando che correla la risposta per ID).
+        self._apt_param_waiters: dict[str, asyncio.Future] = {}
 
     # ─── helpers stato esteso ────────────────────────────────────────────
     @staticmethod
@@ -147,7 +150,7 @@ class VimarIntercomHub:
 
     def _touch(self):
         """Notifica le entità HA che le statistiche sono cambiate."""
-        for cb in self._state_callbacks:
+        for cb in list(self._state_callbacks):  # un callback può togliersi (select.py)
             try:
                 cb()
             except Exception:
@@ -875,9 +878,21 @@ class VimarIntercomHub:
         # Annunci di stato: "VOICEMAIL;ON|OFF" / "DND;ON|OFF" [VERIFICATO]
         if upper.startswith("VOICEMAIL;"):
             st["voicemail"] = ("ON" in upper and "OFF" not in upper)
+            st["mode_seq"] = st.get("mode_seq", 0) + 1
             return
         if upper.startswith("DND;"):
             st["dnd"] = ("ON" in upper and "OFF" not in upper)
+            st["mode_seq"] = st.get("mode_seq", 0) + 1
+            return
+
+        # SET_APT_PARAMS_REPLY;{"MSGID","ERRCODE"} → risposta a async_set_apt_param
+        if upper.startswith("SET_APT_PARAMS_REPLY"):
+            self._handle_apt_params_reply(raw)
+            return
+        # APT_PARAMS_CHANGED;{"PARAM","VALUE"} → un parametro cambiato (da noi, dal
+        # Tab o dall'app)
+        if upper.startswith("APT_PARAMS_CHANGED"):
+            self._handle_apt_params_changed(raw)
             return
 
         # GET_INIT_STATUS_REPLY;<json array [{PARAM,VALUE}]>
@@ -961,10 +976,24 @@ class VimarIntercomHub:
             st["voicemail"] = _as_bool(pairs["voicemail"])
         if "dnd" in pairs:
             st["dnd"] = _as_bool(pairs["dnd"])
+        if "voicemail" in pairs or "dnd" in pairs:
+            # Una conferma fresca dello stato: gli switch smettono di mostrare il
+            # comando in attesa anche se il valore non è cambiato (issue #9).
+            st["mode_seq"] = st.get("mode_seq", 0) + 1
         if "vm_level" in pairs:
             st["vm_level"] = pairs["vm_level"]
         if "vm_ver" in pairs:
             st["vm_ver"] = pairs["vm_ver"]
+        # Solo nella risposta lunga (40515/2FV2, issue #4): parametri dell'appartamento
+        # e cifratura del media. Letti se ci sono, ignorati se mancano.
+        self._apply_apt_params(pairs)
+        if "GID" in pairs:
+            st["apt_gid"] = pairs["GID"]
+        if "media_enc" in pairs:
+            st["media_enc"] = pairs["media_enc"]
+            if R.set_plant_media_enc(pairs["media_enc"]):
+                _LOGGER.info("Cifratura del media dall'impianto: media_enc=%s → SRTP %s",
+                             pairs["media_enc"], "attivo" if R.MEDIA_ENC else "spento")
         # token / altri param restano in init_status per usi futuri (phonebook cloud)
         if "rubrica_ver" in pairs:
             self._update_rubrica_ver(pairs["rubrica_ver"])
@@ -973,6 +1002,78 @@ class VimarIntercomHub:
             "GET_INIT_STATUS_REPLY: voicemail=%s dnd=%s vm_level=%s rubrica_ver=%s",
             st.get("voicemail"), st.get("dnd"), st.get("vm_level"), st.get("rubrica_ver"),
         )
+
+    def _apply_apt_params(self, pairs: dict) -> None:
+        """vm_timeout, vm_timeout_values, apt_names: da GET_INIT_STATUS_REPLY o da
+        APT_PARAMS_CHANGED. Valori non validi scartati, non propagati."""
+        st = self.stats
+        if "vm_timeout_values" in pairs:
+            vals = pairs["vm_timeout_values"]
+            if isinstance(vals, list):
+                clean = [int(v) for v in vals if isinstance(v, int | str) and str(v).strip().isdigit()]
+                st["vm_timeout_values"] = clean or None
+        if "vm_timeout" in pairs and str(pairs["vm_timeout"]).strip().isdigit():
+            st["vm_timeout"] = int(pairs["vm_timeout"])
+        if "apt_names" in pairs and isinstance(pairs["apt_names"], list):
+            st["apt_names"] = [str(n) for n in pairs["apt_names"]]
+
+    def _handle_apt_params_changed(self, raw: str) -> None:
+        import json
+        try:
+            j = json.loads(self._split_json_payload(raw, 1) or "")
+        except ValueError:
+            _LOGGER.debug("APT_PARAMS_CHANGED non parsabile: %r", raw[:120])
+            return
+        if isinstance(j, dict) and "PARAM" in j:
+            self._apply_apt_params({str(j["PARAM"]): j.get("VALUE")})
+            _LOGGER.info("Parametro dell'appartamento cambiato: %s=%s", j["PARAM"], j.get("VALUE"))
+
+    def _handle_apt_params_reply(self, raw: str) -> None:
+        import json
+        try:
+            j = json.loads(self._split_json_payload(raw, 1) or "")
+        except ValueError:
+            j = None
+        if not isinstance(j, dict):
+            _LOGGER.debug("SET_APT_PARAMS_REPLY non parsabile: %r", raw[:120])
+            return
+        fut = self._apt_param_waiters.pop(str(j.get("MSGID")), None)
+        if fut and not fut.done():
+            fut.set_result(j.get("ERRCODE"))
+
+    async def async_set_apt_param(self, param: str, value, timeout: float = 10.0) -> tuple[bool, str]:
+        """SET_APT_PARAMS;{"MSGID","PARAM","VALUE"} al PICG con `Panda: set`.
+
+        Riuscito solo con `ERRCODE: ERR_NONE` nella risposta: come l'app, una
+        risposta senza ERRCODE, o nessuna risposta, è un fallimento.
+        """
+        import json
+        import secrets
+        msgid = secrets.token_hex(5)
+        body = "SET_APT_PARAMS;" + json.dumps(
+            {"MSGID": msgid, "PARAM": param, "VALUE": value}, separators=(",", ":"))
+        fut = asyncio.get_running_loop().create_future()
+        self._apt_param_waiters[msgid] = fut
+        try:
+            ok, msg = await self.async_send_command(
+                body=body, target=R.PICG_TARGET, header_name="Panda", header_value="set")
+            if not ok:
+                return False, msg
+            try:
+                err = await asyncio.wait_for(fut, timeout)
+            except TimeoutError:
+                return False, "Nessuna risposta dal citofono"
+        finally:
+            self._apt_param_waiters.pop(msgid, None)
+        if err != "ERR_NONE":
+            return False, f"Rifiutato dal citofono: {err or 'nessun ERRCODE'}"
+        self._apply_apt_params({param: value})
+        self._touch()
+        return True, "ERR_NONE"
+
+    async def async_request_status(self) -> None:
+        """GET_INIT_STATUS al PICG: la risposta aggiorna segreteria, DND e il resto."""
+        await self._request_init_status()
 
     def _update_rubrica_ver(self, new_ver, gid: str | None = None) -> None:
         """Aggiorna rubrica_ver; se CAMBIA (dopo il primo) emette phonebook_changed."""

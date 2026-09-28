@@ -108,7 +108,7 @@ Settings → Vimar Intercom → **Configure**:
 | **Ring snapshot folder** (`snapshot_dir`) | Where the visitor's photo is saved on every ring (`squillo_YYYYMMDD_HHMMSS_mmm.jpg` + `ultimo_squillo.jpg`), e.g. `/config/media/citofono`. Must be writable by HA. Empty = off |
 | **Seconds after the ring** (`snapshot_delay`) | Wait before the photo (preview start + exposure). Default 3 (Tab 5S Up 40515) |
 | **Away message** (`away_message_file`, `away_message_delay`) | Audio file (mp3, wav…) played to the visitor if nobody answers within N seconds (0 = off, max 60); then the integration hangs up |
-| **Encrypt media (SRTP)** (`media_enc`) | Off on the development plant; some plants only accept the call with SRTP on (a cloud 40515 in [#3](../../issues/3)). Try it if the camera stays black or the call fails with `488` |
+| **Media encryption (SRTP)** (`media_enc`) | **Automatic** (default since 1.0.11): follows the `media_enc` the plant declares in its `GET_INIT_STATUS` reply (`"srtp"` on a cloud 40515); plants with the short reply (the 40507) stay on plain RTP. **On** / **Off** force it. Entries saved as "on" by 1.0.10 or earlier stay on; "off" becomes automatic. Try **On** if the camera stays black or the call fails with `488` |
 
 Example, Tab 5S Up 40515 (Due Fili Plus, cloud): SGA `61000`, PICG `60001`, video and door panel
 `55001`. These values come from the VIEW app's phonebook, not from the defaults.
@@ -133,13 +133,14 @@ already know your plant's SGA or want to tweak the imported actuator list.
 | Answer / Hang up | `button` | Answer (200 OK) / end the call (BYE) |
 | Open Door | `button` | `OPEN_2F` to `door_target` |
 | *Dynamic actuators* | `button` | One per entry in `options["actuators"]` (F1/F2, stair lights, relays…); sends `MSG` with `Panda: command` |
-| Voicemail | `switch` | `VOICEMAIL;ON/OFF` (Panda: blue) to the SGA; state read from the Tab's announcements |
-| Do Not Disturb | `switch` | `DND;ON/OFF` (Panda: blue) to the SGA; real state |
+| Voicemail | `switch` | `VOICEMAIL;ON/OFF` (Panda: blue) to the SGA; state read from the Tab's announcements and from `GET_INIT_STATUS`, asked after every command. The commanded value is shown for 10 s at most: with no confirmation the state becomes *unknown* ([#9](../../issues/9)) |
+| Do Not Disturb | `switch` | `DND;ON/OFF` (Panda: blue) to the SGA; same rules as Voicemail |
+| Voicemail delay | `select` | Only on plants that send the long `GET_INIT_STATUS` reply: `vm_timeout`, one of the plant's own `vm_timeout_values`, written with `SET_APT_PARAMS` ([#4](../../issues/4)). It does not appear on plants with the short reply |
 | Intercom SIP | `binary_sensor` | SIP registration active (connectivity) |
 | Intercom In Call | `binary_sensor` | A call is up |
 | Intercom Ringing | `binary_sensor` | ON while an outdoor unit is calling (attribute: caller) |
 | Intercom Outgoing Call | `binary_sensor` | ON while Home Assistant is calling |
-| Intercom State | `sensor` (enum) | offline / idle / ringing / in_call / calling (plus network attributes) |
+| Intercom State | `sensor` (enum) | offline / idle / ringing / in_call / calling (plus network attributes, and on plants with the long reply the apartment `GID`, `apt_names` and the declared `media_enc`) |
 | Intercom Last Caller | `sensor` | Outdoor unit or monitor of the last ring |
 | Intercom Last Ring | `sensor` (timestamp) | Time of the last ring |
 | Intercom Rings | `sensor` (counter) | Rings since startup |

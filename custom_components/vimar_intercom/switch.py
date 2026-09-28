@@ -8,17 +8,27 @@ runtime.SGA_TARGET / const.SGA_TARGET) [VERIFICATO 19/08/2026]:
 
 Lo stato è REALE: il Tab annuncia i cambi via SIP MESSAGE (sia da UI locale
 che da app), quindi lo switch riflette lo stato effettivo e non è ottimistico.
+
+Issue #9: su un impianto che non annuncia nulla (risponde 200 al comando senza
+agire, o non manda mai VOICEMAIL;/DND;) lo switch mostrava per sempre l'ultimo
+comando come se fosse lo stato. Ora il valore supposto dura CONFIRM_S dopo
+l'invio, e intanto si chiede lo stato al citofono (GET_INIT_STATUS); se nessuno
+conferma, lo switch torna "sconosciuto". Al riavvio si riprende solo uno stato
+che il Tab aveva confermato, non una supposizione.
 Il comando è confermato sul campo: `VOICEMAIL;ON` → 55001 accende la segreteria
 sul Tab (i vecchi tentativi verso 55002 davano 200 senza effetto = target sbagliato).
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 
@@ -32,6 +42,11 @@ from .device import device_info
 from . import runtime as R
 
 _LOGGER = logging.getLogger(__name__)
+
+# Quanto resta visibile lo stato del comando appena inviato, in attesa che il Tab
+# lo annunci o che la risposta a GET_INIT_STATUS lo confermi (sul 40507 l'annuncio
+# arriva in meno di un secondo).
+CONFIRM_S = 10.0
 
 
 async def async_setup_entry(
@@ -79,43 +94,70 @@ class VimarModeSwitch(SwitchEntity, RestoreEntity):
         self._attr_icon = icon
         self._attr_unique_id = f"{entry_id}_{key}"
         self._attr_device_info = device_info(entry_id)
-        self._is_on = False
         self._last_result: str | None = None
+        # Stato confermato dal Tab prima del riavvio (attributo stato_reale salvato).
+        self._restored: bool | None = None
+        # Comando appena inviato: (valore, scadenza monotonic, mode_seq all'invio).
+        # mode_seq cresce a ogni annuncio VOICEMAIL;/DND; e a ogni GET_INIT_STATUS_REPLY
+        # che porta dnd/voicemail: una notizia arrivata dopo l'invio è la verità.
+        self._pending: tuple[bool, float, int] | None = None
+        self._expire_handle: asyncio.TimerHandle | None = None
 
     def _real(self) -> bool | None:
         return self._hub.stats.get(self._state_attr)
 
     async def async_added_to_hass(self) -> None:
         last = await self.async_get_last_state()
-        if last is not None:
-            self._is_on = last.state == "on"
+        # Solo uno stato confermato: fino alla 1.0.10 si riprendeva anche l'ultimo
+        # comando supposto, che così sopravviveva ai riavvii (issue #9).
+        if last is not None and isinstance(last.attributes.get("stato_reale"), bool):
+            self._restored = last.attributes["stato_reale"]
         self._hub.register_state_callback(self._on_state_change)
 
     async def async_will_remove_from_hass(self) -> None:
         self._hub.unregister_state_callback(self._on_state_change)
+        self._cancel_expire()
+
+    def _cancel_expire(self) -> None:
+        if self._expire_handle:
+            self._expire_handle.cancel()
+            self._expire_handle = None
 
     @callback
     def _on_state_change(self) -> None:
-        real = self._real()
-        if real is not None:
-            self._is_on = real
+        if self._pending is not None:
+            _, _, seq_at_send = self._pending
+            # Il Tab ha detto come stanno le cose dopo il comando (conferma o smentita).
+            if self._real() is not None and self._hub.stats.get("mode_seq", 0) != seq_at_send:
+                self._pending = None
+                self._cancel_expire()
         self.async_write_ha_state()
 
+    @callback
+    def _expire(self) -> None:
+        self._expire_handle = None
+        if self._pending is not None:
+            if self._real() is None:
+                _LOGGER.warning("%s: il citofono non ha confermato il comando in %.0f s, "
+                                "stato sconosciuto", self._attr_name, CONFIRM_S)
+            self._pending = None
+            self.async_write_ha_state()
+
     @property
-    def is_on(self) -> bool:
+    def is_on(self) -> bool | None:
+        if self._pending is not None and time.monotonic() < self._pending[1]:
+            return self._pending[0]
         real = self._real()
-        return real if real is not None else self._is_on
+        if real is not None:
+            return real
+        return self._restored  # None = sconosciuto
 
     @property
     def assumed_state(self) -> bool:
-        """Vero finché il Tab non ha mai annunciato lo stato (issue #9).
-
-        In quel caso lo stato mostrato è una supposizione — ripristinata dal
-        riavvio precedente o dedotta dall'ultimo comando riuscito — e Home
-        Assistant lo segnala mostrando i due pulsanti on/off al posto
-        dell'interruttore, invece di presentarla come un fatto.
-        """
-        return self._real() is None
+        """Vero mentre lo stato mostrato non viene dal Tab: il comando appena inviato
+        in attesa di conferma, o lo stato confermato prima del riavvio. Home Assistant
+        lo segnala con i due pulsanti on/off al posto dell'interruttore."""
+        return self._pending is not None or self._real() is None
 
     @property
     def extra_state_attributes(self) -> dict:
@@ -123,7 +165,9 @@ class VimarModeSwitch(SwitchEntity, RestoreEntity):
             "target": self._target,
             "comando_on": self._cmd_on,
             "comando_off": self._cmd_off,
-            "stato_reale": self._real(),
+            # L'ultimo stato confermato dal Tab (anche prima del riavvio): è quello
+            # che il riavvio successivo riprende.
+            "stato_reale": self._real() if self._real() is not None else self._restored,
             "ultimo_esito": self._last_result,
             "nota": "Comando via SIP MESSAGE (Panda: blue) verso l'SGA; stato letto dagli annunci del Tab.",
         }
@@ -144,8 +188,15 @@ class VimarModeSwitch(SwitchEntity, RestoreEntity):
         # senza un annuncio del Tab a smentirlo lo stato falso sopravviveva anche
         # al riavvio (RestoreEntity). Ora solo un invio riuscito sposta lo stato
         # supposto; quello reale arriva comunque dall'annuncio VOICEMAIL;/DND;.
-        if ok and self._real() is None:
-            self._is_on = new_state
+        if ok:
+            self._pending = (new_state, time.monotonic() + CONFIRM_S, self._hub.stats.get("mode_seq", 0))
+            self._cancel_expire()
+            self._expire_handle = asyncio.get_running_loop().call_later(CONFIRM_S, self._expire)
         _LOGGER.info("%s %s → ok=%s msg=%s", self._attr_name,
                      "ON" if new_state else "OFF", ok, msg)
         self.async_write_ha_state()
+        if not ok:
+            raise HomeAssistantError(f"{self._attr_name}: comando non riuscito ({msg})")
+        # Il Tab di solito annuncia il cambio da solo; chi non lo fa può comunque
+        # rispondere a GET_INIT_STATUS con dnd/voicemail.
+        await self._hub.async_request_status()
