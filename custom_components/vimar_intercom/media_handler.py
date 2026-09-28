@@ -233,8 +233,12 @@ class RTPVideoProtocol(asyncio.DatagramProtocol):
         # Restano fra le chiamate (non cambiano): la 40515 dopo il 200 OK manda
         # PPS+IDR subito ma l'SPS solo ogni ~6 s, e chiude dopo ~10 s. Con quelli
         # della chiamata prima /av (sprop) e le foto partono dal primo IDR.
+        # Una coppia per targa (id SIP): due targhe (portone e cancello) hanno
+        # risoluzioni diverse, e con l'SPS dell'altra ffmpeg decodifica spazzatura.
         self._last_sps = None
         self._last_pps = None
+        self.panel: str | None = None                      # targa di questa chiamata
+        self._ps_by_panel: dict[str, tuple[bytes, bytes]] = {}
         self._sps_pps_sent = False  # True after first SPS+PPS pair sent
         self._pending_idr = None   # IDR waiting for SPS+PPS
         # GOP corrente già in forma di messaggi WS (SPS, PPS, IDR e i P dopo): a un
@@ -255,9 +259,14 @@ class RTPVideoProtocol(asyncio.DatagramProtocol):
         self._nal_types = {}  # type -> count
 
     def sps_pps(self) -> tuple[bytes, bytes] | None:
-        """Gli ultimi SPS e PPS visti (anche della chiamata prima), se ci sono entrambi:
-        con quelli ffmpeg (/av, foto) decodifica dal primo IDR."""
+        """Gli ultimi SPS e PPS di questa targa (anche dalla chiamata prima), se ci sono
+        entrambi: con quelli ffmpeg (/av, foto) decodifica dal primo IDR."""
         return (self._last_sps, self._last_pps) if self._last_sps and self._last_pps else None
+
+    def set_panel(self, panel: str | None) -> None:
+        """Chiamata (o anteprima) con questa targa: si riparte dai suoi SPS/PPS."""
+        self.panel = panel
+        self._last_sps, self._last_pps = self._ps_by_panel.get(panel or "", (None, None))
 
     def connection_made(self, transport):
         self.transport = transport
@@ -494,8 +503,10 @@ class RTPVideoProtocol(asyncio.DatagramProtocol):
             else:
                 self._last_pps = nal_data
             new = (self._last_sps, self._last_pps)
-            if new != old and all(new) and self.on_sps_pps:
-                self.on_sps_pps(*new)
+            if new != old and all(new):
+                self._ps_by_panel[self.panel or ""] = new
+                if self.on_sps_pps:
+                    self.on_sps_pps()
         if nal_data and self.frame_sink:
             self.frame_sink(nal_data)
         if not nal_data or not ws_send_bytes or not self._nal_queue:
@@ -648,13 +659,24 @@ async def restore_sps_pps(store) -> None:
     salvata. Senza, la prima /av dopo un riavvio di HA non ha sprop nell'SDP e aspetta
     l'SPS in banda (~6 s sulla 40515 se la richiesta di keyframe tarda)."""
     saved = await store.async_load()
-    try:
-        video_proto._last_sps = base64.b64decode(saved["sps"])
-        video_proto._last_pps = base64.b64decode(saved["pps"])
-    except (TypeError, KeyError, ValueError):
+    try:  # {"panels": {"55001": {"sps": b64, "pps": b64}, ...}}
+        video_proto._ps_by_panel = {
+            str(k): (base64.b64decode(v["sps"]), base64.b64decode(v["pps"]))
+            for k, v in saved["panels"].items()}
+    except (TypeError, KeyError, ValueError, AttributeError):
         pass  # niente di salvato (o rotto): si aspetta la targa come prima
-    video_proto.on_sps_pps = lambda sps, pps: store.async_delay_save(
-        lambda: {"sps": base64.b64encode(sps).decode(), "pps": base64.b64encode(pps).decode()}, 5)
+    video_proto.on_sps_pps = lambda: store.async_delay_save(
+        lambda: {"panels": {k: {"sps": base64.b64encode(s).decode(), "pps": base64.b64encode(p).decode()}
+                            for k, (s, p) in video_proto._ps_by_panel.items()}}, 5)
+
+
+def _current_panel() -> str | None:
+    """Id SIP della targa di questa chiamata: chi suona (anche in anteprima), o chi
+    abbiamo chiamato. Import in ritardo: sip_client importa questo modulo."""
+    from . import sip_client as sip
+    pi = sip.pending_incoming
+    uri = (pi.get("caller_uri") if pi.get("active") else None) or sip.call_state.get("original_target")
+    return uri.split(":")[-1].split("@")[0].split(";")[0] if uri else None
 
 
 async def setup_media(remote_sdp, local_crypto_key=None, local_video_crypto_key=None,
@@ -705,7 +727,8 @@ async def setup_media(remote_sdp, local_crypto_key=None, local_video_crypto_key=
     if video.get("port") and video_proto:
         vip = video.get("ip", remote_ip)
         video_proto.remote_addr = (vip, video["port"])
-        # Reset ALL state for new call (tranne SPS/PPS: vedi __init__)
+        # Reset ALL state for new call (tranne SPS/PPS: vedi __init__, per targa)
+        video_proto.set_panel(_current_panel())
         video_proto.pkt_count = 0
         video_proto._fua_buf = bytearray()
         video_proto._fua_started = False
