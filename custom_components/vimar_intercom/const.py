@@ -132,6 +132,37 @@ AWAY_TEXT_MAX = 255
 # senza audio; sul 2 fili in locale (UDP) il silenzio tiene l'appartamento occupato fino a 300 s.
 DEFAULT_VIEW_KEEPALIVE_CLOUD = 120
 
+# ─── HomeKit video doorbell (homekit_accessory.py) ────────────────────────────
+# Off by default: turning it on in the options shows a pairing QR code.
+CONF_HOMEKIT_ACCESSORY = "homekit_accessory"
+DEFAULT_HOMEKIT_ACCESSORY = False
+# Installed when the option is on, not from the manifest (see __init__). The
+# same libraries Home Assistant's own HomeKit integration uses; base36 and
+# PyQRCode build the pairing QR (pyhap's setup payload).
+HOMEKIT_REQUIREMENTS = ["HAP-python>=5.0.0", "PyQRCode>=1.2.1", "base36>=0.1.1"]
+# Re-encode the video with a keyframe per second (on) or send the panel's own
+# packets (off: opens faster, but a packet lost on the relay freezes the
+# picture until the panel's next keyframe, up to 3 s).
+CONF_HOMEKIT_SMOOTH = "homekit_video_smooth"
+DEFAULT_HOMEKIT_SMOOTH = True
+# During a ring: answer at the first word from the phone (Talk), or as soon as
+# the view opens (which stops the ring on the Tab and the app).
+CONF_HOMEKIT_ANSWER = "homekit_answer"
+HOMEKIT_ANSWER_TALK = "talk"
+HOMEKIT_ANSWER_OPEN = "open"
+DEFAULT_HOMEKIT_ANSWER = HOMEKIT_ANSWER_TALK
+# The ring also as a stateless programmable switch, for Home app automations.
+# Off by default: it is one more tile in the Home app, and most rings are
+# automated in Home Assistant.
+CONF_HOMEKIT_RING_BUTTON = "homekit_ring_button"
+DEFAULT_HOMEKIT_RING_BUTTON = False
+# hass.data key of the HomeKit state shared between entries (the QR view, the
+# pairing code and QR of each entry not yet paired). Outside hass.data[DOMAIN],
+# which holds only the entries.
+HOMEKIT_DATA = f"{DOMAIN}_homekit"
+# The pairing QR, for administrators (see homekit_accessory._PairingQRView).
+HOMEKIT_QR_URL = "/api/vimar_intercom/homekit_qr"
+
 # ─── Comandi di stato (in USCITA, Panda: blue) ───────────────────────────────
 GET_INIT_STATUS = "GET_INIT_STATUS"   # → PICG_TARGET; risposta GET_INIT_STATUS_REPLY
 

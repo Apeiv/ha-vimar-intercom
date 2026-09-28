@@ -4,3 +4,6 @@ pycryptodome>=3.19
 requests>=2.28
 cryptography>=41
 pyyaml>=6
+HAP-python>=5.0.0
+PyQRCode>=1.2.1
+base36>=0.1.1

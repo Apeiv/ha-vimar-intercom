@@ -74,6 +74,7 @@
         "title": "Vimar Intercom settings",
         "menu_options": {
           "settings": "Network and actuator settings",
+          "homekit": "HomeKit",
           "import_rubrica": "Import actuators from rubrica.db",
           "fetch_rubrica": "Download the phonebook from the intercom",
           "fetch_rubrica_cloud": "Download the phonebook from the Vimar cloud"
@@ -124,6 +125,22 @@
           "allowed_users": "Limits the card, the ring history (photos and clips) and /audio_ws to these Home Assistant users. Admins always. Empty = every logged-in user. It does NOT limit the camera entity or /av from the local network: anyone who can open the camera sees (and hears) the stream; and if the photo folder is under an HA media directory, photos and clips show up in the media browser for every user.",
           "ring_webhook_url": "GET (fire-and-forget) sent when a ring starts, e.g. to turn on a dummy switch (Scrypted Dummy Switch) linked to a Custom Doorbell Button. A failure is only logged as a warning and never stops the ring. Empty = off.",
           "ring_end_webhook_url": "GET (fire-and-forget) sent when the ring ends, answered, cancelled or timed out: same idea as above, to turn the switch off. Empty = off."
+        }
+      },
+      "homekit": {
+        "title": "HomeKit video doorbell",
+        "description": "Publish the intercom to the Apple Home app as a video doorbell: ring notification, live video, two-way audio and the gate in the same view.\n\nWhoever pairs it (and everyone the home is shared with in the Home app) sees the video, talks and opens the gate: Home Assistant's allowed users option does not apply to HomeKit.\n\nDo not also pair the same intercom through a Scrypted HomeKit bridge: the Home app would show two doorbells and every ring would notify twice.\n\n{pairing}",
+        "data": {
+          "homekit_accessory": "Publish to HomeKit",
+          "homekit_video_smooth": "Smoother video (re-encode)",
+          "homekit_answer": "During a ring",
+          "homekit_ring_button": "Ring button for Home automations"
+        },
+        "data_description": {
+          "homekit_accessory": "Turns on the HomeKit video doorbell. Until it is paired, the setup code and the QR code to scan with the Home app appear above; a notification says that pairing is waiting. After 10 wrong codes in a row the code changes.",
+          "homekit_video_smooth": "On (recommended): Home Assistant re-encodes the panel's video with a keyframe every second, so a packet lost on the cloud relay shows as a brief smear instead of a freeze. Opening takes about half a second longer and uses some CPU. Off: the video goes straight to the phone and opens faster, but a lost packet can freeze the picture for up to 3 seconds.",
+          "homekit_answer": "Answer when you talk: opening the notification shows and plays the street without answering, so the Tab and the app can still answer; your first word (Talk) answers. Answer when the view opens: opening the notification answers at once and the Tab stops ringing.",
+          "homekit_ring_button": "Adds a programmable button that is pressed at every ring, to use as a trigger in Home app automations. Off: one tile less in the Home app; the ring notification, video, Talk and the gate are unchanged."
         }
       },
       "import_rubrica": {
@@ -390,6 +407,12 @@
         "auto": "Automatic (from the system)",
         "on": "On (SRTP)",
         "off": "Off (plain RTP)"
+      }
+    },
+    "homekit_answer": {
+      "options": {
+        "talk": "Answer when you talk",
+        "open": "Answer when the view opens"
       }
     }
   }

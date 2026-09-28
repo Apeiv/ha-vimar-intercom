@@ -202,6 +202,8 @@ class SRTCPContext:
 
     AUTH_TAG_LEN = 10
     _E_BIT = 0x80000000
+    #: Received indices remembered for replay protection (libsrtp keeps 128).
+    REPLAY_WINDOW = 128
 
     def __init__(self, master_key_b64: str):
         raw = base64.b64decode(master_key_b64)
@@ -213,6 +215,42 @@ class SRTCPContext:
         self.auth_key = _kdf(self.master_key, self.master_salt, 0x04, 20)
         self.salt = _kdf(self.master_key, self.master_salt, 0x05, 14)
         self.index = 0
+        # Replay protection for what we receive (RFC 3711 §3.3.2): the highest
+        # index seen, and a bitmap of the REPLAY_WINDOW indices below it
+        # (bit n set = index max - n already received).
+        self._rx_max: int | None = None
+        self._rx_seen = 0
+
+    def _replay_delta(self, index: int) -> int:
+        """How far behind the highest index this one is (negative: newer).
+        The 31-bit index wraps, so the difference is taken modulo 2^31."""
+        d = (self._rx_max - index) & 0x7FFFFFFF
+        return d - (1 << 31) if d & 0x40000000 else d
+
+    def _is_replay(self, index: int) -> bool:
+        if self._rx_max is None:
+            return False
+        d = self._replay_delta(index)
+        if d < 0:
+            return False
+        return d >= self.REPLAY_WINDOW or bool(self._rx_seen >> d & 1)
+
+    def _mark_received(self, index: int) -> None:
+        if self._rx_max is None:
+            self._rx_max, self._rx_seen = index, 1
+            return
+        d = self._replay_delta(index)
+        mask = (1 << self.REPLAY_WINDOW) - 1
+        if d < 0:
+            # A jump past the whole window forgets it. Shifted by the jump
+            # itself, a jump of 2^30 built a 128 MB integer first.
+            if -d >= self.REPLAY_WINDOW:
+                self._rx_seen = 1
+            else:
+                self._rx_seen = ((self._rx_seen << -d) | 1) & mask
+            self._rx_max = index
+        else:
+            self._rx_seen |= 1 << d
 
     def _compute_iv(self, ssrc: int, index: int) -> bytes:
         salt_padded = self.salt + b"\x00\x00"
@@ -225,15 +263,22 @@ class SRTCPContext:
         return bytes(a ^ b for a, b in zip(salt_padded, ssrc_index))
 
     def unprotect(self, packet: bytes) -> bytes | None:
-        """SRTCP to plain RTCP, or ``None`` if it does not authenticate."""
+        """SRTCP to plain RTCP, or ``None`` if it does not authenticate or is
+        a replay (an index already received, or older than the window).
+
+        Without the replay check, anyone on the path could send one captured
+        NACK again and again, and every copy made us resend its packets."""
         if len(packet) < 8 + 4 + self.AUTH_TAG_LEN:
             return None
         tag = packet[-self.AUTH_TAG_LEN:]
         signed = packet[:-self.AUTH_TAG_LEN]
+        e_index = struct.unpack("!I", signed[-4:])[0]
+        if self._is_replay(e_index & ~self._E_BIT):
+            return None
         expected = hmac.new(self.auth_key, signed, hashlib.sha1).digest()[:self.AUTH_TAG_LEN]
         if not hmac.compare_digest(tag, expected):
             return None
-        e_index = struct.unpack("!I", signed[-4:])[0]
+        self._mark_received(e_index & ~self._E_BIT)
         header, payload = signed[:8], signed[8:-4]
         if not e_index & self._E_BIT:
             return header + payload

@@ -74,6 +74,7 @@
         "title": "Impostazioni Vimar Intercom",
         "menu_options": {
           "settings": "Impostazioni di rete e attuatori",
+          "homekit": "HomeKit",
           "import_rubrica": "Importa attuatori da rubrica.db",
           "fetch_rubrica": "Scarica la rubrica dal citofono",
           "fetch_rubrica_cloud": "Scarica la rubrica dal cloud Vimar"
@@ -124,6 +125,22 @@
           "allowed_users": "Limita la card, lo storico squilli (foto e clip) e /audio_ws a questi utenti di Home Assistant. Gli amministratori sempre. Vuoto = ogni utente autenticato. NON limita l'entità camera né /av dalla rete locale: chi può aprire la camera vede (e sente) lo stream; e se la cartella foto è sotto una cartella media di HA, foto e clip compaiono nel browser media per tutti gli utenti.",
           "ring_webhook_url": "GET (fire-and-forget) inviata quando inizia uno squillo, es. per accendere un interruttore fittizio (Scrypted Dummy Switch) collegato a un Custom Doorbell Button. Un fallimento si logga come warning e non ferma lo squillo. Vuoto = disattivato.",
           "ring_end_webhook_url": "GET (fire-and-forget) inviata quando lo squillo finisce, risposto, annullato o scaduto: stessa idea di sopra, per spegnere l'interruttore. Vuoto = disattivato."
+        }
+      },
+      "homekit": {
+        "title": "Videocitofono HomeKit",
+        "description": "Pubblica il citofono nell'app Casa come videocitofono: squillo, video dal vivo, audio nei due sensi e il cancello nella stessa vista.\n\nChi abbina il citofono (e chiunque con cui si condivide la casa nell'app Casa) vede il video, parla e apre il cancello: l'opzione degli utenti ammessi di Home Assistant non vale per HomeKit.\n\nNon abbinare lo stesso citofono anche tramite un bridge HomeKit di Scrypted: l'app Casa mostrerebbe due campanelli e ogni squillo arriverebbe due volte.\n\n{pairing}",
+        "data": {
+          "homekit_accessory": "Pubblica in HomeKit",
+          "homekit_video_smooth": "Video più fluido (ricodifica)",
+          "homekit_answer": "Durante uno squillo",
+          "homekit_ring_button": "Pulsante squillo per le automazioni Casa"
+        },
+        "data_description": {
+          "homekit_accessory": "Accende il videocitofono in HomeKit. Finché non è abbinato, il codice e il QR da inquadrare con l'app Casa compaiono qui sopra; una notifica ricorda che l'abbinamento è in attesa. Dopo 10 codici sbagliati di fila il codice cambia.",
+          "homekit_video_smooth": "Acceso (consigliato): Home Assistant ricodifica il video della targa con un keyframe al secondo, così un pacchetto perso dal relay diventa una breve sbavatura invece di un blocco. L'apertura richiede circa mezzo secondo in più e un po' di CPU. Spento: il video va dritto al telefono e si apre prima, ma un pacchetto perso può fermare l'immagine fino a 3 secondi.",
+          "homekit_answer": "Rispondi quando parli: aprire la notifica mostra e fa sentire la strada senza rispondere, così il Tab e l'app possono ancora rispondere; la prima parola (Parla) risponde. Rispondi all'apertura: aprire la notifica risponde subito e il Tab smette di suonare.",
+          "homekit_ring_button": "Aggiunge all'accessorio un pulsante programmabile che si preme a ogni squillo, da usare come attivatore nelle automazioni dell'app Casa. Spento: una voce in meno nell'app Casa; notifica, video, Parla e cancello non cambiano."
         }
       },
       "import_rubrica": {
@@ -390,6 +407,12 @@
         "auto": "Automatico (dall'impianto)",
         "on": "Attivo (SRTP)",
         "off": "Disattivo (RTP in chiaro)"
+      }
+    },
+    "homekit_answer": {
+      "options": {
+        "talk": "Rispondi quando parli",
+        "open": "Rispondi all'apertura"
       }
     }
   }

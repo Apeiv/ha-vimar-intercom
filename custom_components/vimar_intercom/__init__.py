@@ -19,10 +19,11 @@ import homeassistant.helpers.config_validation as cv
 from homeassistant.exceptions import ConfigEntryNotReady, Unauthorized
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.requirements import async_process_requirements
 from homeassistant.helpers.service import async_register_admin_service
 from homeassistant.helpers.storage import Store
 
-from .const import DOMAIN
+from .const import CONF_HOMEKIT_ACCESSORY, DEFAULT_HOMEKIT_ACCESSORY, DOMAIN, HOMEKIT_REQUIREMENTS
 from . import away_config
 from . import away_tts
 from . import log_buffer as _log_buffer
@@ -268,6 +269,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
+    # The HomeKit video doorbell, published by the integration itself (Home
+    # Assistant's HomeKit bridge cannot carry the talk direction). If it fails,
+    # the rest of the integration keeps working.
+    if entry.options.get(CONF_HOMEKIT_ACCESSORY, DEFAULT_HOMEKIT_ACCESSORY):
+        try:
+            # Installed only when HomeKit is on: in the manifest they were
+            # installed for everyone, and a failed install (or a clash with
+            # the core HomeKit integration's pin) stopped the whole
+            # integration from loading, not just HomeKit.
+            await async_process_requirements(hass, f"{DOMAIN}.homekit", HOMEKIT_REQUIREMENTS)
+            from .homekit_accessory import async_setup_homekit  # noqa: PLC0415
+
+            hass.data[DOMAIN][entry.entry_id]["homekit_stop"] = (
+                await async_setup_homekit(hass, entry, hub))
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("HomeKit video doorbell not started")
+
     # Ricarica l'entry quando cambiano le options (es. lista attuatori):
     # così i bottoni dinamici vengono ricreati con la nuova configurazione.
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
@@ -323,6 +341,12 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if ok:
         data = hass.data[DOMAIN].pop(entry.entry_id)
+        # HomeKit first: it frees its port, which the reloaded entry wants back.
+        if stop := data.get("homekit_stop"):
+            try:
+                await stop()
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("Stopping the HomeKit video doorbell")
         # Chiudi tutti i WS audio attivi prima di fermare l'hub:
         # evita che le views (ancora registrate in HA) usino il vecchio hub
         # e che i client rimangano connessi a un hub non più valido.
@@ -336,6 +360,16 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         SERVICE_SIMULATE_RING, SERVICE_FIND_SGA):
                 hass.services.async_remove(DOMAIN, svc)
     return ok
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """The entry is deleted: its HomeKit pairing and setup code go with it."""
+    try:
+        from .homekit_files import remove_homekit_files  # noqa: PLC0415
+
+        await hass.async_add_executor_job(remove_homekit_files, hass, entry.entry_id)
+    except Exception:  # noqa: BLE001
+        _LOGGER.exception("Removing the HomeKit pairing files")
 
 
 # Header che indicano un hop di proxy davanti a noi.

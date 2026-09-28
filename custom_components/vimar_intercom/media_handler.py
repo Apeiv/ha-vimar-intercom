@@ -280,8 +280,10 @@ class RTPVideoProtocol(asyncio.DatagramProtocol):
         self.ffmpeg_av_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.forward_av = False
         self.av_rtp = av_stream.AvRtp(3000)
-        # Callables that receive every decrypted video RTP packet, after the
-        # duplicate/late filter (the HomeKit doorbell sends these to the phone).
+        # Callables that receive every decrypted video RTP packet once, as it
+        # arrives: after the late filter, and without the duplicates of packets
+        # still waiting in the reorder buffer (the HomeKit doorbell sends these
+        # to the phone).
         self.rtp_sinks: list = []
         # RTP dell'ultimo GOP (da SPS/PPS/IDR in poi): l'ffmpeg di /av parte dopo
         # il 200 OK (poll, avvio, 0,3 s) e l'RTP arrivato prima era perso; con
@@ -483,7 +485,9 @@ class RTPVideoProtocol(asyncio.DatagramProtocol):
             self._ssrc = ssrc
         if rtp and seq not in self._reorder_buf:  # a duplicate is cached once
             self._cache_gop(rtp, payload)
-            for sink in tuple(self.rtp_sinks):
+            # A duplicate of a packet still in the buffer: already forwarded.
+            sinks = () if seq in self._reorder_buf else tuple(self.rtp_sinks)
+            for sink in sinks:
                 try:
                     sink(rtp)
                 except Exception:  # noqa: BLE001

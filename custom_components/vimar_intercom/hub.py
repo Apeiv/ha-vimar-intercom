@@ -493,8 +493,13 @@ class VimarIntercomHub:
                 "in_call": sip.in_call,
             }), "WS state broadcast")
 
-    async def stream_opened(self) -> bool:
-        """Uno spettatore apre /av. False = niente chiamata in vista, inutile aspettare."""
+    async def stream_opened(self, reflex_guard: bool = True) -> bool:
+        """Uno spettatore apre /av. False = niente chiamata in vista, inutile aspettare.
+
+        ``reflex_guard=False`` for a viewer that is always a person (a HomeKit
+        view): the quick-reopen pause exists for go2rtc and the stream worker
+        reopening /av on their own, and it refused a person reopening the view
+        a few seconds after closing it (the Home app then waits 30 s)."""
         self._stream_viewers += 1
         _LOGGER.info("Stream opened (%d viewers)", self._stream_viewers)
 
@@ -528,7 +533,8 @@ class VimarIntercomHub:
         if self._call_in_view:
             return True
         now = time.monotonic()
-        if now - self._viewers_left_at < QUICK_REOPEN_S and now - self._auto_ended_at < AUTO_CALL_COOLDOWN:
+        if (reflex_guard and now - self._viewers_left_at < QUICK_REOPEN_S
+                and now - self._auto_ended_at < AUTO_CALL_COOLDOWN):
             _LOGGER.info("Stream riaperto subito dopo la fine del precedente: "
                          "riconnessione, niente auto-call")
             return False
@@ -619,6 +625,16 @@ class VimarIntercomHub:
         # senza spettatori fino al tetto di 5 minuti. do_hangup allora annulla.
         if self._stream_viewers == 0 and self._auto_called and self._busy_now:
             self._hangup_task = asyncio.create_task(self._delayed_hangup())
+
+    def should_hang_up_for_viewers(self, answered_for_them: bool = False) -> bool:
+        """The last viewer is gone: does that end the call?
+
+        True with no viewer left, on an auto-call still up, or on a call the
+        caller answered for its viewers (``answered_for_them``). A HomeKit view
+        uses it to hang up at once instead of after STREAM_HANGUP_DELAY."""
+        if self._stream_viewers:
+            return False
+        return answered_for_them or bool(self._auto_called and self._busy_now)
 
     async def _delayed_hangup(self):
         try:
