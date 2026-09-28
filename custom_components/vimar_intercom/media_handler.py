@@ -161,6 +161,9 @@ class RTPAudioProtocol(asyncio.DatagramProtocol):
         self.ffmpeg_av_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.forward_av = False
         self.av_rtp = av_stream.AvRtp(160)
+        # Callables that receive every decrypted audio RTP packet of the call
+        # (the HomeKit doorbell feeds its own ffmpeg from here).
+        self.rtp_sinks: list = []
 
     def connection_made(self, transport):
         self.transport = transport
@@ -203,6 +206,11 @@ class RTPAudioProtocol(asyncio.DatagramProtocol):
                                            ('127.0.0.1', av_stream.FFMPEG_AV_AUDIO_PORT))
             except OSError:
                 pass
+        for sink in tuple(self.rtp_sinks):
+            try:
+                sink(rtp)
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("Audio RTP sink failed")
         payload = rtp[hlen:]
         self.pkt_count += 1
         if self.pkt_count == 1:
@@ -272,6 +280,9 @@ class RTPVideoProtocol(asyncio.DatagramProtocol):
         self.ffmpeg_av_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.forward_av = False
         self.av_rtp = av_stream.AvRtp(3000)
+        # Callables that receive every decrypted video RTP packet, after the
+        # duplicate/late filter (the HomeKit doorbell sends these to the phone).
+        self.rtp_sinks: list = []
         # RTP dell'ultimo GOP (da SPS/PPS/IDR in poi): l'ffmpeg di /av parte dopo
         # il 200 OK (poll, avvio, 0,3 s) e l'RTP arrivato prima era perso; con
         # l'IDR ogni 3 s della targa il video partiva al secondo. replay_gop()
@@ -472,6 +483,11 @@ class RTPVideoProtocol(asyncio.DatagramProtocol):
             self._ssrc = ssrc
         if rtp and seq not in self._reorder_buf:  # a duplicate is cached once
             self._cache_gop(rtp, payload)
+            for sink in tuple(self.rtp_sinks):
+                try:
+                    sink(rtp)
+                except Exception:  # noqa: BLE001
+                    _LOGGER.exception("Video RTP sink failed")
         self._reorder_buf[seq] = payload
 
         while True:
