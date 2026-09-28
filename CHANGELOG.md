@@ -4,6 +4,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [semver](ht
 Newest entries on top. **Entries are written in English from 1.0.1 onwards**; earlier ones are in
 Italian and are kept as they were written.
 
+## [1.0.12] - 2026-09-28
+
+### Added
+
+- **The intercom is found on the network** ([#6](https://github.com/lollox80/ha-vimar-intercom/issues/6)).
+  The Tab announces `_eipvdes._tcp` over mDNS, the service the VIEW app looks for, and Home Assistant
+  now offers it under *Discovered*. The QR or the credentials are still asked for, since the TXT record
+  carries no secret, but the address and the local SIP domain come from the record:
+  - `proxy` fills the intercom address;
+  - `domain` becomes the local SIP domain. On a 40515 whose QR says `domain=127.0.0.1` this is the
+    Tab's own address, instead of the cloud domain that local registration refused with `503`. This
+    is not yet verified on such a plant;
+  - on the 40507 it is the cloud domain, as before.
+  Only `mac`, `proxy` and `domain` are relied on (the 40507 record has four keys, the 40515 eleven);
+  `dev` and `fver` are shown when present. An intercom already set up is recognised by its MAC in
+  any notation (or by its address, for manual entries without MAC) and not offered again; when its
+  address changes, the entry follows it and reloads (local mode only). No `ZeroconfServiceInfo`
+  import, which exists only from HA 2024.12: the blocker of the old PR #7.
+
 ## [1.0.11] - 2026-09-28
 
 Closes [#9](https://github.com/lollox80/ha-vimar-intercom/issues/9) and

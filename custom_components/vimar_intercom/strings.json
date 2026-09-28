@@ -44,6 +44,10 @@
           "use_local_udp": "Abilita la modalità UDP locale. Richiede che HA e il citofono siano sulla stessa rete.",
           "local_udp_port": "Porta UDP usata da HA per il SIP locale. Default: 5060."
         }
+      },
+      "zeroconf_confirm": {
+        "title": "Citofono Vimar trovato in rete",
+        "description": "Home Assistant ha trovato un citofono Vimar all'indirizzo {host} (MAC {mac}, modello {model}, firmware {firmware}). Per collegarlo servono ancora il QR di abbinamento o le credenziali SIP: indirizzo e dominio locale sono già compilati."
       }
     },
     "error": {
@@ -53,8 +57,10 @@
       "sip_registration_failed": "Registrazione SIP fallita. Verifica che l'IP del citofono sia corretto e raggiungibile da HA."
     },
     "abort": {
-      "already_configured": "Il dispositivo è già configurato."
-    }
+      "already_configured": "Il dispositivo è già configurato.",
+      "no_mac": "Il citofono si è annunciato senza MAC: aggiungilo a mano da Impostazioni → Dispositivi e servizi."
+    },
+    "flow_title": "{name} ({host})"
   },
   "options": {
     "step": {

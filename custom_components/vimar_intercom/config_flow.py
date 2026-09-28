@@ -28,6 +28,7 @@ from .const import (
     PICG_TARGET,
     SGA_TARGET,
 )
+from . import discovery
 from . import qr_decoder
 from . import rest_client
 from . import rubrica_import
@@ -46,6 +47,7 @@ KEY_LOCAL_PROXY   = "local_proxy"
 KEY_GID           = "gid"
 KEY_PLANT_TYPE    = "plant_type"
 KEY_MAC           = "mac"
+KEY_LOCAL_DOMAIN  = "local_domain"
 KEY_USE_LOCAL_UDP  = "use_local_udp"
 KEY_LOCAL_UDP_PORT = "local_udp_port"
 KEY_ACTUATORS      = "actuators"
@@ -266,6 +268,12 @@ def _inside(path: str, folder: str) -> bool:
     """True se path è folder o sta sotto (link risolti; /config/www2 non conta)."""
     return Path(path).resolve().is_relative_to(Path(folder).resolve())
 
+def _default(value: str | None) -> dict:
+    """`{"default": value}` solo se c'è un valore: un default "" precompila il campo
+    con una stringa vuota invece di lasciarlo vuoto."""
+    return {"default": value} if value else {}
+
+
 class VimarIntercomConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Gestisce l'onboarding dell'integrazione Vimar Intercom."""
 
@@ -274,6 +282,98 @@ class VimarIntercomConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         self._credentials: dict = {}
         self._qr_error: str | None = None
+        # Dati del record mDNS quando il flusso parte dal discovery (issue #6).
+        # Vuoto se l'utente ha avviato il flusso a mano.
+        self._discovered: dict[str, str] = {}
+
+    # ─── Discovery mDNS (_eipvdes._tcp) ─────────────────────────────────────
+    # Nessun import di ZeroconfServiceInfo: sta in helpers.service_info.zeroconf
+    # solo da HA 2024.12, e il minimo è 2024.7 (review della vecchia PR #7).
+    # Servono solo .host e .properties.
+
+    async def async_step_zeroconf(self, discovery_info) -> FlowResult:
+        """Il Tab si è annunciato in LAN. Il record porta indirizzo, MAC e il dominio
+        SIP che il Tab si aspetta; le credenziali no: il flusso prosegue come sempre
+        (QR o manuale) con questi campi già compilati."""
+        info = discovery.extract_discovery(
+            str(discovery_info.host), getattr(discovery_info, "properties", None))
+        _LOGGER.debug("Zeroconf: host=%s proxy=%s domain=%s model=%s fw=%s",
+                      discovery_info.host, info["local_proxy"], info["sip_domain"],
+                      info["model"], info["firmware"])
+        mac = info["mac_normalized"]
+        if not mac:
+            # Senza MAC non si riconosce lo stesso Tab al discovery successivo:
+            # si aprirebbe un flusso nuovo a ogni riavvio.
+            return self.async_abort(reason="no_mac")
+
+        # Già configurato? Le installazioni hanno unique_id «utente@dominio»: si
+        # riconoscono dal MAC salvato (dal QR, con separatori diversi) o dall'IP.
+        for entry in self._async_current_entries(include_ignore=False):
+            conf = {**entry.data, **entry.options}
+            same_mac = discovery.normalize_mac(conf.get(KEY_MAC)) == mac
+            if same_mac or conf.get(KEY_LOCAL_PROXY) == info["local_proxy"]:
+                if same_mac:
+                    self._update_proxy(entry, info["local_proxy"])
+                return self.async_abort(reason="already_configured")
+
+        await self.async_set_unique_id(mac)
+        self._abort_if_unique_id_configured()   # un «ignora» dell'utente vale
+        self._discovered = info
+        self.context["title_placeholders"] = {
+            "name": f"Vimar {info['model']}" if info["model"] else "Vimar Intercom",
+            "host": info["local_proxy"],
+        }
+        return await self.async_step_zeroconf_confirm()
+
+    @callback
+    def _update_proxy(self, entry, proxy: str) -> None:
+        """Il DHCP ha dato un altro IP al Tab: si aggiorna l'entry e si ricarica.
+        Solo in modalità locale, dove l'IP serve davvero."""
+        conf = {**entry.data, **entry.options}
+        if not proxy or conf.get(KEY_LOCAL_PROXY) == proxy or not conf.get(KEY_USE_LOCAL_UDP, True):
+            return
+        _LOGGER.info("Il citofono ha cambiato indirizzo: %s → %s", conf.get(KEY_LOCAL_PROXY), proxy)
+        kwargs = {"data": {**entry.data, KEY_LOCAL_PROXY: proxy}}
+        if KEY_LOCAL_PROXY in entry.options:
+            kwargs["options"] = {**entry.options, KEY_LOCAL_PROXY: proxy}
+        self.hass.config_entries.async_update_entry(entry, **kwargs)
+        self.hass.config_entries.async_schedule_reload(entry.entry_id)
+
+    async def async_step_zeroconf_confirm(
+        self, user_input: dict | None = None
+    ) -> FlowResult:
+        """Conferma del Tab trovato, poi si prosegue con QR o credenziali."""
+        if user_input is not None:
+            return await self.async_step_user()
+        return self.async_show_form(
+            step_id="zeroconf_confirm",
+            data_schema=vol.Schema({}),
+            description_placeholders={
+                "host":     self._discovered.get("local_proxy", ""),
+                "mac":      self._discovered.get("mac", ""),
+                "model":    self._discovered.get("model") or "n/d",
+                "firmware": self._discovered.get("firmware") or "n/d",
+            },
+        )
+
+    def _apply_discovered(self) -> None:
+        """Dopo QR o credenziali: il dominio locale e il MAC annunciati dal Tab.
+
+        Il `domain` del record è quello che il Tab si aspetta in modalità locale
+        (il proprio IP sul 40515, il dominio cloud sul 40507). Il QR del 40515 porta
+        `domain=127.0.0.1` e la registrazione locale col dominio cloud riceve 503.
+        """
+        d = self._discovered
+        if not d:
+            return
+        if d.get("sip_domain"):
+            self._credentials[KEY_LOCAL_DOMAIN] = d["sip_domain"]
+        if d.get("mac") and not self._credentials.get(KEY_MAC):
+            self._credentials[KEY_MAC] = d["mac"]
+
+    def _local_test_domain(self) -> str:
+        """Il dominio che runtime.configure userà in UDP locale (LOCAL_DOMAIN se c'è)."""
+        return self._credentials.get(KEY_LOCAL_DOMAIN) or self._credentials["sip_domain"]
 
     async def async_step_user(
         self, user_input: dict | None = None
@@ -307,6 +407,7 @@ class VimarIntercomConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     qr_decoder.decode, qr_text
                 )
                 self._credentials = qr_decoder.extract_sip_credentials(fields)
+                self._apply_discovered()
                 return await self.async_step_network()
             except qr_decoder.QRDecodeError as exc:
                 _LOGGER.warning("QR decode error: %s", exc)
@@ -355,6 +456,7 @@ class VimarIntercomConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     KEY_CLOUD_PROXY:  cloud_proxy,
                     KEY_GID: "", KEY_PLANT_TYPE: "", KEY_MAC: "",
                 }
+                self._apply_discovered()
                 return await self.async_step_network()
 
         return self.async_show_form(
@@ -362,7 +464,11 @@ class VimarIntercomConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema({
                 vol.Required("sip_user"):     str,
                 vol.Required("sip_password"): str,
-                vol.Required("sip_domain"):   str,
+                # Il dominio annunciato dal Tab, se è un nome (il dominio cloud del
+                # 40507); un IP (40515) è solo il dominio locale, non quello dell'account.
+                vol.Required("sip_domain", **_default(
+                    "" if discovery.is_ip(self._discovered.get("sip_domain"))
+                    else self._discovered.get("sip_domain"))): str,
                 vol.Optional("cloud_proxy", default=DEFAULT_CLOUD_PROXY): str,
             }),
             errors=errors,
@@ -387,7 +493,7 @@ class VimarIntercomConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 ok, msg = await _test_sip_registration(
                     sip_user      = self._credentials["sip_user"],
                     sip_password  = self._credentials["sip_password"],
-                    sip_domain    = self._credentials["sip_domain"],
+                    sip_domain    = self._local_test_domain(),
                     local_proxy   = local_proxy,
                     local_udp_port = local_udp_port,
                 )
@@ -418,7 +524,7 @@ class VimarIntercomConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="network",
             data_schema=vol.Schema({
-                vol.Required("local_proxy"): str,
+                vol.Required("local_proxy", **_default(self._discovered.get("local_proxy"))): str,
                 vol.Optional("use_local_udp", default=True): bool,
                 vol.Optional(
                     "local_udp_port", default=DEFAULT_LOCAL_UDP_PORT
