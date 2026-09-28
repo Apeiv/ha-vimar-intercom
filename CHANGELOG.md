@@ -29,6 +29,16 @@ proposed and tested it.
   *Call* and *Call Video (outdoor)* invited the SGA, which takes the state commands but does not
   necessarily accept a call (`488` on the development plant; `488`/`408` on the 40515, where the
   SGA is `61000`). They now call the video entrance panel, like the camera.
+- **The door did not open on a 2FV2** (reported by @Apeiv on
+  [#20](https://github.com/lollox80/ha-vimar-intercom/pull/20)). `OPEN_2F` went to the SGA; on his
+  Tab 5S Up 40515 the SGA is `61000`, which answers `200` and does nothing. The command has to go
+  to the entrance panel that owns the relay (`55001` there), which is where the VIEW app sends it:
+  the `GID_PE` of the door actuator in the phonebook. The lock, the *Open Door* button, the
+  `open_door` action without `target` and the actuators with target `AUTO` now use that panel. On
+  plants where the SGA and the door panel are the same address (the development plant: `55001`)
+  nothing changes. `VOICEMAIL;`, `DND;` and `GET_INIT_STATUS` still go to the SGA/PICG.
+- The `open_door` action filled `target` with the SGA when it was omitted, and ignored `command`
+  when `target` was missing. Both fixed.
 
 ### Added
 
@@ -37,6 +47,11 @@ proposed and tested it.
   `PHONEBOOK.AUTO` of your apartment row, otherwise the first `PE`/`PE_EXT` row.
 - **`internal_panel_target` option**: the target of *Call Home (indoor)*. Default `55002`. The
   phonebook does not say which one it is, so the import leaves it alone.
+- **`door_target` option**: the entrance panel that receives the door command. Empty by default.
+  The phonebook import (from file or downloaded from the intercom) fills it in with the `GID_PE`
+  of the first door actuator and shows it in the summary. When it is empty: the door actuator
+  already saved in the entry (entries that imported the phonebook with 1.0.7 have the actuators
+  but not the option), otherwise the SGA, as before.
 
 ### Changed
 
@@ -46,8 +61,6 @@ proposed and tested it.
 - **Opening the live view places the call.** A dashboard card with `camera_view: live` now calls
   the panel every time the dashboard is shown: use `camera_view: auto` (the example card in
   `docs/lovelace_example.yaml` does).
-- The door command still goes to the SGA: it is the only route verified on the field. On the
-  40515 the report suggests the entrance panel instead; left as it is until someone tests it.
 - `media_enc` (SRTP) description: the 40515 only accepts the call with SRTP **on**, the opposite of
   the development plant. It is per plant.
 

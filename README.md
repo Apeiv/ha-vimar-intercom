@@ -98,16 +98,17 @@ Settings → Vimar Intercom → **Configure**:
 | **Use local SIP UDP** (`use_local_udp`) | ON = local UDP; OFF = cloud TLS |
 | **Local UDP port** (`local_udp_port`) | default 5060 |
 | **Actuators (JSON)** (`actuators`) | JSON list of `{name, msg, target, icon}`; creates dynamic buttons. Empty = no buttons |
-| **SGA** (`sga_target`) | Recipient of `VOICEMAIL;`/`DND;` and of the "AUTO" door open. Empty = default `55001` |
+| **SGA** (`sga_target`) | Recipient of `VOICEMAIL;`/`DND;`, and of the door command when `door_target` is empty. Empty = default `55001` |
 | **PICG** (`picg_target`) | Recipient of `GET_INIT_STATUS`. On the development plant it matches the SGA; on others it does not (60001 on a 40515). Empty = default `55001` |
 | **Video entrance panel** (`camera_target`) | Panel called by the camera, *Call* and *Call Video (outdoor)*: the `PHONEBOOK` row with `TYPE='PE'`. **Not the SGA.** Empty = default `55100` |
 | **Internal panel** (`internal_panel_target`) | Target of *Call Home (indoor)*. The phonebook does not say which one it is: set it by hand. Empty = default `55002` |
+| **Entrance panel that opens the door** (`door_target`) | Recipient of the door command (lock, *Open Door*, `open_door` without `target`, actuators with target `AUTO`): the `GID_PE` of the door actuator in the phonebook. **Not always the SGA**: on a 2FV2 the SGA is `61000` and the door is opened by panel `55001`. Empty = the saved door actuator's panel, otherwise the SGA |
 | **Encrypt media (SRTP)** (`media_enc`) | Off on the development plant; some plants only accept the call with SRTP on (a cloud 40515 in [#3](../../issues/3)). Try it if the camera stays black or the call fails with `488` |
 
 The actuator list and the SGA/PICG values come from your plant's **phonebook** (`rubrica.db`): in the
 options menu pick **"Import actuators from rubrica.db"**, upload the file (you can get it through the
-VIEW app or with root access, see `docs/RUBRICA.md`) and confirm — actuators, SGA, PICG and the video
-entrance panel are then set automatically. You can also enter the values by hand in the "Settings" step, which is handy if you
+VIEW app or with root access, see `docs/RUBRICA.md`) and confirm — actuators, SGA, PICG, the video
+entrance panel and the panel that opens the door are then set automatically. You can also enter the values by hand in the "Settings" step, which is handy if you
 already know your plant's SGA or want to tweak the imported actuator list.
 
 ---
@@ -118,11 +119,11 @@ already know your plant's SGA or want to tweak the imported actuator list.
 |---|---|---|
 | Intercom | `camera` | **On-demand** video through Home Assistant's `stream` (HLS/WebRTC): opening it makes the hub call `camera_target`, and ffmpeg remuxes the H.264/PCMU RTP to MPEG-TS on `/api/vimar_intercom/av`. Thumbnails and snapshots only during a call |
 | Doorbell | `event` | `event` entity (device class DOORBELL), event type `ring`, fired on ring (incoming INVITE) |
-| Lock | `lock` | Opens the door (`OPEN_2F` → outdoor unit); auto-relocks after 5 s (there is no physical feedback) |
+| Lock | `lock` | Opens the door (`OPEN_2F` → `door_target`); auto-relocks after 5 s (there is no physical feedback) |
 | Call | `button` | SIP call to the default outdoor unit |
 | Call Video (outdoor) / Call Home (indoor) | `button` | Call to `camera_target` / `internal_panel_target` |
 | Answer / Hang up | `button` | Answer (200 OK) / end the call (BYE) |
-| Open Door | `button` | `OPEN_2F` to the outdoor unit |
+| Open Door | `button` | `OPEN_2F` to `door_target` |
 | *Dynamic actuators* | `button` | One per entry in `options["actuators"]` (F1/F2, stair lights, relays…); sends `MSG` with `Panda: command` |
 | Voicemail | `switch` | `VOICEMAIL;ON/OFF` (Panda: blue) to the SGA; state read from the Tab's announcements |
 | Do Not Disturb | `switch` | `DND;ON/OFF` (Panda: blue) to the SGA; real state |
@@ -150,7 +151,7 @@ already know your plant's SGA or want to tweak the imported actuator list.
 | `vimar_intercom.call` | SIP call to an outdoor unit or monitor | `target` |
 | `vimar_intercom.answer` | Answers the incoming call | — |
 | `vimar_intercom.hangup` | Ends the active call | — |
-| `vimar_intercom.open_door` | Door open command (`OPEN_2F`) | `target`, `command` |
+| `vimar_intercom.open_door` | Door open command (`OPEN_2F`); without `target` it goes to `door_target` | `target`, `command` |
 | `vimar_intercom.fetch_local` | HTTP Digest GET against the Tab's local interface (home mode) | `path`, `save_as`, `host`, `scheme` |
 
 Example (Developer tools → Actions):

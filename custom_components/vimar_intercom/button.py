@@ -174,11 +174,11 @@ class VimarActuatorButton(ButtonEntity):
         self._command = str(act["msg"])
         target = str(act.get("target", _AUTO_TARGET_SENTINEL))
         # target "AUTO" → stesso destinatario di default dell'apri-porta
-        # (la targa/porta usata da hub.async_door/servizio open_door, cioè
-        # R.SGA_TARGET = R.DOOR_ESTERNO senza lo schema sip:).
+        # (la targa usata da hub.async_door/servizio open_door, cioè
+        # R.DOOR_TARGET = R.DOOR_ESTERNO senza lo schema sip:).
         # Così l'utente non deve conoscere l'id SIP della targa master, e il
         # valore segue eventuali override in options (manuali o da rubrica.db).
-        self._target = R.SGA_TARGET if target.upper() == _AUTO_TARGET_SENTINEL else target
+        self._target = R.DOOR_TARGET if target.upper() == _AUTO_TARGET_SENTINEL else target
         self._attr_name = name
         self._attr_icon = _ACTUATOR_ICONS.get(act.get("icon", ""), "mdi:gesture-tap-button")
         slug = _slug(name, self._command)

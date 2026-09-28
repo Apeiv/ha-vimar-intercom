@@ -497,12 +497,10 @@ class VimarIntercomHub:
         The targa forwards the command to its local relay.
         No active call required.
         """
-        if target:
-            uri = sip_uri(target)
-            body = command or C.DOOR_COMMAND
-        else:
-            uri = R.DOOR_ESTERNO
-            body = C.DOOR_COMMAND
+        # Senza target: la targa che apre la porta (R.DOOR_TARGET, dalla
+        # rubrica), non l'SGA — su un 2FV2 l'SGA risponde 200 e non apre.
+        uri = sip_uri(target) if target else R.DOOR_ESTERNO
+        body = command or C.DOOR_COMMAND
 
         _LOGGER.info("Door command: uri=%s body=%s registered=%s", uri, body, sip.registered)
 
@@ -510,7 +508,7 @@ class VimarIntercomHub:
             uri, body, extra_headers={"Panda": "command"})
 
         self.stats["last_door_time"] = self._now()
-        self.stats["last_door_target"] = target or R.SGA_TARGET
+        self.stats["last_door_target"] = target or R.DOOR_TARGET
         self.stats["last_door_result"] = msg
         if ok:
             self.stats["door_count"] += 1

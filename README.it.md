@@ -99,15 +99,16 @@ Impostazioni → Vimar Intercom → **Configura**:
 | **Usa SIP UDP locale** (`use_local_udp`) | ON = UDP locale; OFF = TLS cloud |
 | **Porta UDP locale** (`local_udp_port`) | default 5060 |
 | **Attuatori (JSON)** (`actuators`) | lista JSON `{name, msg, target, icon}`; crea bottoni dinamici. Vuoto = nessun bottone |
-| **SGA** (`sga_target`) | destinatario di `VOICEMAIL;`/`DND;` e dell'apri‑porta "AUTO". Vuoto = default `55001` |
+| **SGA** (`sga_target`) | destinatario di `VOICEMAIL;`/`DND;`, e del comando di apertura se `door_target` è vuota. Vuoto = default `55001` |
 | **PICG** (`picg_target`) | destinatario di `GET_INIT_STATUS`. Sull'impianto di sviluppo coincide con l'SGA, su altri no (60001 su un 40515). Vuoto = default `55001` |
 | **Targa video** (`camera_target`) | targa chiamata dalla camera, da *Chiama* e da *Chiama Video (esterno)*: la riga `PHONEBOOK` con `TYPE='PE'`. **Non è l'SGA.** Vuoto = default `55100` |
 | **Pannello interno** (`internal_panel_target`) | destinatario di *Chiama Casa (interno)*. La rubrica non lo dice: va inserito a mano. Vuoto = default `55002` |
+| **Targa che apre la porta** (`door_target`) | destinatario del comando di apertura (serratura, *Apri Porta*, `open_door` senza `target`, attuatori con target `AUTO`): il `GID_PE` dell'attuatore porta nella rubrica. **Non sempre è l'SGA**: su un 2FV2 l'SGA è `61000` e la porta la apre la targa `55001`. Vuoto = la targa dell'attuatore porta salvato, altrimenti l'SGA |
 | **Cifra il media (SRTP)** (`media_enc`) | spento sull'impianto di sviluppo; alcuni impianti accettano la chiamata solo con SRTP attivo (un 40515 in cloud, [#3](../../issues/3)). Provalo se la camera resta nera o la chiamata fallisce con `488` |
 
 Gli attuatori e i valori SGA/PICG si ricavano dalla **rubrica dell'impianto** (`rubrica.db`): dal menu
 delle opzioni scegli **"Importa attuatori da rubrica.db"**, carica il file (lo trovi con l'app VIEW o
-via root, vedi `docs/RUBRICA.md`) e conferma — attuatori, SGA, PICG e targa video vengono impostati in automatico.
+via root, vedi `docs/RUBRICA.md`) e conferma — attuatori, SGA, PICG, targa video e targa che apre la porta vengono impostati in automatico.
 In alternativa puoi inserire i valori a mano nello step "Impostazioni" (utile se conosci già l'SGA del
 tuo impianto o vuoi modificare la lista attuatori prodotta dall'import).
 
@@ -119,11 +120,11 @@ tuo impianto o vuoi modificare la lista attuatori prodotta dall'import).
 |---|---|---|
 | Intercom (Videocitofono) | `camera` | Video **on‑demand** tramite lo `stream` di Home Assistant (HLS/WebRTC): aprendolo l'hub chiama `camera_target` e ffmpeg rimpacchetta l'RTP H.264/PCMU in MPEG‑TS su `/api/vimar_intercom/av`. Anteprime e snapshot solo durante una chiamata |
 | Doorbell (Campanello) | `event` | Entità `event` (device_class DOORBELL), event_type `ring`, allo squillo (INVITE in arrivo) |
-| Serratura | `lock` | Apri porta (`OPEN_2F` → targa); auto‑relock dopo 5 s (nessun feedback fisico) |
+| Serratura | `lock` | Apri porta (`OPEN_2F` → `door_target`); auto‑relock dopo 5 s (nessun feedback fisico) |
 | Chiama | `button` | Chiamata SIP verso la targa di default |
 | Chiama Video (esterno) / Chiama Casa (interno) | `button` | Chiamata verso `camera_target` / `internal_panel_target` |
 | Rispondi / Riaggancia | `button` | Rispondi (200 OK) / termina (BYE) |
-| Apri Porta | `button` | `OPEN_2F` verso la targa |
+| Apri Porta | `button` | `OPEN_2F` verso `door_target` |
 | *Attuatori dinamici* | `button` | Uno per voce in `options["actuators"]` (F1/F2, luci scala, relè…); invia `MSG` con `Panda: command` |
 | Segreteria | `switch` | `VOICEMAIL;ON/OFF` (Panda: blue) verso l'SGA; stato letto dagli annunci del Tab |
 | Non Disturbare | `switch` | `DND;ON/OFF` (Panda: blue) verso l'SGA; stato reale |
@@ -151,7 +152,7 @@ tuo impianto o vuoi modificare la lista attuatori prodotta dall'import).
 | `vimar_intercom.call` | Chiamata SIP verso una targa/monitor | `target` |
 | `vimar_intercom.answer` | Risponde alla chiamata in arrivo | — |
 | `vimar_intercom.hangup` | Termina la chiamata attiva | — |
-| `vimar_intercom.open_door` | Comando di apertura (`OPEN_2F`) | `target`, `command` |
+| `vimar_intercom.open_door` | Comando di apertura (`OPEN_2F`); senza `target` va a `door_target` | `target`, `command` |
 | `vimar_intercom.fetch_local` | GET HTTP Digest verso l'interfaccia locale del Tab (home mode) | `path`, `save_as`, `host`, `scheme` |
 
 Esempio (Strumenti per sviluppatori → Azioni):

@@ -46,7 +46,8 @@ MEDIA_ENC: bool = False
 ACTUATORS: list = []
 
 # ─── SGA / PICG (da options flow, ricavati dalla rubrica o inseriti a mano) ──
-# SGA = destinatario di VOICEMAIL;/DND; (Panda: blue) e dell'apri-porta/AUTO.
+# SGA = destinatario di VOICEMAIL;/DND; (Panda: blue). L'apri-porta ha un suo
+# destinatario (DOOR_TARGET, sotto), che coincide con l'SGA solo su alcuni impianti.
 # PICG = destinatario di GET_INIT_STATUS. Sugli impianti verificati finora
 # coincidono (55001), ma sono due valori distinti nella rubrica (SYSTEM.
 # MAGIC_APT_INTERCOM vs PID_LIST ruolo PICG) e vanno tenuti configurabili
@@ -61,10 +62,15 @@ PICG_TARGET: str = _const.PICG_TARGET
 # Vuoto in options → default storico in const.py.
 CAMERA_TARGET:         str = _const.CAMERA_TARGET
 INTERNAL_PANEL_TARGET: str = _const.INTERNAL_PANEL_TARGET
+# La targa che apre la porta: il GID_PE dell'attuatore porta nella rubrica.
+# Non è per forza l'SGA: su un 2FV2 l'SGA è il 61000 e la porta la apre la
+# targa 55001 (è lì che la manda l'app VIEW). Senza un valore dalla rubrica si
+# resta sull'SGA, come prima.
+DOOR_TARGET: str = _const.SGA_TARGET
 
 # ─── URI calcolati da SIP_DOMAIN (popolati in configure) ─────────────────────
 INTERCOM:     str = ""   # sip:<CAMERA_TARGET>@<domain> — destinatario di default delle chiamate
-DOOR_ESTERNO: str = ""   # sip:<SGA_TARGET>@<domain> — destinatario dell'apri-porta
+DOOR_ESTERNO: str = ""   # sip:<DOOR_TARGET>@<domain> — destinatario dell'apri-porta
 
 # ─── Identità dispositivo (per installazione, dal config entry) ──────────────
 # Popolati da configure() con i valori salvati nell'entry; __init__.py li genera
@@ -96,6 +102,16 @@ def new_device_identity() -> dict[str, str]:
     }
 
 
+def door_from_actuators(actuators) -> str:
+    """La targa che apre la porta, dalla rubrica: il GID_PE del primo
+    attuatore con l'icona della porta. Vuoto se la rubrica non lo dice."""
+    for act in actuators or []:
+        target = str((act or {}).get("target") or "")
+        if (act or {}).get("icon") == "door" and target.isdigit():
+            return target
+    return ""
+
+
 def configure(data: dict) -> None:
     """Popola il modulo con i dati del config entry.
 
@@ -111,7 +127,7 @@ def configure(data: dict) -> None:
     global DETECTED_MODEL, DETECTED_FW, DETECTED_UA, DETECTED_PRIORITY
     global ACTUATORS
     global SGA_TARGET, PICG_TARGET
-    global CAMERA_TARGET, INTERNAL_PANEL_TARGET
+    global CAMERA_TARGET, INTERNAL_PANEL_TARGET, DOOR_TARGET
     global DEVICE_IMEI, DEVICE_UUID
 
     SIP_USER     = data.get("sip_user", "")
@@ -170,13 +186,21 @@ def configure(data: dict) -> None:
         or _const.INTERNAL_PANEL_TARGET
     )
 
+    # Apri-porta: opzione door_target (compilata dall'import rubrica o a mano);
+    # se vuota, la targa dell'attuatore porta fra quelli salvati — le entry
+    # che hanno importato la rubrica con la 1.0.7 hanno gli attuatori ma non il
+    # campo —; se nemmeno quelli lo dicono, l'SGA come prima.
+    DOOR_TARGET = ((str(data.get("door_target") or "").strip())
+                   or door_from_actuators(ACTUATORS) or SGA_TARGET)
+
     # URI calcolati — devono essere aggiornati dopo SIP_DOMAIN e i target.
     # Le chiamate vanno alla targa video, non all'SGA: l'SGA riceve i MESSAGE
     # di stato ma non è detto che accetti un INVITE (488 sull'impianto di
-    # sviluppo, 488/408 sul 40515 di #3). L'apri-porta resta sull'SGA, che è
-    # l'unica via verificata sul campo (OPEN_2F → 55001).
+    # sviluppo, 488/408 sul 40515 di #3). L'apri-porta va alla targa che
+    # possiede il relè (su un 2FV2 l'SGA 61000 risponde 200 e non apre); i
+    # comandi di stato (VOICEMAIL;, DND;, GET_INIT_STATUS) restano all'SGA/PICG.
     INTERCOM     = f"sip:{CAMERA_TARGET}@{SIP_DOMAIN}"
-    DOOR_ESTERNO = f"sip:{SGA_TARGET}@{SIP_DOMAIN}"
+    DOOR_ESTERNO = f"sip:{DOOR_TARGET}@{SIP_DOMAIN}"
 
     # Identità dispositivo: salvata nell'entry al primo avvio. Se manca (entry
     # creato da una versione precedente, o probe/test senza entry) se ne genera

@@ -15,6 +15,8 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+from .runtime import door_from_actuators
+
 ICON_MAP = {"DOOR": "door", "LIGHT": "light", "SWITCH": "switch"}
 
 
@@ -161,7 +163,9 @@ def parse_rubrica_file(path: str, gid: str = "101") -> dict:
     """Apre rubrica.db in sola lettura ed estrae attuatori + parametri SYSTEM.
 
     Ritorna ``{"actuators": [...], "system": {...}, "sga": str | None,
-    "camera": str | None}``.
+    "camera": str | None, "door": str | None}``. ``door`` è il ``GID_PE``
+    dell'attuatore porta: la targa a cui va il comando di apertura, che non è
+    per forza l'SGA (su un 2FV2 l'SGA è il 61000, la porta la apre la 55001).
     Solleva ``RubricaImportError`` se il file non esiste, non è un database
     SQLite valido, o una query fallisce inaspettatamente. Tabelle mancanti
     (schema diverso da questo impianto) non sono un errore: producono
@@ -181,6 +185,7 @@ def parse_rubrica_file(path: str, gid: str = "101") -> dict:
             "system": system,
             "sga": system.get("MAGIC_APT_INTERCOM"),
             "camera": camera,
+            "door": door_from_actuators(actuators) or None,
         }
     finally:
         con.close()
