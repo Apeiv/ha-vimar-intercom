@@ -69,13 +69,6 @@ PN_TOKEN = ""
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CA_PATH    = os.path.join(SCRIPT_DIR, "vimar_rootca.pem")
 
-# ─── APNs VoIP Push (opzionale — solo per push iOS) ──────────────────────────
-APNS_KEY_PATH  = os.path.join(SCRIPT_DIR, "AuthKey.p8")
-APNS_KEY_ID    = ""
-APNS_TEAM_ID   = ""
-APNS_BUNDLE_ID = "noiseheroes.Home"
-APNS_SANDBOX   = True
-
 # ─── Segreteria (answering machine) — comando DA CONFERMARE ──────────────────
 # SGA (MAGIC_APT_INTERCOM) = destinatario di VOICEMAIL;ON/OFF e DND;ON/OFF con Panda: blue.
 # CONFERMATO 19/08/2026 dalla rubrica.db reale (SYSTEM.MAGIC_APT_INTERCOM = "55001", PICG "Casa CG")

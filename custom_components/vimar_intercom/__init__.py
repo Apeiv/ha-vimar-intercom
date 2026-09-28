@@ -29,7 +29,6 @@ from .hub import VimarIntercomHub
 from . import av_stream
 from . import media_handler as media
 from . import ring_log
-from . import push_sender
 from . import sip_client as sip
 from . import runtime
 
@@ -227,20 +226,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hub.set_ws_broadcast(_broadcast)
     hub._has_ws_clients = lambda: len(audio_ws_clients) > 0
 
-    # Initialize APNs VoIP push sender
-    from .const import APNS_KEY_PATH, APNS_KEY_ID, APNS_TEAM_ID, APNS_BUNDLE_ID, APNS_SANDBOX
-    if APNS_KEY_ID and APNS_TEAM_ID:
-        push_sender.init(APNS_KEY_PATH, APNS_KEY_ID, APNS_TEAM_ID, APNS_BUNDLE_ID, APNS_SANDBOX)
-        _LOGGER.info("APNs VoIP push sender initialized")
-    else:
-        _LOGGER.warning("APNs push not configured — set APNS_KEY_ID and APNS_TEAM_ID in const.py")
-
     _register_services(hass)
 
     hass.http.register_view(VimarAVStreamView(hass))
     hass.http.register_view(VimarAudioWSView(hass))
     await _register_card(hass)
-    hass.http.register_view(VimarPushTokenView())
     hass.http.register_view(VimarDebugView())
     hass.http.register_view(VimarRingsView(hass))
     hass.http.register_view(VimarRingPhotoView(hass))
@@ -732,47 +722,6 @@ class VimarAudioWSView(HomeAssistantView):
                 }))
             except Exception as e:
                 await ws.send_str(json.dumps({"type": "error", "msg": str(e)}))
-
-
-class VimarPushTokenView(HomeAssistantView):
-    """REST endpoint for iOS app to register/unregister VoIP push tokens."""
-
-    url = "/api/vimar_intercom/push_token"
-    name = "api:vimar_intercom:push_token"
-    requires_auth = True
-
-    async def post(self, request: web.Request) -> web.Response:
-        try:
-            data = await request.json()
-        except Exception:
-            return web.json_response({"error": "Invalid JSON"}, status=400)
-
-        token = data.get("token")
-        if not token:
-            return web.json_response({"error": "Missing token"}, status=400)
-
-        sender = push_sender.get_sender()
-        if not sender:
-            return web.json_response({"error": "Push not configured"}, status=503)
-
-        device_name = data.get("device_name", "unknown")
-        sender.register_token(token, device_name)
-        return web.json_response({"status": "ok", "devices": len(sender.registered_devices)})
-
-    async def delete(self, request: web.Request) -> web.Response:
-        try:
-            data = await request.json()
-        except Exception:
-            return web.json_response({"error": "Invalid JSON"}, status=400)
-
-        token = data.get("token")
-        if not token:
-            return web.json_response({"error": "Missing token"}, status=400)
-
-        sender = push_sender.get_sender()
-        if sender:
-            sender.unregister_token(token)
-        return web.json_response({"status": "ok"})
 
 
 class VimarDebugView(HomeAssistantView):

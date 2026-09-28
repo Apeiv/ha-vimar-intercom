@@ -111,7 +111,6 @@ def test_squillo_registrato_poi_risposto(tmp_path, monkeypatch):
     monkeypatch.setattr(sip, "calling", False)
     monkeypatch.setattr(sip, "pending_incoming", {"caller_uri": "sip:55001@dom", "cid": "c1",
                                                   "active": True, "early": False})
-    monkeypatch.setattr(hub_mod.push_sender, "get_sender", lambda: None)
 
     async def answer():
         return True, "ok"

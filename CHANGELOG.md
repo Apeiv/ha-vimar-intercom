@@ -133,6 +133,15 @@ Small follow-up to 1.0.9, from the first days of use on the 2F (Tab 7S 40507).
   instead of 24 because the muxer holds the first video packet until the first AAC frame
   (measured +10 ms vs +60 ms). Video is still copied.
 
+### Removed
+
+- The iOS push code, as in #21 by @m4r1k: `push_sender.py` (APNs VoIP over aiohttp, which
+  speaks HTTP/1.1 while APNs needs HTTP/2, so it could never deliver), the
+  `/api/vimar_intercom/push_token` view that stored device tokens inside the integration's
+  folder, its call on ring and the `APNS_*` constants. With `APNS_KEY_ID` empty none of it ever
+  ran; the "APNs push not configured" warning at every start is gone. The Vimar-cloud FCM
+  parameters (`PN_*`, `connectProfiles`) are unchanged.
+
 ## [1.0.9] - 2026-09-28
 
 Builds on 1.0.8. Field-tested on a Tab 5S Up 40515 (cloud TLS + SRTP).

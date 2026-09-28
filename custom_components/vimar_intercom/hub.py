@@ -11,7 +11,6 @@ from . import sip_client as sip
 from . import away_tts
 from . import frame_grabber
 from . import media_handler as media
-from . import push_sender
 from . import ring_log
 from . import const as C
 from . import runtime as R
@@ -772,13 +771,6 @@ class VimarIntercomHub:
             # IDR subito (INFO nel dialogo early del 183), non al giro della targa (~3 s):
             # foto, clip e card partono prima.
             self._request_keyframe()
-
-            # Send VoIP push to wake iOS devices
-            sender = push_sender.get_sender()
-            if sender:
-                caller = _uri_to_id(sip.pending_incoming.get("caller_uri")) or ""
-                panel = "esterna"  # TODO: detect panel from caller
-                asyncio.create_task(sender.send_voip_push(caller=caller, panel=panel))
 
             if R.SNAPSHOT_DIR:
                 now = datetime.now().astimezone()

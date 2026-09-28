@@ -18,7 +18,7 @@ dalla chiamata SIP (RTP H.264 + PCMU), servito come MPEG‑TS su `/av` allo stre
 
 ```text
 vimar_intercom/
-├── __init__.py         Setup/teardown entry, registrazione servizi, HTTP views (/av, /audio_ws, /push_token, /debug)
+├── __init__.py         Setup/teardown entry, registrazione servizi, HTTP views (/av, /audio_ws, /debug)
 ├── sip_client.py       Stack SIP asyncio: REGISTER/INVITE/MESSAGE/OPTIONS/BYE/INFO, digest, UDP+TLS, parsing (~1300 righe)
 ├── hub.py              VimarIntercomHub: orchestrazione, stats, callback entità, async_door/async_send_command, keepalive
 ├── runtime.py          R.*: credenziali/impostazioni dinamiche dalla config entry (SIP_USER, domain, ACTUATORS…)
@@ -36,7 +36,6 @@ vimar_intercom/
 ├── srtp.py             SRTP AES-CM-128-HMAC-SHA1-80 (pycryptodome)
 ├── model_detect.py     Rilevamento modello dagli header SIP
 ├── device.py           device_info condiviso
-├── push_sender.py      APNs VoIP (opzionale)
 ├── services.yaml, strings.json, translations/{it,en}.json
 ├── README.md, ARCHITECTURE.md
 └── manifest.json, icon.svg
