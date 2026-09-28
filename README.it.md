@@ -250,6 +250,7 @@ dal Tab finisce qui). Un tocco sulla foto la apre in grande. L'integrazione tien
 | `vimar_intercom.hangup` | Termina la chiamata attiva | — |
 | `vimar_intercom.open_door` | Comando di apertura (`OPEN_2F`; solo comandi `OPEN` / `OPEN_*`); senza `target` va a `door_target` | `target`, `command` |
 | `vimar_intercom.fetch_local` | GET HTTP Digest verso l'interfaccia locale del Tab (home mode). Solo amministratori e automazioni | `path`, `save_as`, `host`, `scheme` |
+| `vimar_intercom.find_sga` | Cerca il PICG interrogando una serie di indirizzi ([#14](../../issues/14)). Solo amministratori e automazioni | `start`, `end`, `targets`, `probe`, `delay`, `reply_wait`, `sip_timeout`, `apply`, `apply_sga` |
 | `vimar_intercom.simulate_ring` | Squillo di prova (admin): fa scattare l'evento campanello e le tue automazioni, senza la targa | — |
 
 Esempio (Strumenti per sviluppatori → Azioni):
@@ -262,6 +263,27 @@ data:
   header_name: Panda
   header_value: command
 ```
+
+**Trovare SGA/PICG senza la rubrica** (1.0.13, per gli impianti solo cloud dove non funziona né lo
+scaricamento in LAN né quello dal cloud): `find_sga` interroga un indirizzo alla volta (default
+`55000`–`55010`, al massimo 50) e si ferma alla prima `GET_NICKS_REPLY`; la voce con ruolo `PICG` è la
+risposta. Non cambia nulla, salvo `apply` (scrive `picg_target`) e/o `apply_sga` (scrive anche
+`sga_target`); poi l'integrazione si ricarica.
+
+```yaml
+action: vimar_intercom.find_sga
+data:
+  start: "55000"
+  end: "55010"
+response_variable: result
+```
+
+Se un impianto lascia `GET_NICKS` senza risposta SIP (segnalato su un 40515 in cloud: `Timeout` dove
+`GET_INIT_STATUS` riceveva `200`), usa `probe: get_init_status`: dà i tre esiti puliti, e l'indirizzo la
+cui sonda provoca la `GET_INIT_STATUS_REPLY` è il PICG; ma all'SGA vero fa comparire «Configurazione
+appartamento modificata» sull'app a ogni invio. `sip_timeout` (default 8 s) limita l'attesa della
+risposta SIP di ogni sonda. La risposta elenca ogni sonda con il suo esito: `absent` (404), `exists`
+(accettata, nessuna reply), `replied`, `no_response`, `error`; più `picg` e i nickname dichiarati.
 
 ---
 

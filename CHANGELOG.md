@@ -4,6 +4,32 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [semver](ht
 Newest entries on top. **Entries are written in English from 1.0.1 onwards**; earlier ones are in
 Italian and are kept as they were written.
 
+## [1.0.13] - 2026-09-28
+
+### Added
+
+- **`vimar_intercom.find_sga`: find the PICG without the phonebook**
+  ([#14](https://github.com/lollox80/ha-vimar-intercom/issues/14), PR #18 brought up to date). It is
+  for cloud-only systems where neither the intercom's local HTTP API nor the cloud phonebook (1.0.12)
+  is available.
+  - The action probes a small range of addresses one at a time, with a pause between probes:
+    default `55000`–`55010`, at most 50.
+  - It stops at the first reply. With `GET_NICKS` (the default) the intercom declares its own PICG in
+    `GET_NICKS_REPLY`.
+  - Each probe is reported with the three-outcome rule: `absent` (404), `exists` (accepted, no reply)
+    or `replied`.
+  - A late `GET_NICKS_REPLY` still counts, because it names the PICG by content.
+  - **`probe: get_init_status`** is the fallback for the 40515 in cloud mode where `GET_NICKS` got
+    `Timeout`. There the PICG is the address whose probe triggered the reply, and a late reply is
+    reported as two candidates. Sent to the real SGA, it makes the VIEW app show "Configurazione
+    appartamento modificata".
+  - `sip_timeout` (default 8 s) bounds each probe; `do_system_message` gained a `timeout` argument.
+  - Nothing is written unless `apply` / `apply_sga` is set.
+  - **Admin only**, like `send_command`, since it sends MESSAGEs to a range of addresses and can
+    change the configuration.
+- `GET_NICKS_REPLY` is parsed wherever it arrives: the declared nicknames and PICG are kept in the
+  hub's stats.
+
 ## [1.0.12] - 2026-09-28
 
 ### Added
