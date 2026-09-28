@@ -123,8 +123,10 @@ Example, Tab 5S Up 40515 (Due Fili Plus, cloud): SGA `61000`, PICG `60001`, vide
 `55001`. These values come from the VIEW app's phonebook, not from the defaults.
 
 The actuator list and the SGA/PICG values come from your plant's **phonebook** (`rubrica.db`): in the
-options menu pick **"Import actuators from rubrica.db"**, upload the file (you can get it through the
-VIEW app or with root access, see `docs/RUBRICA.md`) and confirm — actuators, SGA, PICG, the video
+options menu pick **"Download the phonebook from the intercom"** (LAN), **"Download the phonebook from
+the Vimar cloud"** (plants that send the long `GET_INIT_STATUS` reply) or **"Import actuators from
+rubrica.db"**, upload the file (you can get it through the VIEW app or with root access, see
+`docs/RUBRICA.md`) and confirm — actuators, SGA, PICG, the video
 entrance panel and the panel that opens the door are then set automatically. You can also enter the values by hand in the "Settings" step, which is handy if you
 already know your plant's SGA or want to tweak the imported actuator list.
 
@@ -345,9 +347,10 @@ The video pane shows live video while a call or a ring is up. For voice, use the
   `rubrica.db` import fill it in.
 - **Cloud phonebook**: needs a `token`. Plants that answer `GET_INIT_STATUS` with the long form hand it
   over directly, and the phonebook can then be downloaded with a single authenticated request — see
-  `docs/RUBRICA.md` §0, verified on a 40515. Plants that answer with the short form (including the
-  development one) don't carry a token, and there the manual extraction is still the way. Fetching it
-  automatically isn't implemented yet ([#5](../../issues/5)).
+  `docs/RUBRICA.md` §0-bis, verified on a 40515. Since 1.0.12 the options menu does it:
+  **"Download the phonebook from the Vimar cloud"** ([#5](../../issues/5)); the token is read from the
+  plant each time and never stored. Plants that answer with the short form (including the development
+  one) don't carry a token: there use the download from the intercom on the LAN, or the manual extraction.
 - **By-me actuators** (e.g. stair lights on By-me home automation): these may not respond over SIP even
   when they are listed in the phonebook.
 - **Lock**: no physical state feedback (optimistic auto-relock after 5 s).

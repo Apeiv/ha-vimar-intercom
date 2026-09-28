@@ -14,6 +14,7 @@ from . import ring_log
 from . import const as C
 from . import runtime as R
 from . import validate
+from . import log_redact
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -860,7 +861,8 @@ class VimarIntercomHub:
                 st["last_error"] = str(msg)[:200]
                 st["last_error_time"] = now
             elif msg_type == "message":
-                st["last_message_in"] = str(msg)[:200]
+                # Il sensore è visibile a ogni utente: niente token della risposta lunga.
+                st["last_message_in"] = log_redact.redact(str(msg))[:200]
                 st["last_message_in_time"] = now
                 self._handle_incoming_message(str(msg))
         except Exception:

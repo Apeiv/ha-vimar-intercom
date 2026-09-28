@@ -28,6 +28,7 @@ from .const import (
     PICG_TARGET,
     SGA_TARGET,
 )
+from . import cloud_phonebook
 from . import discovery
 from . import qr_decoder
 from . import rest_client
@@ -48,6 +49,7 @@ KEY_GID           = "gid"
 KEY_PLANT_TYPE    = "plant_type"
 KEY_MAC           = "mac"
 KEY_LOCAL_DOMAIN  = "local_domain"
+KEY_CLOUD_DOMAIN  = "cloud_domain"
 KEY_USE_LOCAL_UDP  = "use_local_udp"
 KEY_LOCAL_UDP_PORT = "local_udp_port"
 KEY_ACTUATORS      = "actuators"
@@ -566,7 +568,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         """Menu: impostazioni a mano, rubrica dal citofono, o file rubrica.db."""
         return self.async_show_menu(
             step_id="init",
-            menu_options=["settings", "fetch_rubrica", "import_rubrica"],
+            menu_options=["settings", "fetch_rubrica", "fetch_rubrica_cloud", "import_rubrica"],
         )
 
     async def async_step_settings(
@@ -834,6 +836,107 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             errors=errors,
             description_placeholders={
                 "host": host or "—",
+                "rubrica_error": self._rubrica_error or "",
+            },
+        )
+
+    async def _cloud_token(self) -> tuple[str | None, str | None, str | None]:
+        """(token, rubrica_ver, GID) dall'ultima risposta a GET_INIT_STATUS dell'hub.
+
+        Se il token manca si richiede lo stato una volta e si aspetta qualche secondo:
+        la risposta arriva come MESSAGE separato. Il token non si salva da nessuna parte.
+        """
+        hub = (self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id) or {}).get("hub")
+        if hub is None:
+            return None, None, None
+
+        def _read():
+            st = hub.stats
+            return ((st.get("init_status") or {}).get("token"), st.get("rubrica_ver"),
+                    st.get("apt_gid"))
+
+        token, ver, gid = _read()
+        if not token and hub.registered:
+            await hub.async_request_status()
+            for _ in range(10):
+                await asyncio.sleep(0.5)
+                token, ver, gid = _read()
+                if token:
+                    break
+        return token, ver, (str(gid) if gid not in (None, "") else None)
+
+    async def async_step_fetch_rubrica_cloud(
+        self, user_input: dict | None = None
+    ) -> FlowResult:
+        """Scarica la rubrica **dal cloud Vimar** col `token` (issue #5).
+
+        Solo sugli impianti che mandano la risposta lunga di GET_INIT_STATUS (visto su un
+        40515 / 2FV2): lì c'è il token, e il file è lo stesso rubrica.db dell'app VIEW.
+        Per gli impianti solo cloud senza porta 80 in LAN è l'unica via senza estrarre
+        il file a mano.
+        """
+        errors: dict[str, str] = {}
+        current = {**self._entry.data, **self._entry.options}
+        cproxy = (current.get(KEY_CLOUD_PROXY) or "").strip()
+        cdomain = (current.get(KEY_CLOUD_DOMAIN) or "").strip()
+        if not cdomain and cproxy and str(current.get(KEY_SIP_DOMAIN, "")).endswith("." + cproxy):
+            cdomain = current[KEY_SIP_DOMAIN]   # entry manuale: il dominio SIP è quello cloud
+        token, ver, plant_gid = await self._cloud_token()
+        default_gid = plant_gid or str(current.get(KEY_GID) or "101")
+
+        if not token:
+            errors["base"] = "no_cloud_token"
+        elif cloud_phonebook.check_inputs(cdomain, cproxy, token, ver):
+            errors["base"] = "cloud_failed"
+            self._rubrica_error = (
+                f"manca {cloud_phonebook.check_inputs(cdomain, cproxy, token, ver)} "
+                "(dominio e proxy cloud vengono dal QR)")
+        elif user_input is not None:
+            gid = (user_input.get("rubrica_gid") or default_gid).strip() or default_gid
+
+            def _fetch() -> dict:
+                data = cloud_phonebook.download(cdomain, cproxy, token, ver)
+                fd, path = tempfile.mkstemp(suffix=".db", prefix="vimar_rubrica_")
+                os.close(fd)
+                try:
+                    with open(path, "wb") as fh:
+                        fh.write(data)
+                    return rubrica_import.parse_rubrica_file(path, gid)
+                finally:
+                    try:
+                        os.unlink(path)
+                    except OSError:  # pragma: no cover
+                        pass
+
+            try:
+                result = await self.hass.async_add_executor_job(_fetch)
+            except cloud_phonebook.CloudAuthError as exc:
+                errors["base"] = "cloud_auth_failed"
+                self._rubrica_error = str(exc)
+            except (cloud_phonebook.CloudPhonebookError, rubrica_import.RubricaImportError,
+                    ValueError, OSError) as exc:
+                errors["base"] = "cloud_failed"
+                self._rubrica_error = str(exc)
+            else:
+                if not result["actuators"]:
+                    errors["base"] = "rubrica_no_actuators"
+                    self._rubrica_error = (
+                        f"Rubrica scaricata, ma nessun attuatore per il GID {gid}.")
+                else:
+                    self._imported = result
+                    self._imported_gid = gid
+                    self._picg_from_rest = None
+                    return await self.async_step_import_confirm()
+
+        return self.async_show_form(
+            step_id="fetch_rubrica_cloud",
+            data_schema=vol.Schema({
+                vol.Optional("rubrica_gid",
+                             default=(user_input or {}).get("rubrica_gid") or default_gid): str,
+            }),
+            errors=errors,
+            description_placeholders={
+                "cproxy": cproxy or "—",
                 "rubrica_error": self._rubrica_error or "",
             },
         )

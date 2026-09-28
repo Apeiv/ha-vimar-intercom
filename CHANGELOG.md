@@ -22,6 +22,22 @@ Italian and are kept as they were written.
   any notation (or by its address, for manual entries without MAC) and not offered again; when its
   address changes, the entry follows it and reloads (local mode only). No `ZeroconfServiceInfo`
   import, which exists only from HA 2024.12: the blocker of the old PR #7.
+- **Phonebook from the Vimar cloud** ([#5](https://github.com/lollox80/ha-vimar-intercom/issues/5)):
+  options → *Download the phonebook from the Vimar cloud*. It uses the recipe @CPietro verified on a
+  40515 / 2FV2:
+  - `GET https://<cproxy>/phonebook/domains/<cdomain without .cproxy>/<rubrica_ver>`;
+  - HTTP Digest with the **full** `cdomain` as user and the `token` as password;
+  - `User-Agent: TOGA/2.4.0`.
+  The token and `rubrica_ver` come from the plant's long `GET_INIT_STATUS` reply; if the token is
+  missing the integration asks once and waits a few seconds. The file is the VIEW app's own
+  `rubrica.db` and goes through the usual import confirmation; the GID offered is the one the plant
+  declares. Plants with the short reply (no token, like the 40507) get a message pointing to the LAN
+  download or the file import.
+
+### Security
+
+- The token is never stored: it stays in memory from the last reply. It is masked in the
+  *Last received message* sensor, which any user can read. Errors never include it.
 
 ## [1.0.11] - 2026-09-28
 
