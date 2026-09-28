@@ -60,8 +60,11 @@ FETCH_LOCAL_SCHEMA = vol.Schema({
     vol.Optional("host"): cv.string,                    # default: local_proxy
     vol.Optional("scheme", default="http"): cv.string,
 })
+# Nessun default per target: senza, hub.async_door usa runtime.DOOR_TARGET (la
+# targa che apre la porta, dalla rubrica). Con l'SGA come default, su un 2FV2
+# il comando andava al 61000, che risponde 200 e non apre.
 OPEN_DOOR_SCHEMA = vol.Schema({
-    vol.Optional("target", default=_default_sga_target): cv.string,
+    vol.Optional("target"): cv.string,
     vol.Optional("command", default="OPEN_2F"): cv.string,
 })
 

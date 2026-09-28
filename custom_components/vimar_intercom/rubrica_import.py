@@ -15,6 +15,8 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+from .runtime import door_from_actuators
+
 ICON_MAP = {"DOOR": "door", "LIGHT": "light", "SWITCH": "switch"}
 
 
@@ -118,10 +120,52 @@ def extract_system(con: sqlite3.Connection) -> dict:
     return out
 
 
+# Ruoli PHONEBOOK.TYPE delle targhe esterne (PROTOCOL §5): PE, PE_EXT.
+_PLATE_TYPES = ("PE", "PE_EXT")
+
+
+def _as_gid(val) -> str | None:
+    """GID valido (intero > 0) come stringa, altrimenti None."""
+    try:
+        n = int(str(val).strip())
+    except (TypeError, ValueError):
+        return None
+    return str(n) if n > 0 else None
+
+
+def extract_camera_target(con: sqlite3.Connection, gid: str) -> str | None:
+    """La targa video da chiamare per accendere la camera (issue #3).
+
+    Stessa regola dell'app: la targa di autoaccensione è
+    ``PHONEBOOK.AUTO`` della riga del proprio appartamento (``GID = gid``);
+    se è ``NULL`` o ≤ 0 si prende la prima targa (``TYPE`` PE/PE_EXT, in
+    ordine di ``ID``). ``ENABLE`` non conta: sugli impianti 2F l'app lo ignora.
+    None se la tabella manca o non ci sono targhe.
+    """
+    if "phonebook" not in _tables(con):
+        return None
+    for r in con.execute("SELECT * FROM PHONEBOOK").fetchall():
+        if str(_get(r, "GID")) == str(gid).strip():
+            auto = _as_gid(_get(r, "AUTO"))
+            if auto:
+                return auto
+    rows = con.execute("SELECT * FROM PHONEBOOK ORDER BY ID").fetchall()
+    for r in rows:
+        tipo = str(_get(r, "TYPE") or "").strip().upper()
+        if tipo in _PLATE_TYPES:
+            target = _as_gid(_get(r, "GID"))
+            if target:
+                return target
+    return None
+
+
 def parse_rubrica_file(path: str, gid: str = "101") -> dict:
     """Apre rubrica.db in sola lettura ed estrae attuatori + parametri SYSTEM.
 
-    Ritorna ``{"actuators": [...], "system": {...}, "sga": str | None}``.
+    Ritorna ``{"actuators": [...], "system": {...}, "sga": str | None,
+    "camera": str | None, "door": str | None}``. ``door`` è il ``GID_PE``
+    dell'attuatore porta: la targa a cui va il comando di apertura, che non è
+    per forza l'SGA (su un 2FV2 l'SGA è il 61000, la porta la apre la 55001).
     Solleva ``RubricaImportError`` se il file non esiste, non è un database
     SQLite valido, o una query fallisce inaspettatamente. Tabelle mancanti
     (schema diverso da questo impianto) non sono un errore: producono
@@ -133,12 +177,15 @@ def parse_rubrica_file(path: str, gid: str = "101") -> dict:
         try:
             actuators = extract_actuators(con, gid)
             system = extract_system(con)
+            camera = extract_camera_target(con, gid)
         except sqlite3.Error as exc:
             raise RubricaImportError(f"Errore di lettura del database: {exc}") from exc
         return {
             "actuators": actuators,
             "system": system,
             "sga": system.get("MAGIC_APT_INTERCOM"),
+            "camera": camera,
+            "door": door_from_actuators(actuators) or None,
         }
     finally:
         con.close()

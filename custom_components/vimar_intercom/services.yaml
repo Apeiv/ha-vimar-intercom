@@ -51,11 +51,10 @@ hangup:
 
 open_door:
   name: Apri porta
-  description: Invia il comando di apertura (OPEN_2F) alla targa indicata.
+  description: Invia il comando di apertura (OPEN_2F) alla targa indicata. Senza targa usa quella che apre la porta (opzione «Targa che apre la porta», compilata dall'import rubrica).
   fields:
     target:
       name: Targa
-      default: "55001"
       selector:
         select:
           options:

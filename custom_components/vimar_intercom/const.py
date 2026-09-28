@@ -37,9 +37,13 @@ DOOR_COMMAND = "OPEN_2F"
 # ─── RTP / Media ──────────────────────────────────────────────────────────────
 RTP_AUDIO_PORT     = 7200
 RTP_VIDEO_PORT     = 9200
-FFMPEG_VIDEO_PORT  = 19200    # MJPEG ffmpeg legge video qui
-FFMPEG_AV_VIDEO_PORT = 19201  # AV ffmpeg video
-FFMPEG_AV_AUDIO_PORT = 19202  # AV ffmpeg audio
+# Porte locali dell'ffmpeg AV (/api/vimar_intercom/av). Devono essere PARI e
+# distanti almeno 2: per ogni riga m= dell'SDP ffmpeg apre la porta RTP **e** la
+# RTCP (= RTP + 1). Fino alla 1.0.7 erano 19201/19202: l'RTCP del video cadeva
+# sulla porta dell'audio, il bind falliva e /av non è mai partito (issue #8).
+# Guardia: tests/test_camera_stream.py.
+FFMPEG_AV_VIDEO_PORT = 19210  # AV ffmpeg video (RTCP 19211)
+FFMPEG_AV_AUDIO_PORT = 19212  # AV ffmpeg audio (RTCP 19213)
 
 # ─── Push Notifications — opzionale, non necessario per UDP locale ────────────
 PN_APP_ID = "toga-prod"
@@ -90,12 +94,11 @@ SGA_TARGET              = "55001"
 # PICG (capogruppo appartamento) — destinatario di GET_INIT_STATUS / GET_NICKS.
 # Su questo impianto coincide con l'SGA (55001). [VERIFICATO 20/08/2026]
 PICG_TARGET             = SGA_TARGET
-# Targa interna — usata solo dal bottone "Chiama Casa (interno)".
-# A differenza di SGA/PICG **non è configurabile**: non abbiamo un campo del
-# config entry né una chiave di rubrica.db da cui ricavarla, e indovinarla
-# (SGA+1) sarebbe esattamente il tipo di supposizione che questo progetto non
-# fa. Su un impianto diverso il bottone chiamerà un indirizzo inesistente e la
-# chiamata fallirà: nessun effetto collaterale, al contrario dell'apri-porta.
+# Targa interna — default del bottone "Chiama Casa (interno)" quando l'opzione
+# `internal_panel_target` è vuota. 55002 vale sull'impianto di sviluppo (è il
+# Tab stesso); su un 40515 visto in #3 il pannello interno è 60001. Non c'è una
+# chiave di rubrica.db da cui ricavarlo con certezza, quindi l'importer non lo
+# tocca: si imposta a mano nelle opzioni.
 INTERNAL_PANEL_TARGET   = "55002"
 # SEGRETERIA_TARGET/DND_TARGET non sono più letti dal codice (switch.py usa
 # runtime.SGA_TARGET): restano solo come alias storici/di comodo.
@@ -121,10 +124,12 @@ ACTUATORS = []  # RIMOSSI 18/08/2026: i token ipotizzati (OPEN_F1/OPEN_2/OPEN_2F
 # Ripristinare solo con i comandi reali ricavati dall'APK decifrata.
 
 # ─── Targa video (autoaccensione camera on-demand) ───────────────────────────
-# La camera on-demand chiama QUESTA targa per accendere il video (autoaccensione),
-# NON il PICG 55001 (che dava 488 Not Acceptable Here). Dalla rubrica.db:
-# PHONEBOOK GID=55100 TYPE='PE' NAME='Video'. [da rubrica 20/08/2026]
-# TODO: rendere configurabile in options / ricavare da PHONEBOOK (TYPE PE).
+# Default di `camera_target` quando l'opzione è vuota. È la targa che la camera,
+# «Chiama» e «Chiama Video (esterno)» chiamano per accendere il video; NON l'SGA
+# (55001 qui dava 488 Not Acceptable Here; 61000 sul 40515 di #3 non è
+# chiamabile). Qui: PHONEBOOK GID=55100 TYPE='PE' NAME='Video'. Su un altro
+# impianto la PE è 55001: l'importer rubrica la ricava (PHONEBOOK.AUTO del
+# proprio appartamento, altrimenti la prima riga PE) — rubrica_import.py.
 CAMERA_TARGET = "55100"
 
 # ─── Comandi di stato (in USCITA, Panda: blue) ───────────────────────────────

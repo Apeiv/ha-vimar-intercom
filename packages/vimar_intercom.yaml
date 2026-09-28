@@ -55,17 +55,15 @@ automation:
       - action: vimar_intercom.hangup
 
 # =============================================================================
-#  PERCHÉ QUI NON C'È LO SNAPSHOT
+#  PERCHÉ QUI NON C'È LO SNAPSHOT SULLO SQUILLO
 #
-#  Verrebbe naturale aggiungere `camera.snapshot` allo squillo. Non funziona, e
-#  fallisce nel modo peggiore: senza errori. `hub.video_frame` restituisce
-#  sempre None da quando il video viene inviato come NAL H.264 sul WebSocket, e
-#  Home Assistant, quando l'immagine è None, esce senza scrivere il file e senza
-#  loggare niente. Il risultato è un'automazione che sembra funzionare per
-#  settimane e non ha mai salvato un solo file. Vedi issue #8.
-#
-#  `camera.record` non funziona per un motivo diverso: richiede l'integrazione
-#  `stream`, che una camera MJPEG non fornisce.
+#  Dalla 1.0.8 la camera passa dallo `stream` di Home Assistant (issue #8):
+#  `camera.snapshot` e `camera.record` funzionano, ma SOLO a chiamata in corso.
+#  Fuori da una chiamata la camera non produce immagini di proposito (farlo
+#  vorrebbe dire chiamare la targa a ogni miniatura), e Home Assistant, quando
+#  l'immagine è None, esce senza scrivere il file e senza loggare niente. Uno
+#  snapshot sul solo squillo sembrerebbe funzionare e non salverebbe nulla:
+#  mettilo dopo `vimar_intercom.answer` o dopo aver avviato la chiamata.
 #
 #  NON aggiungere una `camera: platform: ffmpeg` puntata su
 #  /api/vimar_intercom/av per aggirare il problema: la piattaforma ffmpeg sonda

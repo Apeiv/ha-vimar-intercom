@@ -1,6 +1,7 @@
 """Vimar Intercom — Media: RTP transport, STUN, G.711 codec, video capture, audio."""
 
 import asyncio
+import collections
 import logging
 import os
 import random
@@ -685,7 +686,7 @@ async def start_av_ffmpeg():
 
     Robustezza: idempotente e serializzato. Ferma qualsiasi istanza
     precedente (attendendone la reale terminazione, così le porte UDP
-    19201/19202 si liberano prima del nuovo bind → niente "Address in
+    AV (FFMPEG_AV_*_PORT) si liberano prima del nuovo bind → niente "Address in
     use"), scrive l'SDP in executor (no blocking I/O nell'event loop),
     poi abilita il forward RTP verso ffmpeg SOLO dopo lo start.
     """
@@ -718,7 +719,9 @@ async def start_av_ffmpeg():
             av_ffmpeg_proc = None
             return
 
-        asyncio.create_task(_read_av_ffmpeg_stderr())
+        proc = av_ffmpeg_proc
+        stderr_tail: collections.deque[str] = collections.deque(maxlen=20)
+        stderr_task = asyncio.create_task(_read_av_ffmpeg_stderr(proc, stderr_tail))
         # Give ffmpeg a moment to bind the UDP recv ports before we start
         # pushing RTP at them (avoids the very first packets being dropped).
         await asyncio.sleep(0.3)
@@ -729,7 +732,17 @@ async def start_av_ffmpeg():
                 audio_proto.forward_av = True
             _LOGGER.info("AV ffmpeg started (MPEG-TS output), RTP forwarding enabled")
         else:
-            _LOGGER.error("AV ffmpeg exited immediately during startup")
+            # Il motivo sta nello stderr (es. «bind failed» con porte che si
+            # sovrappongono, issue #8): aspettiamo che il lettore arrivi a EOF
+            # e lo riportiamo, invece di un errore muto.
+            try:
+                await asyncio.wait_for(stderr_task, timeout=2)
+            except Exception:  # noqa: BLE001 — timeout o lettore fallito
+                pass
+            _LOGGER.error(
+                "AV ffmpeg exited immediately during startup (rc=%s): %s",
+                proc.poll(), " | ".join(stderr_tail) or "no stderr output",
+            )
 
 
 async def stop_av_ffmpeg():
@@ -764,15 +777,23 @@ async def _stop_av_ffmpeg_locked():
         _LOGGER.info("AV ffmpeg stopped")
 
 
-async def _read_av_ffmpeg_stderr():
-    loop = asyncio.get_event_loop()
-    while av_ffmpeg_proc and av_ffmpeg_proc.poll() is None:
+async def _read_av_ffmpeg_stderr(proc, tail=None):
+    """Legge lo stderr di ffmpeg fino a EOF.
+
+    Legato al processo passato, non al globale, e senza guardare `poll()`:
+    prima il ciclo usciva appena il processo era già morto, cioè proprio nel
+    caso in cui lo stderr spiega il perché (issue #8).
+    """
+    loop = asyncio.get_running_loop()
+    while True:
         try:
-            line = await loop.run_in_executor(None, av_ffmpeg_proc.stderr.readline)
-            if not line:
-                break
-            text = line.decode(errors="replace").strip()
-            if text:
-                _LOGGER.debug("AV ffmpeg: %s", text)
-        except Exception:
+            line = await loop.run_in_executor(None, proc.stderr.readline)
+        except Exception:  # noqa: BLE001
             break
+        if not line:
+            break
+        text = line.decode(errors="replace").strip()
+        if text:
+            if tail is not None:
+                tail.append(text)
+            _LOGGER.debug("AV ffmpeg: %s", text)

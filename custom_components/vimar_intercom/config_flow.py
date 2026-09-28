@@ -19,7 +19,13 @@ from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import selector
 
-from .const import DOMAIN, SGA_TARGET, PICG_TARGET
+from .const import (
+    CAMERA_TARGET,
+    DOMAIN,
+    INTERNAL_PANEL_TARGET,
+    PICG_TARGET,
+    SGA_TARGET,
+)
 from . import qr_decoder
 from . import rest_client
 from . import rubrica_import
@@ -42,6 +48,9 @@ KEY_ACTUATORS      = "actuators"
 KEY_MEDIA_ENC      = "media_enc"
 KEY_SGA_TARGET     = "sga_target"
 KEY_PICG_TARGET    = "picg_target"
+KEY_CAMERA_TARGET  = "camera_target"
+KEY_INTERNAL_PANEL_TARGET = "internal_panel_target"
+KEY_DOOR_TARGET    = "door_target"
 
 DEFAULT_CLOUD_PROXY    = "ipvdes.vimar.cloud"
 DEFAULT_LOCAL_SIP_PORT = 5060
@@ -462,6 +471,19 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 errors[KEY_SGA_TARGET] = "invalid_target"
             if picg_target_raw and not picg_target_raw.isdigit():
                 errors[KEY_PICG_TARGET] = "invalid_target"
+            # Targhe da chiamare (issue #3): stessa regola, vuoto = default.
+            camera_target_raw = str(user_input.get(KEY_CAMERA_TARGET, "")).strip()
+            internal_target_raw = str(
+                user_input.get(KEY_INTERNAL_PANEL_TARGET, "")).strip()
+            if camera_target_raw and not camera_target_raw.isdigit():
+                errors[KEY_CAMERA_TARGET] = "invalid_target"
+            if internal_target_raw and not internal_target_raw.isdigit():
+                errors[KEY_INTERNAL_PANEL_TARGET] = "invalid_target"
+            # Targa che apre la porta: vuota di default, così runtime ripiega
+            # sull'attuatore porta salvato e poi sull'SGA.
+            door_target_raw = str(user_input.get(KEY_DOOR_TARGET, "")).strip()
+            if door_target_raw and not door_target_raw.isdigit():
+                errors[KEY_DOOR_TARGET] = "invalid_target"
 
             actuators: list[dict] = []
             try:
@@ -502,6 +524,9 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                         KEY_ACTUATORS:      actuators,
                         KEY_SGA_TARGET:     sga_target_raw,
                         KEY_PICG_TARGET:    picg_target_raw,
+                        KEY_CAMERA_TARGET:  camera_target_raw,
+                        KEY_INTERNAL_PANEL_TARGET: internal_target_raw,
+                        KEY_DOOR_TARGET:    door_target_raw,
                     },
                 )
 
@@ -542,6 +567,20 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Optional(
                     KEY_PICG_TARGET,
                     default=form.get(KEY_PICG_TARGET) or PICG_TARGET,
+                ): str,
+                vol.Optional(
+                    KEY_CAMERA_TARGET,
+                    default=form.get(KEY_CAMERA_TARGET) or CAMERA_TARGET,
+                ): str,
+                vol.Optional(
+                    KEY_INTERNAL_PANEL_TARGET,
+                    default=form.get(KEY_INTERNAL_PANEL_TARGET) or INTERNAL_PANEL_TARGET,
+                ): str,
+                # Nessun default fisso: vuoto è un valore valido (ripiego in
+                # runtime.configure), non «55001».
+                vol.Optional(
+                    KEY_DOOR_TARGET,
+                    default=form.get(KEY_DOOR_TARGET) or "",
                 ): str,
             }),
             errors=errors,
@@ -728,6 +767,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         result = self._imported or {"actuators": [], "sga": None}
         actuators: list[dict] = result["actuators"]
         sga = result.get("sga")
+        camera = result.get("camera")
+        door = result.get("door")
 
         if user_input is not None:
             # Due fonti distinte per due valori distinti:
@@ -735,6 +776,10 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             #   picg_target ← il ruolo PICG dichiarato dal citofono nei nickname
             new_sga  = sga or current.get(KEY_SGA_TARGET) or SGA_TARGET
             new_picg = self._confirm_picg(current, sga)
+            #   camera_target ← PHONEBOOK.AUTO del proprio GA, o la prima PE
+            new_camera = camera or current.get(KEY_CAMERA_TARGET) or ""
+            #   door_target ← GID_PE dell'attuatore porta (non l'SGA)
+            new_door = door or current.get(KEY_DOOR_TARGET) or ""
             return self.async_create_entry(
                 title="",
                 data={
@@ -745,6 +790,11 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     KEY_ACTUATORS:      actuators,
                     KEY_SGA_TARGET:     new_sga,
                     KEY_PICG_TARGET:    new_picg,
+                    KEY_CAMERA_TARGET:  new_camera,
+                    # La rubrica non dice quale sia il pannello interno:
+                    # l'import non lo tocca.
+                    KEY_INTERNAL_PANEL_TARGET: current.get(KEY_INTERNAL_PANEL_TARGET, ""),
+                    KEY_DOOR_TARGET:    new_door,
                 },
             )
 
@@ -779,6 +829,38 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 f"uguale all'SGA ({new_picg})."
             )
 
+        current_camera = current.get(KEY_CAMERA_TARGET) or CAMERA_TARGET
+        if camera and camera != current_camera:
+            camera_info = (
+                f"{camera} — diversa da quella attualmente configurata ({current_camera}); "
+                "confermando verrà impostata come nuova camera_target."
+            )
+        elif camera:
+            camera_info = f"{camera} — coincide con quella già in uso."
+        else:
+            camera_info = (
+                f"nessuna targa (PE) trovata nella rubrica; resta quella già configurata ({current_camera})."
+            )
+
+        current_door = current.get(KEY_DOOR_TARGET) or ""
+        if door and door != current_door:
+            door_info = (
+                f"{door} — la targa dell'attuatore porta (GID_PE)"
+                + (f", diversa da quella configurata ({current_door})" if current_door else "")
+                + "; confermando il comando di apertura andrà lì."
+            )
+        elif door:
+            door_info = f"{door} — coincide con quella già in uso."
+        elif current_door:
+            door_info = (
+                f"nessun attuatore porta nella rubrica; resta quella già configurata ({current_door})."
+            )
+        else:
+            door_info = (
+                f"nessun attuatore porta nella rubrica; il comando di apertura resta all'SGA "
+                f"({sga or current_sga})."
+            )
+
         return self.async_show_form(
             step_id="import_confirm",
             data_schema=vol.Schema({}),
@@ -788,5 +870,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 "gid": self._imported_gid,
                 "sga_info": sga_info,
                 "picg_info": picg_info,
+                "camera_info": camera_info,
+                "door_info": door_info,
             },
         )

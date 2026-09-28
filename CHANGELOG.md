@@ -6,6 +6,65 @@ Italian and are kept as they were written.
 
 ## [Unreleased]
 
+## [1.0.8] - 2026-09-26
+
+Two field reports from a **Tab 5S Up 40515** (2-wire, Wi-Fi, cloud TLS) by @Apeiv, in
+[#3](https://github.com/lollox80/ha-vimar-intercom/issues/3) and
+[#8](https://github.com/lollox80/ha-vimar-intercom/issues/8). The camera fix is his, as he
+proposed and tested it.
+
+### Fixed
+
+- **The camera was always black** ([#8](https://github.com/lollox80/ha-vimar-intercom/issues/8)).
+  Three causes, all fixed:
+  - the camera forced MJPEG and did not declare `CameraEntityFeature.STREAM`, so Home Assistant
+    never used `stream_source()`, while the MJPEG path read `hub.video_frame`, which is always
+    `None`. The camera now declares `STREAM` and goes through HA's stream worker (HLS/WebRTC);
+  - the ffmpeg behind `/api/vimar_intercom/av` could never start: ffmpeg opens RTP **and** RTCP
+    (RTP + 1) for each `m=` line, and with ports 19201/19202 the video RTCP landed on the audio
+    port (`bind failed: Address already in use`). The ports are now 19210/19212;
+  - the reader of ffmpeg's stderr stopped as soon as the process had exited, which is exactly
+    when stderr says why. It now reads to EOF, and a startup failure logs ffmpeg's last lines.
+- **Calls went to the SGA** ([#3](https://github.com/lollox80/ha-vimar-intercom/issues/3)).
+  *Call* and *Call Video (outdoor)* invited the SGA, which takes the state commands but does not
+  necessarily accept a call (`488` on the development plant; `488`/`408` on the 40515, where the
+  SGA is `61000`). They now call the video entrance panel, like the camera.
+- **The door did not open on a 2FV2** (reported by @Apeiv on
+  [#20](https://github.com/lollox80/ha-vimar-intercom/pull/20)). `OPEN_2F` went to the SGA; on his
+  Tab 5S Up 40515 the SGA is `61000`, which answers `200` and does nothing. The command has to go
+  to the entrance panel that owns the relay (`55001` there), which is where the VIEW app sends it:
+  the `GID_PE` of the door actuator in the phonebook. The lock, the *Open Door* button, the
+  `open_door` action without `target` and the actuators with target `AUTO` now use that panel. On
+  plants where the SGA and the door panel are the same address (the development plant: `55001`)
+  nothing changes. `VOICEMAIL;`, `DND;` and `GET_INIT_STATUS` still go to the SGA/PICG.
+- The `open_door` action filled `target` with the SGA when it was omitted, and ignored `command`
+  when `target` was missing. Both fixed.
+
+### Added
+
+- **`camera_target` option**: the video entrance panel called by the camera, *Call* and *Call Video
+  (outdoor)*. Default `55100`. The phonebook import fills it in with the app's own rule:
+  `PHONEBOOK.AUTO` of your apartment row, otherwise the first `PE`/`PE_EXT` row.
+- **`internal_panel_target` option**: the target of *Call Home (indoor)*. Default `55002`. The
+  phonebook does not say which one it is, so the import leaves it alone.
+- **`door_target` option**: the entrance panel that receives the door command. Empty by default.
+  The phonebook import (from file or downloaded from the intercom) fills it in with the `GID_PE`
+  of the first door actuator and shows it in the summary. When it is empty: the door actuator
+  already saved in the entry (entries that imported the phonebook with 1.0.7 have the actuators
+  but not the option), otherwise the SGA, as before.
+
+### Changed
+
+- Thumbnails and `camera.snapshot` come from the stream **only during a call**. Outside a call
+  there is no picture on purpose: producing one would mean calling the panel at every thumbnail
+  refresh. A snapshot on the ring alone still writes nothing.
+- **Opening the live view places the call.** A dashboard card with `camera_view: live` now calls
+  the panel every time the dashboard is shown: use `camera_view: auto` (the example card in
+  `docs/lovelace_example.yaml` does).
+- `media_enc` (SRTP) description: the 40515 only accepts the call with SRTP **on**, the opposite of
+  the development plant. It is per plant.
+
+
 ## [1.0.7] - 2026-09-21
 
 Stability release from a full debug pass against the decompiled VIEW app, the SIP logs of

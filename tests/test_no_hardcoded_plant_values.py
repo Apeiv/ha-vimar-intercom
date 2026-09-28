@@ -66,9 +66,21 @@ def test_nessun_indirizzo_di_impianto_cablato(modulo):
     )
 
 
-def test_la_targa_interna_e_isolata_in_const():
-    """Non è configurabile e non la sappiamo ricavare: almeno deve stare in un
-    posto solo, con scritto perché."""
+def test_le_targhe_da_chiamare_vengono_dalle_opzioni():
+    """Issue #3: targa video e pannello interno sono opzioni (runtime), con il
+    default storico isolato in const; button.py non li ripete e non chiama l'SGA."""
     assert const.INTERNAL_PANEL_TARGET == "55002"
+    assert const.CAMERA_TARGET == "55100"
     src = _codice("button.py")
-    assert '"55002"' not in src, "button.py duplica il valore invece di leggerlo da const"
+    assert '"55002"' not in src and '"55100"' not in src
+    assert "C.INTERNAL_PANEL_TARGET" not in src, "button.py deve leggere R.INTERNAL_PANEL_TARGET"
+    assert "R.INTERNAL_PANEL_TARGET" in src
+    assert "R.CAMERA_TARGET" in src
+    # «Chiama Video (esterno)» non deve più chiamare l'SGA.
+    riga = next(r for r in src.splitlines() if "Chiama Video" in r)
+    assert "SGA_TARGET" not in riga
+
+
+def test_l_autoaccensione_segue_l_opzione():
+    src = _codice("hub.py")
+    assert "C.CAMERA_TARGET" not in src, "hub.py deve usare R.CAMERA_TARGET (configurabile)"
