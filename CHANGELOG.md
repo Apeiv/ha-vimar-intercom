@@ -4,6 +4,37 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [semver](ht
 Newest entries on top. **Entries are written in English from 1.0.1 onwards**; earlier ones are in
 Italian and are kept as they were written.
 
+## [1.0.10] - 2026-09-28
+
+Small follow-up to 1.0.9, from the first days of use on the 2F (Tab 7S 40507).
+
+### Changed
+
+- **"Rispondi" (Answer) is available only while the doorbell rings.** At rest the button is greyed
+  out instead of accepting the press and logging `Answer failed: Nessuna chiamata in arrivo`. To
+  look at the entrance panel, open the camera: answering is for a ring.
+- The intercom card finds its entities by itself. Entity ids change from one installation to
+  another (the device's area, renames), so the defaults `sensor.vimar_intercom_intercom_stato` and
+  `lock.vimar_intercom_serratura` often did not exist and the card showed "offline". An entity
+  written in the card config still wins when it exists; otherwise the card takes the
+  integration's camera from the entity registry, and the state, last ring and lock from the
+  camera's new `card_entities` attribute.
+
+### Fixed
+
+- The *Open door*, *Call*, *Answer* and actuator **buttons now raise an error when they fail**
+  (the lock already did in 1.0.9): `button.press` used to "succeed" with the door still closed and
+  only a line in the log ([#23](https://github.com/lollox80/ha-vimar-intercom/issues/23)).
+- *Last opening*, *Last ring*, *Last caller*, *Last call duration* and *Last missed call* keep
+  their value (and attributes) across a Home Assistant restart, until the next event replaces it.
+  They used to go back to "Unknown". The counters since start-up are not restored.
+
+### Added
+
+- DEBUG log of the outgoing voice level every 2 s (`Voce verso la targa: picco N/32767`): the
+  `tx=` packet count says packets leave, not that they carry a voice, so a muted or wrong
+  microphone can now be told apart from a panel that does not play it.
+
 ## [1.0.9] - 2026-09-28
 
 Builds on 1.0.8. Field-tested on a Tab 5S Up 40515 (cloud TLS + SRTP).

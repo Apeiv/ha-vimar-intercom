@@ -7,6 +7,11 @@
 //   status: sensor.vimar_intercom_intercom_stato
 //   lock: lock.vimar_intercom_serratura
 //   last_ring: sensor.vimar_intercom_intercom_ultimo_squillo
+//
+// Le entità non vanno scritte: un entity_id che non esiste (area del dispositivo,
+// rinomina) viene sostituito da quello vero. La camera dell'integrazione si trova nel
+// registro del frontend; stato, ultimo squillo e serratura dall'attributo
+// `card_entities` della camera. Scritte e esistenti, vincono quelle della config.
 //   anchor: citofono      (URL con #citofono: la card si porta in vista; "" = no)
 //   history: 8            (ultimi squilli con foto, se c'è la cartella foto; 0 = no)
 //   layout: overlay       (o "sotto"; anche dall'editor visuale)
@@ -409,7 +414,9 @@ class VimarIntercomCard extends HTMLElement {
   }
 
   static getStubConfig(_hass, entities = []) {
-    const camera = entities.find((e) => e.startsWith("camera.vimar_intercom")) || DEFAULTS.camera;
+    const reg = _hass?.entities || {};
+    const camera = Object.keys(reg).find((id) => id.startsWith("camera.") && reg[id].platform === "vimar_intercom")
+      || entities.find((e) => e.startsWith("camera.vimar_intercom")) || DEFAULTS.camera;
     return { camera, name: DEFAULTS.name, layout: DEFAULTS.layout, history: DEFAULTS.history };
   }
 
@@ -421,6 +428,18 @@ class VimarIntercomCard extends HTMLElement {
       this._histKey = null;
       if (this._hass) this._render();
     }
+  }
+
+  // entity_id da usare per camera / status / lock / last_ring (vedi l'intestazione).
+  _ent(key) {
+    const hass = this._hass, want = this._cfg[key];
+    if (!hass || hass.states[want]) return want;
+    if (key === "camera") {
+      const reg = hass.entities || {};
+      return Object.keys(reg).find((id) => id.startsWith("camera.") && reg[id].platform === "vimar_intercom")
+        || want;
+    }
+    return hass.states[this._ent("camera")]?.attributes?.card_entities?.[key] || want;
   }
 
   _applyCfg() {
@@ -440,7 +459,7 @@ class VimarIntercomCard extends HTMLElement {
 
   _render() {
     const hass = this._hass;
-    const raw = hass.states[this._cfg.status]?.state;
+    const raw = hass.states[this._ent("status")]?.state;
     const state = LABEL[raw] ? raw : "offline";  // unknown/unavailable: come non raggiungibile
     const on = !!this._ws;
     const was = this._state;
@@ -472,7 +491,7 @@ class VimarIntercomCard extends HTMLElement {
       this._err.textContent = this._hint;
     }
     if (state !== "calling") this._cancelled = false;
-    const last = hass.states[this._cfg.last_ring]?.state;
+    const last = hass.states[this._ent("last_ring")]?.state;
     this._last.textContent = isNaN(Date.parse(last)) ? "" : `ultimo ${when(last)}`;
     const key = `${last}|${this._live}`;
     if (this._cfg.history > 0 && key !== this._histKey) {
@@ -493,7 +512,7 @@ class VimarIntercomCard extends HTMLElement {
     this._label(this._talk, ring ? "Rispondi" : inCall ? "Microfono" : "Parla");
     this._talk.disabled = state === "offline" || (!window.isSecureContext && !ring)
       || (state === "calling" && !on);
-    this._open.disabled = state === "offline" || hass.states[this._cfg.lock]?.state === "unavailable";
+    this._open.disabled = state === "offline" || hass.states[this._ent("lock")]?.state === "unavailable";
     if ((state === "idle" || state === "offline") && this._ws) this._stopAudio();
   }
 
@@ -672,7 +691,7 @@ class VimarIntercomCard extends HTMLElement {
   async _setPicture(live) {
     this._helpers ||= window.loadCardHelpers();
     const el = (await this._helpers).createCardElement({
-      type: "picture-entity", entity: this._cfg.camera, camera_view: live ? "live" : "auto",
+      type: "picture-entity", entity: this._ent("camera"), camera_view: live ? "live" : "auto",
       show_name: false, show_state: false, tap_action: { action: "none" }, hold_action: { action: "none" },
     });
     if (this._live !== live) return;  // stato cambiato nel frattempo
@@ -695,7 +714,7 @@ class VimarIntercomCard extends HTMLElement {
     this._resetOpen();
     this._err.textContent = this._hint;
     try {
-      await this._hass.callService("lock", "unlock", { entity_id: this._cfg.lock });
+      await this._hass.callService("lock", "unlock", { entity_id: this._ent("lock") });
       this._open.className = "ok";
       this._icon(this._open, "mdi:check");
       this._label(this._open, "Aperto");

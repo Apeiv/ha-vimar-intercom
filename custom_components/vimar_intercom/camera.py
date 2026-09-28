@@ -7,6 +7,7 @@ import logging
 from homeassistant.components.camera import Camera, CameraEntityFeature
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import frame_grabber
@@ -14,6 +15,15 @@ from .const import DOMAIN
 from .device import device_info
 
 _LOGGER = logging.getLogger(__name__)
+
+# Entità che la card del citofono legge, per chiave della sua config → (dominio,
+# suffisso dell'unique_id). Gli entity_id cambiano da un'installazione all'altra
+# (area del dispositivo, rinomine): la card li prende da qui invece di indovinarli.
+CARD_ENTITIES = {
+    "status": ("sensor", "status"),
+    "last_ring": ("sensor", "last_ring"),
+    "lock": ("lock", "lock"),
+}
 
 
 async def async_setup_entry(
@@ -46,6 +56,7 @@ class VimarIntercomCamera(Camera):
         super().__init__()
         self._hub = hub
         self._hass = hass
+        self._entry_id = entry_id
         self._attr_unique_id = f"{entry_id}_camera"
         self._attr_device_info = device_info(entry_id)
 
@@ -68,6 +79,17 @@ class VimarIntercomCamera(Camera):
         """Registrato = disponibile. HA segnerebbe la camera "unavailable" per i 503
         voluti di /av a riposo, e il frontend non aprirebbe più il video."""
         return self._hub.registered
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """`card_entities`: gli entity_id veri di stato, ultimo squillo e serratura,
+        per la card (`custom:vimar-intercom-card`) quando la sua config non li scrive."""
+        reg = er.async_get(self._hass)
+        found = {
+            key: reg.async_get_entity_id(domain, DOMAIN, f"{self._entry_id}_{suffix}")
+            for key, (domain, suffix) in CARD_ENTITIES.items()
+        }
+        return {"card_entities": {k: v for k, v in found.items() if v}}
 
     @property
     def is_streaming(self) -> bool:
