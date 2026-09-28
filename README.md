@@ -248,6 +248,7 @@ on the panel counts here too). Tap a photo to see it large. The integration keep
 | `vimar_intercom.hangup` | Ends the active call | — |
 | `vimar_intercom.open_door` | Door open command (`OPEN_2F`; only `OPEN` / `OPEN_*` commands); without `target` it goes to `door_target` | `target`, `command` |
 | `vimar_intercom.fetch_local` | HTTP Digest GET against the Tab's local interface (home mode). Admins and automations only | `path`, `save_as`, `host`, `scheme` |
+| `vimar_intercom.find_sga` | Finds the PICG by probing a range of addresses ([#14](../../issues/14)). Admins and automations only | `start`, `end`, `targets`, `probe`, `delay`, `reply_wait`, `sip_timeout`, `apply`, `apply_sga` |
 | `vimar_intercom.simulate_ring` | Test ring (admin): fires the doorbell event and your automations, without the panel | — |
 
 Example (Developer tools → Actions):
@@ -260,6 +261,28 @@ data:
   header_name: Panda
   header_value: command
 ```
+
+**Finding the SGA/PICG without the phonebook** (1.0.13, for cloud-only plants where neither the LAN nor
+the cloud download works): `find_sga` probes one address at a time (default `55000`–`55010`, at most 50)
+and stops at the first `GET_NICKS_REPLY`; the entry with role `PICG` is the answer. It changes nothing
+unless you set `apply` (writes `picg_target`) and/or `apply_sga` (also writes `sga_target`); the
+integration then reloads.
+
+```yaml
+action: vimar_intercom.find_sga
+data:
+  start: "55000"
+  end: "55010"
+response_variable: result
+```
+
+If a plant leaves `GET_NICKS` without any SIP answer (reported on a 40515 in cloud mode: `Timeout` where
+`GET_INIT_STATUS` got `200`), use `probe: get_init_status`. It gives the three clean outcomes, and the
+address whose probe triggers the `GET_INIT_STATUS_REPLY` is the PICG, but sent to the real SGA it makes
+the VIEW app show "Configurazione appartamento modificata" every time. `sip_timeout` (default 8 s)
+bounds how long each probe waits for its SIP answer. The response lists every probe with its outcome:
+`absent` (404), `exists` (accepted, no reply), `replied`, `no_response`, `error`; plus `picg` and the
+nicknames the intercom declared.
 
 ---
 
