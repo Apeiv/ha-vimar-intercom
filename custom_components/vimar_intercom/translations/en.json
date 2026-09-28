@@ -44,6 +44,10 @@
           "use_local_udp": "Enable local UDP mode. Requires HA and the intercom to be on the same network.",
           "local_udp_port": "UDP port used by HA for local SIP. Default: 5060."
         }
+      },
+      "zeroconf_confirm": {
+        "title": "Vimar intercom found on the network",
+        "description": "Home Assistant found a Vimar intercom at {host} (MAC {mac}, model {model}, firmware {firmware}). To connect it you still need the pairing QR code or the SIP credentials: the address and the local domain are already filled in."
       }
     },
     "error": {
@@ -53,8 +57,10 @@
       "sip_registration_failed": "SIP registration failed. Check that the intercom IP is correct and reachable from HA."
     },
     "abort": {
-      "already_configured": "Device is already configured."
-    }
+      "already_configured": "Device is already configured.",
+      "no_mac": "The intercom announced itself without a MAC: add it by hand from Settings → Devices & services."
+    },
+    "flow_title": "{name} ({host})"
   },
   "options": {
     "step": {

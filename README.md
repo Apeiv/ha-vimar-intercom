@@ -90,6 +90,15 @@ Settings → Devices & services → Add integration → **Vimar Intercom**.
   cloud/local proxy, GID, MAC and plant type.
 - **Manual**: enter `sip_user`, `sip_password`, `sip_domain` and `cloud_proxy` yourself.
 
+**Found on the network** (since 1.0.12, [#6](../../issues/6)): the Tab announces itself over mDNS
+(`_eipvdes._tcp`, the same service the VIEW app looks for), and Home Assistant shows it under
+*Discovered*. The QR or the credentials are still needed (the announcement carries no secret), but
+the intercom's address and the local SIP domain come from the Tab itself. This matters on plants
+whose QR says `domain=127.0.0.1`, such as a 40515: the domain the Tab announces (its own address)
+is used for local registration instead of the cloud domain. An intercom that is already set up
+is recognised by its MAC, and if the DHCP gives it a new address the integration follows it
+(local mode only). Where mDNS is filtered, nothing changes: add it by hand as before.
+
 ### Options (after adding the integration)
 
 Settings → Vimar Intercom → **Configure**:

@@ -92,6 +92,15 @@ Impostazioni → Dispositivi e servizi → Aggiungi integrazione → **Vimar Int
   cloud/local proxy, GID, MAC, planttype.
 - **Manuale**: inserisci `sip_user`, `sip_password`, `sip_domain`, `cloud_proxy`.
 
+**Trovato in rete** (dalla 1.0.12, [#6](../../issues/6)): il Tab si annuncia via mDNS
+(`_eipvdes._tcp`, lo stesso servizio che cerca l'app VIEW) e Home Assistant lo propone tra i
+*Rilevati*. Servono ancora il QR o le credenziali (l'annuncio non porta segreti), ma l'indirizzo del
+citofono e il dominio SIP locale arrivano dal Tab stesso. Conta sugli impianti il cui QR dice
+`domain=127.0.0.1`, come un 40515: per la registrazione locale si usa il dominio annunciato dal Tab
+(il suo indirizzo) invece di quello cloud. Un citofono già configurato si riconosce dal MAC, e se il
+DHCP gli dà un altro indirizzo l'integrazione lo segue (solo in modalità locale). Dove l'mDNS è
+filtrato non cambia nulla: si aggiunge a mano come prima.
+
 ### Opzioni (dopo l'aggiunta)
 
 Impostazioni → Vimar Intercom → **Configura**:

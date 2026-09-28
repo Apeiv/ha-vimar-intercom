@@ -1,0 +1,159 @@
+"""Issue #6: il citofono trovato in rete via mDNS (`_eipvdes._tcp`).
+
+Record come quelli osservati: 40507 (4 chiavi, `domain` = dominio cloud) e
+40515 fw 2.1.0203 (11 chiavi, `domain` = IP del Tab, QR con domain=127.0.0.1).
+"""
+from __future__ import annotations
+
+import asyncio
+import sys
+import types
+
+import pytest
+
+CLOUD = "aabbccddeeff.aabbccddeeff1234567890.ipvdes.vimar.cloud"
+TXT_40507 = {b"mac": b"AA:BB:CC:DD:EE:FF", b"domain": CLOUD.encode(), b"proxy": b"192.0.2.10",
+             b"timestemp": b"1789696090"}
+TXT_40515 = {b"dev": b"40515", b"mac": b"11:22:33:44:55:66", b"fver": b"2.1.0203",
+             b"proxy": b"192.0.2.20", b"domain": b"192.0.2.20", b"sta": b"2"}
+
+
+def _stub(name: str, **attrs) -> None:
+    module = sys.modules.get(name) or types.ModuleType(name)
+    for key, value in attrs.items():
+        setattr(module, key, value)
+    sys.modules[name] = module
+
+
+@pytest.fixture(scope="module")
+def cf():
+    _stub("homeassistant.components.file_upload", process_uploaded_file=None)
+    _stub("homeassistant.data_entry_flow", FlowResult=dict)
+
+    class _ConfigFlow:
+        def __init_subclass__(cls, **kwargs):
+            super().__init_subclass__()
+
+    if getattr(sys.modules["homeassistant"], "_is_stub", False):
+        sys.modules["homeassistant.config_entries"].ConfigFlow = _ConfigFlow
+    return pytest.importorskip("custom_components.vimar_intercom.config_flow")
+
+
+class _Entry:
+    def __init__(self, data, options=None):
+        self.entry_id = "e1"
+        self.data = data
+        self.options = options or {}
+
+
+def _flow(cf, entries=()):
+    flow = cf.VimarIntercomConfigFlow()
+    flow.context = {}
+    calls = {"update": [], "reload": [], "unique_id": None}
+
+    def update(entry, data=None, options=None):
+        calls["update"].append((data, options))
+
+    flow.hass = types.SimpleNamespace(config_entries=types.SimpleNamespace(
+        async_update_entry=update, async_schedule_reload=lambda eid: calls["reload"].append(eid)))
+    flow._async_current_entries = lambda include_ignore=True: list(entries)
+    flow.async_abort = lambda reason: {"type": "abort", "reason": reason}
+    flow.async_show_form = lambda **kw: {"type": "form", **kw}
+
+    async def set_uid(uid):
+        calls["unique_id"] = uid
+
+    flow.async_set_unique_id = set_uid
+    flow._abort_if_unique_id_configured = lambda **kw: None
+    return flow, calls
+
+
+def _info(host, txt):
+    return types.SimpleNamespace(host=host, properties=txt)
+
+
+def test_senza_mac_non_apre_il_flusso(cf):
+    flow, _ = _flow(cf)
+    r = asyncio.run(flow.async_step_zeroconf(_info("192.0.2.10", {b"proxy": b"192.0.2.10"})))
+    assert r == {"type": "abort", "reason": "no_mac"}
+
+
+def test_citofono_nuovo_chiede_conferma_con_i_dati_del_record(cf):
+    flow, calls = _flow(cf)
+    r = asyncio.run(flow.async_step_zeroconf(_info("192.0.2.20", TXT_40515)))
+    assert r["type"] == "form" and r["step_id"] == "zeroconf_confirm"
+    assert r["description_placeholders"] == {"host": "192.0.2.20", "mac": "11:22:33:44:55:66",
+                                             "model": "40515", "firmware": "2.1.0203"}
+    assert calls["unique_id"] == "112233445566"
+    assert flow.context["title_placeholders"] == {"name": "Vimar 40515", "host": "192.0.2.20"}
+
+
+def test_gia_configurato_col_mac_del_qr_aggiorna_l_ip_e_ricarica(cf):
+    """Il MAC nel QR ha un'altra forma: si confronta normalizzato. Il DHCP ha cambiato l'IP."""
+    entry = _Entry({"mac": "aabbccddeeff", "local_proxy": "192.0.2.99", "use_local_udp": True},
+                   {"local_proxy": "192.0.2.99"})
+    flow, calls = _flow(cf, [entry])
+    r = asyncio.run(flow.async_step_zeroconf(_info("192.0.2.10", TXT_40507)))
+    assert r == {"type": "abort", "reason": "already_configured"}
+    data, options = calls["update"][0]
+    assert data["local_proxy"] == "192.0.2.10" and options["local_proxy"] == "192.0.2.10"
+    assert calls["reload"] == ["e1"]
+
+
+def test_gia_configurato_in_cloud_non_tocca_niente(cf):
+    entry = _Entry({"mac": "AA-BB-CC-DD-EE-FF", "local_proxy": "192.0.2.99", "use_local_udp": False})
+    flow, calls = _flow(cf, [entry])
+    r = asyncio.run(flow.async_step_zeroconf(_info("192.0.2.10", TXT_40507)))
+    assert r["reason"] == "already_configured" and calls["update"] == [] and calls["reload"] == []
+
+
+def test_installazione_manuale_senza_mac_riconosciuta_dall_ip(cf):
+    entry = _Entry({"mac": "", "local_proxy": "192.0.2.10", "use_local_udp": True})
+    flow, calls = _flow(cf, [entry])
+    r = asyncio.run(flow.async_step_zeroconf(_info("192.0.2.10", TXT_40507)))
+    assert r["reason"] == "already_configured" and calls["update"] == []
+
+
+def test_40515_il_dominio_locale_viene_dal_record_non_dal_qr(cf, monkeypatch):
+    """QR con domain=127.0.0.1: il decoder ripiega sul cdomain, e la registrazione
+    locale con quello riceve 503. Il test di registrazione usa il dominio annunciato."""
+    flow, _ = _flow(cf)
+    asyncio.run(flow.async_step_zeroconf(_info("192.0.2.20", TXT_40515)))
+    flow._credentials = {"sip_user": "60992", "sip_password": "pw", "sip_domain": CLOUD,
+                         "local_domain": "127.0.0.1", "cloud_domain": CLOUD, "mac": ""}
+    flow._apply_discovered()
+    assert flow._credentials["local_domain"] == "192.0.2.20"
+    assert flow._credentials["mac"] == "11:22:33:44:55:66"
+    visti = []
+
+    async def fake_test(**kw):
+        visti.append(kw)
+        return True, "200"
+
+    monkeypatch.setattr(cf, "_test_sip_registration", fake_test)
+    monkeypatch.setattr(cf, "_validate_ip", lambda ip: True)
+
+    async def set_uid(uid):
+        pass
+
+    flow.async_set_unique_id = set_uid
+    flow.async_create_entry = lambda **kw: {"type": "create_entry", **kw}
+    r = asyncio.run(flow.async_step_network({"local_proxy": "192.0.2.20", "use_local_udp": True,
+                                             "local_udp_port": 5060}))
+    assert visti[0]["sip_domain"] == "192.0.2.20"
+    assert r["type"] == "create_entry"
+    assert r["data"]["local_domain"] == "192.0.2.20" and r["data"]["sip_domain"] == CLOUD
+
+
+def test_senza_discovery_nulla_cambia(cf):
+    flow, _ = _flow(cf)
+    flow._credentials = {"sip_user": "1", "sip_domain": CLOUD, "local_domain": "", "mac": "x"}
+    flow._apply_discovered()
+    assert flow._credentials == {"sip_user": "1", "sip_domain": CLOUD, "local_domain": "", "mac": "x"}
+    assert flow._local_test_domain() == CLOUD
+
+
+def test_dominio_cloud_precompilato_solo_se_e_un_nome(cf):
+    from custom_components.vimar_intercom import discovery
+    assert not discovery.is_ip(CLOUD) and discovery.is_ip("192.0.2.20")
+    assert cf._default("") == {} and cf._default("x") == {"default": "x"}
