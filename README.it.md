@@ -110,7 +110,7 @@ Impostazioni → Vimar Intercom → **Configura**:
 | **Cartella foto squillo** (`snapshot_dir`) | dove salvare la foto di chi suona a ogni squillo (`squillo_AAAAMMGG_HHMMSS_mmm.jpg` + `ultimo_squillo.jpg`), es. `/config/media/citofono`. Deve essere scrivibile da HA. Vuoto = disattivato |
 | **Secondi dopo lo squillo** (`snapshot_delay`) | attesa prima della foto (avvio anteprima + esposizione). Default 3 (Tab 5S Up 40515) |
 | **Messaggio di assenza** (`away_message_file`, `away_message_delay`) | file audio (mp3, wav…) fatto sentire al visitatore se nessuno risponde entro N secondi (0 = mai, max 60); poi l'integrazione riaggancia |
-| **Cifra il media (SRTP)** (`media_enc`) | spento sull'impianto di sviluppo; alcuni impianti accettano la chiamata solo con SRTP attivo (un 40515 in cloud, [#3](../../issues/3)). Provalo se la camera resta nera o la chiamata fallisce con `488` |
+| **Cifratura del media (SRTP)** (`media_enc`) | **Automatico** (default dalla 1.0.11): segue il `media_enc` che l'impianto dichiara nella risposta a `GET_INIT_STATUS` (`"srtp"` su un 40515 in cloud); gli impianti con la risposta corta (il 40507) restano in RTP chiaro. **Attivo** / **Disattivo** lo forzano. Chi aveva salvato «attivo» con la 1.0.10 o prima resta attivo; «spento» diventa automatico. Prova **Attivo** se la camera resta nera o la chiamata fallisce con `488` |
 
 Esempio, Tab 5S Up 40515 (Due Fili Plus, cloud): SGA `61000`, PICG `60001`, targa video e apri‑porta
 `55001`. Sono i valori della rubrica dell'app VIEW, non i default.
@@ -135,13 +135,14 @@ tuo impianto o vuoi modificare la lista attuatori prodotta dall'import).
 | Rispondi / Riaggancia | `button` | Rispondi (200 OK) / termina (BYE) |
 | Apri Porta | `button` | `OPEN_2F` verso `door_target` |
 | *Attuatori dinamici* | `button` | Uno per voce in `options["actuators"]` (F1/F2, luci scala, relè…); invia `MSG` con `Panda: command` |
-| Segreteria | `switch` | `VOICEMAIL;ON/OFF` (Panda: blue) verso l'SGA; stato letto dagli annunci del Tab |
-| Non Disturbare | `switch` | `DND;ON/OFF` (Panda: blue) verso l'SGA; stato reale |
+| Segreteria | `switch` | `VOICEMAIL;ON/OFF` (Panda: blue) verso l'SGA; stato letto dagli annunci del Tab e da `GET_INIT_STATUS`, chiesto dopo ogni comando. Il valore comandato si vede per 10 s al massimo: senza conferma lo stato diventa *sconosciuto* ([#9](../../issues/9)) |
+| Non Disturbare | `switch` | `DND;ON/OFF` (Panda: blue) verso l'SGA; stesse regole della Segreteria |
+| Ritardo segreteria | `select` | Solo sugli impianti con la risposta lunga di `GET_INIT_STATUS`: `vm_timeout`, uno dei `vm_timeout_values` dichiarati dall'impianto, scritto con `SET_APT_PARAMS` ([#4](../../issues/4)). Sugli impianti con la risposta corta non compare |
 | Intercom SIP | `binary_sensor` | Registrazione SIP attiva (connectivity) |
 | Intercom In Call | `binary_sensor` | Chiamata attiva |
 | Intercom Squillo | `binary_sensor` | ON mentre una targa chiama (attr: chiamante) |
 | Intercom Chiamata In Uscita | `binary_sensor` | ON mentre HA chiama |
-| Intercom Stato | `sensor` (enum) | offline / idle / ringing / in_call / calling (+ attributi rete) |
+| Intercom Stato | `sensor` (enum) | offline / idle / ringing / in_call / calling (+ attributi rete; sugli impianti con la risposta lunga anche il `GID` dell'appartamento, `apt_names` e il `media_enc` dichiarato) |
 | Intercom Ultimo Chiamante | `sensor` | targa/monitor dell'ultimo squillo |
 | Intercom Ultimo Squillo | `sensor` (timestamp) | ora dell'ultimo squillo |
 | Intercom Squilli | `sensor` (contatore) | squilli dall'avvio |

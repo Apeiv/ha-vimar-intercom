@@ -133,8 +133,16 @@ class _Hub:
     async def async_send_command(self, **_kw):
         return self._ok, "OK (200)" if self._ok else "Non registrato"
 
+    async def async_request_status(self):
+        pass
+
+
+class _HAError(Exception):
+    pass
+
 
 def _switch(hub):
+    switch_mod.HomeAssistantError = _HAError  # negli stub è un jolly, non un'eccezione
     sw = switch_mod.VimarModeSwitch(
         hub, "e1", key="segreteria", name="Segreteria", icon="mdi:voicemail",
         target="55001", cmd_on="VOICEMAIL;ON", cmd_off="VOICEMAIL;OFF",
@@ -144,9 +152,11 @@ def _switch(hub):
 
 
 def test_comando_fallito_non_cambia_lo_stato():
+    """Dalla 1.0.11 il comando fallito solleva anche un errore (issue #9)."""
     sw = _switch(_Hub(ok=False))
-    asyncio.run(sw.async_turn_on())
-    assert sw.is_on is False
+    with pytest.raises(_HAError):
+        asyncio.run(sw.async_turn_on())
+    assert sw.is_on is None
 
 
 def test_comando_riuscito_sposta_lo_stato_supposto():
@@ -157,9 +167,7 @@ def test_comando_riuscito_sposta_lo_stato_supposto():
 
 def test_con_stato_reale_non_e_supposto():
     sw = _switch(_Hub(ok=True, reale=False))
-    assert sw.assumed_state is False
-    asyncio.run(sw.async_turn_on())
-    assert sw.is_on is False, "prevale l'annuncio del Tab, non il comando"
+    assert sw.assumed_state is False and sw.is_on is False
 
 
 # ─── oscuramento: le forme reali del token ───────────────────────────────────
