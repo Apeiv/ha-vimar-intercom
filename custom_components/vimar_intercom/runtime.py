@@ -110,6 +110,13 @@ SNAPSHOT_DELAY: int = _const.DEFAULT_SNAPSHOT_DELAY
 # Id degli utenti HA ammessi a squilli, foto, clip e media live (vuoto = tutti).
 ALLOWED_USERS: list[str] = []
 
+# ─── Webhook squillo (da options flow; opzionale) ────────────────────────────
+# GET fire-and-forget per accendere/spegnere un interruttore fittizio (es.
+# Scrypted "Dummy Switch" collegato a un Custom Doorbell Button), o qualsiasi
+# altro automatismo esterno. Vuoto = disattivato. Vedi hub.py/webhook.py.
+RING_WEBHOOK_URL: str = ""
+RING_END_WEBHOOK_URL: str = ""
+
 # ─── Targhe da chiamare (da options flow; issue #3) ──────────────────────────
 # CAMERA_TARGET = targa video (PE) chiamata dalla camera, da «Chiama» e da
 # «Chiama Video (esterno)». INTERNAL_PANEL_TARGET = «Chiama Casa (interno)».
@@ -184,6 +191,7 @@ def configure(data: dict) -> None:
     global CAMERA_TARGET, INTERNAL_PANEL_TARGET, DOOR_TARGET
     global AWAY_MESSAGE_FILE, AWAY_MESSAGE_TEXT, AWAY_MESSAGE_TTS, AWAY_MESSAGE_DELAY
     global SNAPSHOT_DIR, SNAPSHOT_DELAY, ALLOWED_USERS
+    global RING_WEBHOOK_URL, RING_END_WEBHOOK_URL
     global DEVICE_IMEI, DEVICE_UUID
 
     SIP_USER     = data.get("sip_user", "")
@@ -266,6 +274,8 @@ def configure(data: dict) -> None:
     SNAPSHOT_DIR   = str(data.get("snapshot_dir") or "").strip()
     SNAPSHOT_DELAY = int(data.get("snapshot_delay", _const.DEFAULT_SNAPSHOT_DELAY))
     ALLOWED_USERS  = [str(u) for u in data.get("allowed_users") or []]
+    RING_WEBHOOK_URL     = str(data.get("ring_webhook_url") or "").strip()
+    RING_END_WEBHOOK_URL = str(data.get("ring_end_webhook_url") or "").strip()
 
     # Identità dispositivo: salvata nell'entry al primo avvio. Se manca (entry
     # creato da una versione precedente, o probe/test senza entry) se ne genera

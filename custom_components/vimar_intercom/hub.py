@@ -17,6 +17,7 @@ from . import runtime as R
 from . import validate
 from . import log_redact
 from . import rest_client
+from . import webhook
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -143,6 +144,7 @@ class VimarIntercomHub:
         }
         self._call_started_mono: float | None = None
         self._ring_answered = False
+        self._was_ringing = False  # per il webhook di fine squillo, vedi _handle_broadcast
         # Callback per emettere eventi bus HA (registrati da __init__.py).
         # Evita di iniettare hass nell'hub, coerente con ring/state callbacks.
         self._event_callbacks: list[Callable] = []
@@ -269,6 +271,8 @@ class VimarIntercomHub:
     def fire_ring_callbacks(self) -> None:
         """Evento doorbell → automazioni. Da solo è lo squillo di prova
         (servizio simulate_ring): niente SIP, push, WebSocket né statistiche."""
+        if R.RING_WEBHOOK_URL:
+            asyncio.create_task(webhook.fire(R.RING_WEBHOOK_URL))
         for cb in self._ring_callbacks:
             try:
                 cb()
@@ -767,6 +771,11 @@ class VimarIntercomHub:
                 asyncio.create_task(sip.do_decline_incoming())
                 return
 
+            # Solo qui, non in fire_ring_callbacks(): quel metodo lo chiama anche il
+            # servizio simulate_ring (test, senza SIP), che non ha un ring_ended o un
+            # call_started dietro a chiudere lo squillo — il webhook di fine resterebbe
+            # armato per sempre e scatterebbe al prossimo evento qualsiasi.
+            self._was_ringing = True
             self.fire_ring_callbacks()
             # IDR subito (INFO nel dialogo early del 183), non al giro della targa (~3 s):
             # foto, clip e card partono prima.
@@ -792,6 +801,16 @@ class VimarIntercomHub:
                 self._cancel_away()
                 self._away_task = asyncio.create_task(
                     self._away_message(sip.pending_incoming["cid"]))
+
+        # Era uno squillo vero (self._was_ringing, armato sopra nel ramo "ring") e
+        # ora non lo è più: risposto (call_started — sip chiude lo squillo PRIMA di
+        # diffondere l'evento, quindi qui is_ringing è già False), annullato o
+        # scaduto (ring_ended, stesso ordine). Non basta guardare solo msg_type
+        # "ring_ended": un INVITE risposto passa da "call_started", non da lì.
+        if self._was_ringing and not self.is_ringing:
+            self._was_ringing = False
+            if R.RING_END_WEBHOOK_URL:
+                asyncio.create_task(webhook.fire(R.RING_END_WEBHOOK_URL))
 
     async def _ring_log(self, change: Callable[[list], None]) -> None:
         try:

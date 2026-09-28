@@ -66,6 +66,8 @@ KEY_AWAY_DELAY     = "away_message_delay"
 KEY_SNAP_DIR       = "snapshot_dir"
 KEY_SNAP_DELAY     = "snapshot_delay"
 KEY_ALLOWED_USERS  = "allowed_users"
+KEY_RING_WEBHOOK_URL     = "ring_webhook_url"
+KEY_RING_END_WEBHOOK_URL = "ring_end_webhook_url"
 
 DEFAULT_CLOUD_PROXY    = "ipvdes.vimar.cloud"
 DEFAULT_LOCAL_SIP_PORT = 5060
@@ -619,6 +621,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             snap_dir   = str(user_input.get(KEY_SNAP_DIR, "")).strip()
             snap_delay = user_input.get(KEY_SNAP_DELAY, DEFAULT_SNAPSHOT_DELAY)
             allowed_users = [str(u) for u in user_input.get(KEY_ALLOWED_USERS) or []]
+            ring_webhook_url     = str(user_input.get(KEY_RING_WEBHOOK_URL) or "").strip()
+            ring_end_webhook_url = str(user_input.get(KEY_RING_END_WEBHOOK_URL) or "").strip()
             if snap_dir and not self.hass.config.is_allowed_path(snap_dir):
                 errors[KEY_SNAP_DIR] = "path_not_allowed"
             elif snap_dir and await self.hass.async_add_executor_job(
@@ -673,6 +677,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                         KEY_SNAP_DIR:       snap_dir,
                         KEY_SNAP_DELAY:     snap_delay,
                         KEY_ALLOWED_USERS:  allowed_users,
+                        KEY_RING_WEBHOOK_URL:     ring_webhook_url,
+                        KEY_RING_END_WEBHOOK_URL: ring_end_webhook_url,
                     },
                 )
 
@@ -768,6 +774,14 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     default=[u for u in form.get(KEY_ALLOWED_USERS) or [] if any(u == x["value"] for x in users)],
                 ): selector.SelectSelector(selector.SelectSelectorConfig(
                     options=users, multiple=True, mode="list")),  # caselle, non un menu
+                vol.Optional(
+                    KEY_RING_WEBHOOK_URL,
+                    default=form.get(KEY_RING_WEBHOOK_URL, ""),
+                ): str,
+                vol.Optional(
+                    KEY_RING_END_WEBHOOK_URL,
+                    default=form.get(KEY_RING_END_WEBHOOK_URL, ""),
+                ): str,
             }),
             errors=errors,
             description_placeholders={

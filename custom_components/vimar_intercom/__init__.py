@@ -34,6 +34,7 @@ from . import media_handler as media
 from . import ring_log
 from . import sip_client as sip
 from . import runtime
+from . import webhook
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -150,6 +151,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
 
     away_tts.setup(hass)  # sintetizza il messaggio di assenza da testo, se configurato
+    webhook.setup(hass)   # GET a inizio/fine squillo, se configurato
 
     hub = VimarIntercomHub()
 

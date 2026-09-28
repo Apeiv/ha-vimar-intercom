@@ -52,24 +52,12 @@ is needed on the HA side: an automation on its state change forwards the ring wh
 
 2. **Doorbell button**: install the *Dummy Switch* and *Webhook* plugins. On the camera, enable
    the *Doorbell Button* extension (from Dummy Switch): Scrypted now treats the camera as a
-   doorbell. On the button device, enable *Webhook* and copy the `turnOn` URL.
+   doorbell. On the button device, enable *Webhook* and copy both the `turnOn` and `turnOff` URLs.
 
-3. **Home Assistant → Scrypted**: a `rest_command` on the ring:
-
-   ```yaml
-   rest_command:
-     scrypted_doorbell:
-       url: "http://<scrypted>:11080/endpoint/@scrypted/webhook/public/<id>/<token>/turnOn"
-       method: get
-
-   automation:
-     - alias: "Intercom - Ring → Scrypted doorbell"
-       trigger:
-         - platform: state
-           entity_id: event.vimar_intercom_doorbell
-       action:
-         - action: rest_command.scrypted_doorbell
-   ```
+3. **Home Assistant → Scrypted**: no `rest_command`/automation needed. In the integration's
+   options, set *Webhook a inizio squillo* to the Dummy Switch's `turnOn` URL and *Webhook a fine
+   squillo* to its `turnOff` URL — the integration calls them itself, right when the ring starts
+   and when it ends (answered, cancelled or missed).
 
 4. **Alexa**: with the Scrypted *Alexa* plugin, sync the camera. A doorbell camera gives the
    "Someone is at the front door" chime on the Echos and a live view on Echo Show ("Alexa, show

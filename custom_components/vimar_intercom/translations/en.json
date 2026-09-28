@@ -93,7 +93,9 @@
           "away_message_delay": "After how many seconds of ringing (0 = never)",
           "snapshot_dir": "Ring snapshot folder",
           "snapshot_delay": "Seconds for the better snapshot (0 = first only)",
-          "allowed_users": "Users allowed to see rings and live media (empty = everyone)"
+          "allowed_users": "Users allowed to see rings and live media (empty = everyone)",
+          "ring_webhook_url": "Ring-start webhook (URL)",
+          "ring_end_webhook_url": "Ring-end webhook (URL)"
         },
         "data_description": {
           "media_enc": "Automatic: follows what the system declares in its GET_INIT_STATUS reply (\"media_enc\": \"srtp\" on a cloud Tab 5S Up 40515); when the system does not declare it (short reply, as on the 40507) media stays plain. On/Off force it. If the camera stays black or the call fails with 488, try On.",
@@ -109,7 +111,9 @@
           "away_message_delay": "If it is still ringing after this many seconds (nobody answered from the panel, phone or HA), the integration answers, plays the file and hangs up. Keep it shorter than the Tab's own voicemail, if enabled. 0 = never.",
           "snapshot_dir": "Folder where the visitor's snapshot (squillo_YYYYMMDD_HHMMSS_mmm.jpg and ultimo_squillo.jpg) and the ring clip (.mp4, up to 60 s) are saved, e.g. /config/media/citofono. Must be in allowlist_external_dirs or a media folder. Empty = do not save.",
           "snapshot_delay": "The first snapshot is saved as soon as the first frame arrives (~1 s after the ring); after this many seconds it is replaced by a frame with the exposure settled (the panel's first one is dark). 3 s suits the Tab 5S Up 40515; increase it if snapshots come out dark, 0 = keep the first.",
-          "allowed_users": "Only these Home Assistant users see the ring history (photos and clips) and the live video and voice of the card and /av. Admins always. Empty = every logged-in user."
+          "allowed_users": "Only these Home Assistant users see the ring history (photos and clips) and the live video and voice of the card and /av. Admins always. Empty = every logged-in user.",
+          "ring_webhook_url": "GET (fire-and-forget) sent when a ring starts, e.g. to turn on a dummy switch (Scrypted Dummy Switch) linked to a Custom Doorbell Button. A failure is only logged as a warning and never stops the ring. Empty = off.",
+          "ring_end_webhook_url": "GET (fire-and-forget) sent when the ring ends, answered, cancelled or timed out: same idea as above, to turn the switch off. Empty = off."
         }
       },
       "import_rubrica": {
