@@ -7,8 +7,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from homeassistant.components.sensor import (
+    RestoreSensor,
     SensorDeviceClass,
-    SensorEntity,
     SensorEntityDescription,
     SensorStateClass,
 )
@@ -28,6 +28,9 @@ class VimarSensorDescription(SensorEntityDescription):
 
     value_fn: Callable[[Any], Any]
     attrs_fn: Callable[[Any], dict] | None = None
+    # "Ultimo ..." che l'hub riempie solo quando succede: senza, un riavvio di HA lo
+    # riporta a "Sconosciuto" fino al prossimo evento (l'apertura di stamattina sparisce).
+    restore: bool = False
 
 
 def _status_attrs(hub) -> dict:
@@ -62,6 +65,7 @@ SENSORS: tuple[VimarSensorDescription, ...] = (
     ),
     VimarSensorDescription(
         key="last_caller",
+        restore=True,
         name="Intercom Ultimo Chiamante",
         icon="mdi:account-voice",
         value_fn=lambda hub: sip_id_name(hub.stats.get("last_caller_id")),
@@ -73,6 +77,7 @@ SENSORS: tuple[VimarSensorDescription, ...] = (
     ),
     VimarSensorDescription(
         key="last_ring",
+        restore=True,
         name="Intercom Ultimo Squillo",
         icon="mdi:bell-clock",
         device_class=SensorDeviceClass.TIMESTAMP,
@@ -107,6 +112,7 @@ SENSORS: tuple[VimarSensorDescription, ...] = (
     ),
     VimarSensorDescription(
         key="last_call_duration",
+        restore=True,
         name="Intercom Durata Ultima Chiamata",
         icon="mdi:timer-outline",
         device_class=SensorDeviceClass.DURATION,
@@ -116,6 +122,7 @@ SENSORS: tuple[VimarSensorDescription, ...] = (
     ),
     VimarSensorDescription(
         key="last_door",
+        restore=True,
         name="Intercom Ultima Apertura",
         icon="mdi:door-open",
         device_class=SensorDeviceClass.TIMESTAMP,
@@ -168,6 +175,7 @@ SENSORS: tuple[VimarSensorDescription, ...] = (
     ),
     VimarSensorDescription(
         key="last_missed_call",
+        restore=True,
         name="Intercom Ultima Chiamata Persa",
         icon="mdi:phone-missed",
         value_fn=lambda hub: (
@@ -192,8 +200,12 @@ async def async_setup_entry(
     async_add_entities(VimarStatSensor(hub, entry.entry_id, d) for d in SENSORS)
 
 
-class VimarStatSensor(SensorEntity):
-    """Sensore generico alimentato dalle statistiche dell'hub (push, no polling)."""
+class VimarStatSensor(RestoreSensor):
+    """Sensore generico alimentato dalle statistiche dell'hub (push, no polling).
+
+    Con `restore` riprende valore e attributi salvati da HA finché l'hub non ha un
+    valore suo (dopo un riavvio: fino al prossimo squillo, apertura, chiamata persa).
+    """
 
     _attr_has_entity_name = False
     _attr_should_poll = False
@@ -204,16 +216,16 @@ class VimarStatSensor(SensorEntity):
         self._attr_name = description.name
         self._attr_unique_id = f"{entry_id}_{description.key}"
         self._attr_device_info = device_info(entry_id)
+        self._restored = None
+        self._restored_attrs: dict | None = None
 
-    @property
-    def native_value(self):
+    def _live_value(self):
         try:
             return self.entity_description.value_fn(self._hub)
         except Exception:  # noqa: BLE001
             return None
 
-    @property
-    def extra_state_attributes(self) -> dict | None:
+    def _live_attrs(self) -> dict | None:
         fn = self.entity_description.attrs_fn
         if not fn:
             return None
@@ -222,8 +234,36 @@ class VimarStatSensor(SensorEntity):
         except Exception:  # noqa: BLE001
             return None
 
+    @property
+    def native_value(self):
+        value = self._live_value()
+        if value is None and self.entity_description.restore:
+            return self._restored
+        return value
+
+    @property
+    def extra_state_attributes(self) -> dict | None:
+        attrs = self._live_attrs()
+        if (self.entity_description.restore and self._live_value() is None
+                and self._restored_attrs is not None):
+            return self._restored_attrs
+        return attrs
+
     async def async_added_to_hass(self) -> None:
+        if self.entity_description.restore:
+            await self._async_restore()
         self._hub.register_state_callback(self._on_state_change)
+
+    async def _async_restore(self) -> None:
+        data = await self.async_get_last_sensor_data()
+        if data is None or data.native_value is None:
+            return
+        self._restored = data.native_value
+        last = await self.async_get_last_state()
+        keys = set(self._live_attrs() or {})
+        if last is not None and keys:
+            # Solo gli attributi nostri: nome, icona e device_class li rimette HA.
+            self._restored_attrs = {k: v for k, v in last.attributes.items() if k in keys}
 
     async def async_will_remove_from_hass(self) -> None:
         self._hub.unregister_state_callback(self._on_state_change)

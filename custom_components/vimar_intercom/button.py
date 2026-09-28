@@ -8,7 +8,8 @@ import re
 
 from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
@@ -82,7 +83,7 @@ class VimarCallButton(ButtonEntity):
     async def async_press(self) -> None:
         ok, msg = await self._hub.async_call()
         if not ok:
-            _LOGGER.error("Call failed: %s", msg)
+            raise HomeAssistantError(f"Chiamata non riuscita: {msg}")
 
 
 class VimarCallTargetButton(ButtonEntity):
@@ -101,25 +102,51 @@ class VimarCallTargetButton(ButtonEntity):
     async def async_press(self) -> None:
         ok, msg = await self._hub.async_call(target=self._target)
         if not ok:
-            _LOGGER.error("Call to %s failed: %s", self._target, msg)
+            raise HomeAssistantError(f"Chiamata a {self._target} non riuscita: {msg}")
 
 
 class VimarAnswerButton(ButtonEntity):
-    """Button to answer an incoming intercom call."""
+    """Button to answer an incoming intercom call.
+
+    Disponibile solo mentre squilla: a riposo il tasto è grigio invece di
+    "funzionare" e poi scrivere nel log «Nessuna chiamata in arrivo». Per
+    guardare la targa si apre la camera, non si risponde.
+    """
 
     _attr_has_entity_name = False
     _attr_name = "Rispondi"
     _attr_icon = "mdi:phone-incoming"
+    _attr_should_poll = False
 
     def __init__(self, hub, entry_id: str) -> None:
         self._hub = hub
         self._attr_unique_id = f"{entry_id}_answer"
         self._attr_device_info = device_info(entry_id)
+        self._was_available: bool | None = None
+
+    @property
+    def available(self) -> bool:
+        return bool(self._hub.registered and self._hub.is_ringing)
+
+    async def async_added_to_hass(self) -> None:
+        self._hub.register_state_callback(self._on_state_change)
+
+    async def async_will_remove_from_hass(self) -> None:
+        self._hub.unregister_state_callback(self._on_state_change)
+
+    @callback
+    def _on_state_change(self) -> None:
+        # Le statistiche cambiano spesso: si scrive lo stato solo quando lo squillo
+        # inizia o finisce, non a ogni keepalive.
+        now = self.available
+        if now != self._was_available:
+            self._was_available = now
+            self.async_write_ha_state()
 
     async def async_press(self) -> None:
         ok, msg = await self._hub.async_answer()
         if not ok:
-            _LOGGER.error("Answer failed: %s", msg)
+            raise HomeAssistantError(f"Risposta non riuscita: {msg}")
 
 
 class VimarHangupButton(ButtonEntity):
@@ -154,7 +181,9 @@ class VimarDoorButton(ButtonEntity):
     async def async_press(self) -> None:
         ok, msg = await self._hub.async_door(target=self._target)
         if not ok:
-            _LOGGER.error("Door %s open failed: %s", self._target or "default", msg)
+            # Come la serratura: un errore visibile, non un «premuto» con la porta
+            # chiusa e la riga nel log (issue #23).
+            raise HomeAssistantError(f"Apertura non riuscita: {msg}")
 
 
 class VimarActuatorButton(ButtonEntity):
@@ -190,5 +219,4 @@ class VimarActuatorButton(ButtonEntity):
             body=self._command, target=self._target,
             header_name="Panda", header_value="command")
         if not ok:
-            _LOGGER.error("Attuatore %s (%s) fallito: %s",
-                          self._attr_name, self._command, msg)
+            raise HomeAssistantError(f"{self._attr_name} non riuscito: {msg}")

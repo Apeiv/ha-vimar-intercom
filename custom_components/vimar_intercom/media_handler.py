@@ -1,5 +1,6 @@
 """Vimar Intercom — Media: RTP transport, STUN, G.711 codec, video capture, audio."""
 
+import array
 import asyncio
 import logging
 import os
@@ -786,9 +787,34 @@ def send_audio(pcm_data: bytes):
     Fino alla 1.0.9 ogni blocco del browser diventava un pacchetto: 341-371
     campioni (43-46 ms) a raffiche, contro l'a=ptime:20 che offriamo."""
     if audio_proto and audio_proto.remote_addr:
+        _note_tx_level(pcm_data)
         buf = audio_proto.tx_buf
         buf += ulaw_encode(pcm_data)
         del buf[:max(0, len(buf) - _TX_MAX)]
+
+
+# Livello della voce in uscita, in DEBUG ogni 2 s. Il conteggio `tx=` dice che i
+# pacchetti partono, non che dentro c'è una voce: così un microfono muto (permesso
+# negato, dispositivo sbagliato) si distingue da una targa che non riproduce.
+_TX_SILENCE = 300  # picco sotto cui è solo rumore di fondo (su 32767)
+_tx_peak = 0
+_tx_last_log = 0.0
+
+
+def _note_tx_level(pcm_data: bytes) -> None:
+    global _tx_peak, _tx_last_log
+    if not _LOGGER.isEnabledFor(logging.DEBUG):
+        return
+    samples = array.array("h")
+    samples.frombytes(pcm_data[:len(pcm_data) // 2 * 2])
+    if samples:
+        _tx_peak = max(_tx_peak, max(samples), -min(samples))
+    now = time.monotonic()
+    if now - _tx_last_log >= 2.0:
+        _LOGGER.debug("Voce verso la targa: picco %d/32767 (%s)", _tx_peak,
+                      "silenzio" if _tx_peak < _TX_SILENCE else "voce")
+        _tx_peak = 0
+        _tx_last_log = now
 
 
 async def _tx_loop():
