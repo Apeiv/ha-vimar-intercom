@@ -81,6 +81,12 @@ Lo User-Agent conta: è quello che manda l'app VIEW.
 Il file scaricato è **identico a quello che l'app Android tiene in locale**, quindi si dà in pasto
 direttamente all'importer delle opzioni (o a `tools/parse_rubrica.py`) senza conversioni.
 
+**Dalla 1.0.12 lo fa l'integrazione** (issue #5): opzioni → **«Scarica la rubrica dal cloud Vimar»**
+(`cloud_phonebook.py`). `cdomain` e `cproxy` dal config entry, `token` e `rubrica_ver` dall'ultima
+risposta a `GET_INIT_STATUS` (se manca il token la richiede e aspetta qualche secondo); il GID proposto è
+quello che l'impianto dichiara. Il token resta in memoria, non va né nel config entry né nel sensore
+«Ultimo messaggio ricevuto» (oscurato).
+
 Verificato da @CPietro su un impianto 40515/2FV2 in cloud (issue pubblica #5). **Sull'impianto di
 sviluppo non è applicabile**: la reply è corta e il token non c'è. Serve soprattutto a chi non raggiunge
 il citofono in LAN: dove il citofono risponde su HTTP, §0 è più semplice e non dipende dal token.

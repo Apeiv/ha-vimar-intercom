@@ -69,7 +69,8 @@
         "menu_options": {
           "settings": "Impostazioni di rete e attuatori",
           "import_rubrica": "Importa attuatori da rubrica.db",
-          "fetch_rubrica": "Scarica la rubrica dal citofono"
+          "fetch_rubrica": "Scarica la rubrica dal citofono",
+          "fetch_rubrica_cloud": "Scarica la rubrica dal cloud Vimar"
         }
       },
       "settings": {
@@ -129,6 +130,16 @@
         "data_description": {
           "rubrica_gid": "Il GID dell'appartamento nella rubrica (di solito quello già in uso, es. 101)."
         }
+      },
+      "fetch_rubrica_cloud": {
+        "title": "Scarica dal cloud Vimar",
+        "description": "Scarica la rubrica da {cproxy} con il token che l'impianto manda nella risposta a GET_INIT_STATUS: è lo stesso file rubrica.db dell'app VIEW. Serve solo agli impianti che mandano la risposta lunga (visto su un Tab 5S Up 40515 / 2FV2); il token non viene salvato. {rubrica_error}",
+        "data": {
+          "rubrica_gid": "GID appartamento"
+        },
+        "data_description": {
+          "rubrica_gid": "Il GID dell'appartamento nella rubrica (proposto quello che dichiara l'impianto)."
+        }
       }
     },
     "error": {
@@ -145,7 +156,10 @@
       "file_not_allowed": "File fuori dalle cartelle che Home Assistant può leggere: aggiungi la sua cartella ad allowlist_external_dirs o usa una cartella media.",
       "file_not_found": "File non trovato: indica il percorso completo, es. /config/media/citofono/messaggio.mp3.",
       "path_not_allowed": "Home Assistant non può scrivere in questa cartella: aggiungila ad allowlist_external_dirs o usa una cartella media.",
-      "path_public": "Cartella pubblica: /config/www è servita su /local senza login. Usa ad esempio /config/media/citofono."
+      "path_public": "Cartella pubblica: /config/www è servita su /local senza login. Usa ad esempio /config/media/citofono.",
+      "no_cloud_token": "Questo impianto non ha mandato il token della rubrica (risposta corta a GET_INIT_STATUS, come sul 40507): usa «Scarica la rubrica dal citofono» o «Importa attuatori da rubrica.db».",
+      "cloud_auth_failed": "Il cloud Vimar ha rifiutato il token.",
+      "cloud_failed": "Download della rubrica dal cloud non riuscito."
     }
   },
   "entity": {

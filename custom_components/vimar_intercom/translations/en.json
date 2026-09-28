@@ -69,7 +69,8 @@
         "menu_options": {
           "settings": "Network and actuator settings",
           "import_rubrica": "Import actuators from rubrica.db",
-          "fetch_rubrica": "Download the phonebook from the intercom"
+          "fetch_rubrica": "Download the phonebook from the intercom",
+          "fetch_rubrica_cloud": "Download the phonebook from the Vimar cloud"
         }
       },
       "settings": {
@@ -129,6 +130,16 @@
         "data_description": {
           "rubrica_gid": "The apartment GID in the phonebook (usually the one already in use, e.g. 101)."
         }
+      },
+      "fetch_rubrica_cloud": {
+        "title": "Download from the Vimar cloud",
+        "description": "Downloads the phonebook from {cproxy} with the token the system sends in its GET_INIT_STATUS reply: it is the same rubrica.db file the VIEW app uses. Only for systems that send the long reply (seen on a Tab 5S Up 40515 / 2FV2); the token is not stored. {rubrica_error}",
+        "data": {
+          "rubrica_gid": "Apartment GID"
+        },
+        "data_description": {
+          "rubrica_gid": "The apartment GID in the phonebook (the one the system declares is proposed)."
+        }
       }
     },
     "error": {
@@ -145,7 +156,10 @@
       "file_not_allowed": "File outside the folders Home Assistant may read: add its folder to allowlist_external_dirs or use a media folder.",
       "file_not_found": "File not found: use the full path, e.g. /config/media/citofono/messaggio.mp3.",
       "path_not_allowed": "Home Assistant cannot write to this folder: add it to allowlist_external_dirs or use a media folder.",
-      "path_public": "Public folder: /config/www is served on /local without login. Use e.g. /config/media/citofono."
+      "path_public": "Public folder: /config/www is served on /local without login. Use e.g. /config/media/citofono.",
+      "no_cloud_token": "This system did not send the phonebook token (short GET_INIT_STATUS reply, as on the 40507): use “Download the phonebook from the intercom” or “Import actuators from rubrica.db”.",
+      "cloud_auth_failed": "The Vimar cloud rejected the token.",
+      "cloud_failed": "Phonebook download from the cloud failed."
     }
   },
   "entity": {

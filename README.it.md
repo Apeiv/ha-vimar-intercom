@@ -125,8 +125,9 @@ Esempio, Tab 5S Up 40515 (Due Fili Plus, cloud): SGA `61000`, PICG `60001`, targ
 `55001`. Sono i valori della rubrica dell'app VIEW, non i default.
 
 Gli attuatori e i valori SGA/PICG si ricavano dalla **rubrica dell'impianto** (`rubrica.db`): dal menu
-delle opzioni scegli **"Importa attuatori da rubrica.db"**, carica il file (lo trovi con l'app VIEW o
-via root, vedi `docs/RUBRICA.md`) e conferma — attuatori, SGA, PICG, targa video e targa che apre la porta vengono impostati in automatico.
+delle opzioni scegli **"Scarica la rubrica dal citofono"** (in LAN), **"Scarica la rubrica dal cloud
+Vimar"** (impianti con la risposta lunga di `GET_INIT_STATUS`) oppure **"Importa attuatori da
+rubrica.db"**, carica il file (lo trovi con l'app VIEW o via root, vedi `docs/RUBRICA.md`) e conferma — attuatori, SGA, PICG, targa video e targa che apre la porta vengono impostati in automatico.
 In alternativa puoi inserire i valori a mano nello step "Impostazioni" (utile se conosci già l'SGA del
 tuo impianto o vuoi modificare la lista attuatori prodotta dall'import).
 
@@ -351,9 +352,10 @@ parlare usa la card del citofono qui sotto.
   dall'import di `rubrica.db`.
 - **Rubrica cloud**: serve un `token`. Gli impianti che rispondono al `GET_INIT_STATUS` in forma lunga
   lo consegnano direttamente, e a quel punto la rubrica si scarica con una sola richiesta autenticata —
-  vedi `docs/RUBRICA.md` §0, verificato su un 40515. Gli impianti che rispondono in forma corta
-  (compreso quello di sviluppo) non hanno il token, e lì resta l'estrazione manuale. Lo scaricamento
-  automatico non è ancora implementato ([#5](../../issues/5)).
+  vedi `docs/RUBRICA.md` §0-bis, verificato su un 40515. Dalla 1.0.12 lo fa il menu delle opzioni:
+  **"Scarica la rubrica dal cloud Vimar"** ([#5](../../issues/5)); il token si rilegge dall'impianto ogni
+  volta e non viene salvato. Gli impianti che rispondono in forma corta (compreso quello di sviluppo) non
+  hanno il token: lì si usa lo scaricamento dal citofono in LAN, o l'estrazione manuale.
 - **Attuatori By‑me** (es. luci scala di domotica By‑me): potrebbero non rispondere via SIP anche se elencati in rubrica.
 - **Lock**: nessun feedback fisico di stato (auto‑relock ottimistico dopo 5 s).
 - **Squillo durante una nostra chiamata**: mentre Home Assistant chiama la targa o è in chiamata,
