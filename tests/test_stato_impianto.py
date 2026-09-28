@@ -325,3 +325,24 @@ def test_il_select_nasce_solo_quando_arrivano_i_valori():
     assert hub.param == ("vm_timeout", 10) and e.current_option == "10"
     with pytest.raises(_HAError):
         asyncio.run(e.async_select_option("7"))
+
+
+def test_annuncio_arrivato_durante_l_invio_conta_come_conferma():
+    """Sul 40507 il DND;OFF del Tab arriva prima del 200 del nostro MESSAGE."""
+    hub = _Hub()
+    hub.stats["dnd"] = True
+    _, s = _dnd(hub)
+    invia = hub.async_send_command
+
+    async def send_con_annuncio(body, **kw):
+        _annuncio(hub, False)
+        return await invia(body, **kw)
+
+    hub.async_send_command = send_con_annuncio
+
+    async def prova():
+        await s.async_added_to_hass()
+        await s.async_turn_off()
+        return s.is_on, s.assumed_state
+
+    assert asyncio.run(prova()) == (False, False)

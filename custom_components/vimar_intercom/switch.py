@@ -179,6 +179,9 @@ class VimarModeSwitch(SwitchEntity, RestoreEntity):
         await self._send(self._cmd_off, False)
 
     async def _send(self, body: str, new_state: bool) -> None:
+        # Letto PRIMA dell'invio: sul 40507 l'annuncio DND;OFF arriva mentre si aspetta
+        # ancora il 200 del MESSAGE, e contato dopo sarebbe già "vecchio".
+        seq = self._hub.stats.get("mode_seq", 0)
         ok, msg = await self._hub.async_send_command(
             body=body, target=self._target,
             header_name=self._hname or None, header_value=self._hvalue or None)
@@ -189,9 +192,10 @@ class VimarModeSwitch(SwitchEntity, RestoreEntity):
         # al riavvio (RestoreEntity). Ora solo un invio riuscito sposta lo stato
         # supposto; quello reale arriva comunque dall'annuncio VOICEMAIL;/DND;.
         if ok:
-            self._pending = (new_state, time.monotonic() + CONFIRM_S, self._hub.stats.get("mode_seq", 0))
+            self._pending = (new_state, time.monotonic() + CONFIRM_S, seq)
             self._cancel_expire()
             self._expire_handle = asyncio.get_running_loop().call_later(CONFIRM_S, self._expire)
+            self._on_state_change()  # annuncio già arrivato durante l'invio: niente attesa
         _LOGGER.info("%s %s → ok=%s msg=%s", self._attr_name,
                      "ON" if new_state else "OFF", ok, msg)
         self.async_write_ha_state()
