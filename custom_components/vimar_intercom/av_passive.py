@@ -145,8 +145,10 @@ async def _decode(is_live, on_live) -> None:
                 continue
             try:
                 on_live()  # IDR subito: si decodifica dal primo fotogramma, non al prossimo
+                # analyzeduration 1 µs: il TS di /av porta anche l'AAC, e senza un tetto
+                # ffmpeg sondava fino a probesize (~1,5 s in più al primo fotogramma live).
                 dec = await asyncio.create_subprocess_exec(
-                    "ffmpeg", "-loglevel", "error", "-probesize", "32768", "-analyzeduration", "0",
+                    "ffmpeg", "-loglevel", "error", "-probesize", "32768", "-analyzeduration", "1",
                     "-fpsprobesize", "0", "-threads", "1", "-f", "mpegts", "-i", "pipe:0", "-an",
                     "-vf", _SCALE, "-pix_fmt", "yuv420p", "-f", "rawvideo", "pipe:1",
                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)

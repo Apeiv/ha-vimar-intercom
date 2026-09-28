@@ -177,7 +177,7 @@ def test_av_passivo_continuo_standby_live_standby_sulla_stessa_connessione(monke
             live = [i for i, m in enumerate(means) if abs(m - standby) > 20]
             assert live, "mai il video della targa"
             first = live[0] / av_passive.FPS - (t_ring - t_first)
-            assert first < 3, f"video live dopo {first:.1f} s dallo squillo"
+            assert first < 3, f"video live dopo {first:.1f} s dallo squillo (live0={live[0]} n={len(means)} dt={t_ring - t_first:.2f})"
             assert all(abs(m - standby) <= 20 for m in means[-15:]), "non torna allo standby"
             assert not [m for m in rig.peer.got(is_("INVITE")) if m.cid != "ring-1"], "auto-call"
             assert rig.hub._stream_viewers == 0
