@@ -155,6 +155,8 @@ class RTPAudioProtocol(asyncio.DatagramProtocol):
             _LOGGER.info("First %s audio from %s (%dB)",
                          "SRTP" if self.srtp_rx else "RTP", addr, len(payload))
         pcm = ulaw_decode(payload)
+        if pcm_tap:
+            pcm_tap(pcm)
         try:
             self.audio_buffer.put_nowait(pcm)
         except asyncio.QueueFull:
@@ -199,8 +201,8 @@ class RTPVideoProtocol(asyncio.DatagramProtocol):
 
     # Riceve ogni NAL riassemblato (frame grabber delle foto), se impostato.
     frame_sink = None
-    # Chiamato con (sps, pps) quando la targa ne manda di diversi: restore_sps_pps
-    # li salva nello storage di HA.
+    # Chiamato quando la targa ne manda di diversi: restore_sps_pps salva
+    # _ps_by_panel nello storage di HA.
     on_sps_pps = None
 
     REORDER_BUF_SIZE = 5  # Hold up to 5 packets for reordering (~30ms at 15fps)
@@ -947,6 +949,9 @@ async def _stun_keepalive():
 
 # ws_send_bytes: set by main.py — async fn(data) to send binary to all clients
 ws_send_bytes = None
+# pcm_tap: fn(pcm) con ogni pacchetto PCM della targa (av_passive: audio nello stream
+# continuo), in più rispetto alla coda per il WS.
+pcm_tap = None
 # request_keyframe: set by hub — fn() che chiede subito un keyframe alla targa (INFO SIP)
 request_keyframe = None
 

@@ -173,6 +173,8 @@ def test_av_passivo_continuo_standby_live_standby_sulla_stessa_connessione(monke
             means = luma_means(ts)
             assert len(means) >= 80, f"solo {len(means)} fotogrammi in ~11 s"
             assert frame_sizes(ts) == {f"{av_passive.W},{av_passive.H}"}
+            a = audio_info(ts)  # AAC continuo: silenzio a riposo, la targa durante lo squillo
+            assert a.get("codec_name") == "aac" and int(a.get("nb_read_frames") or 0) > 300, a
             standby = means[0]
             live = [i for i, m in enumerate(means) if abs(m - standby) > 20]
             assert live, "mai il video della targa"

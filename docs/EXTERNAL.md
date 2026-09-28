@@ -22,7 +22,8 @@ The integration has no always-on RTSP camera. Video exists only while the doorbe
   calls, but the stream **never ends**. While idle it shows a dark standby frame ("Standby",
   intercom icon); when the doorbell rings or a call is up it switches to the panel's live video
   on the same connection, and back to standby afterwards. One H.264 stream with constant
-  parameters (640x480, 10 fps, keyframe every second, baseline, video only), re-encoded by a
+  parameters (640x480, 10 fps, keyframe every second, baseline) plus an AAC track (48 kHz mono:
+  the panel's audio during a ring or a call, silence while idle), re-encoded by a
   single ffmpeg shared by all clients (started with the first, stopped with the last; measured
   0.8 % of one core while idle and 1.4 % while live on an i7-12700H, so expect a few percent on
   a small home server). **This is the one to
@@ -42,7 +43,7 @@ is needed on the HA side: an automation on its state change forwards the ring wh
 
 1. **Camera**: add a device with the *FFmpeg Camera* plugin. Stream URL
    `http://<ha>:8123/api/vimar_intercom/av?autocall=0&idle=image`. Leave the stream "as is"
-   (H.264 baseline, no audio track). Snapshots come from the stream: the standby frame while
+   (H.264 baseline + AAC). Snapshots come from the stream: the standby frame while
    idle, the visitor during a ring. Prebuffer/rebroadcast can stay on: the stream is continuous
    and cheap.
 

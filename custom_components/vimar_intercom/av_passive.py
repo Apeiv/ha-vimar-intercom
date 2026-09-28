@@ -7,7 +7,9 @@ mai a metà stream. Python gli passa i fotogrammi grezzi a ritmo fisso: lo stand
 l'ultimo decodificato dalla targa. Il live arriva dal fan-out MPEG-TS di av_stream
 (come un client passivo qualunque) e lo decodifica un secondo ffmpeg, vivo solo finché
 c'è video. Niente chiamate né spettatori per l'hub: il passivo non tocca la targa.
-Solo video: l'audio della targa resta su /av e sulla card.
+L'audio (AAC 48 kHz mono come /av) viaggia nello stesso TS: il PCM della targa durante
+squillo o chiamata (media.pcm_tap, lo stesso PCMU decodificato per la card), silenzio
+a riposo, sempre 100 ms per fotogramma dallo stesso orologio: video e audio in passo.
 """
 
 from __future__ import annotations
@@ -15,15 +17,21 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import socket
 import subprocess
 from typing import Callable
 
 from . import av_stream
+from . import media_handler as media
 
 _LOGGER = logging.getLogger(__name__)
 
 W, H, FPS = 640, 480, 10
 _FRAME = W * H * 3 // 2  # yuv420p
+AR = 8000                    # PCM della targa: PCMU decodificato, 16 bit mono
+_CHUNK = AR * 2 // FPS       # byte di audio per fotogramma (100 ms)
+_SILENCE = bytes(_CHUNK)
+_pcm = bytearray()           # PCM live in attesa dell'encoder
 _SCALE = f"scale={W}:{H}:force_original_aspect_ratio=decrease,pad={W}:{H}:-1:-1"
 _STANDBY_PNG = os.path.join(os.path.dirname(__file__), "standby.png")
 
@@ -57,20 +65,29 @@ async def subscribe(is_live: Callable[[], bool], on_live: Callable[[], None]) ->
         if _task is None:
             try:
                 standby = await standby_frame()
+                # L'audio entra da una porta TCP locale (un secondo pipe non c'è su ogni
+                # piattaforma), per primo: ffmpeg apre gli ingressi in ordine e aspetta la
+                # connessione; il video dal pipe subito dopo. Stesso orologio per entrambi.
+                port = _free_port()
                 enc = await asyncio.create_subprocess_exec(
                     "ffmpeg", "-loglevel", "error",
+                    # probesize/analyzeduration minimi: se no ffmpeg aspetta più audio di
+                    # quanto ne mandiamo prima di aprire il video, e nessuno dei due parte.
+                    "-probesize", "32", "-analyzeduration", "0",
+                    "-f", "s16le", "-ar", str(AR), "-ac", "1", "-i", f"tcp://127.0.0.1:{port}?listen=1",
                     "-f", "rawvideo", "-pix_fmt", "yuv420p", "-s", f"{W}x{H}", "-r", str(FPS),
-                    "-i", "pipe:0", "-an",
+                    "-i", "pipe:0", "-map", "1:v", "-map", "0:a",
                     "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
                     "-profile:v", "baseline", "-g", str(FPS), "-keyint_min", str(FPS),
                     "-sc_threshold", "0",
+                    "-c:a", "aac", "-ar", "48000", "-b:a", "32k",
                     "-f", "mpegts", "-muxdelay", "0", "-muxpreload", "0", "-flush_packets", "1",
                     "pipe:1",
                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
             except (OSError, RuntimeError) as e:
                 _LOGGER.error("Stream passivo continuo: ffmpeg non parte (%s)", e)
                 return None
-            _task = asyncio.create_task(_run(enc, standby, is_live, on_live))
+            _task = asyncio.create_task(_run(enc, standby, is_live, on_live, port))
             _LOGGER.info("Stream passivo continuo avviato (%dx%d @%d fps)", W, H, FPS)
         q: asyncio.Queue = asyncio.Queue(maxsize=256)
         _clients.add(q)
@@ -90,29 +107,68 @@ async def unsubscribe(q: asyncio.Queue) -> None:
             _LOGGER.info("Stream passivo continuo fermato")
 
 
-async def _run(enc, standby: bytes, is_live, on_live) -> None:
-    """Un fotogramma ogni 1/FPS all'encoder, finché c'è un client."""
+def _free_port() -> int:
+    # ponytail: porta scelta e subito lasciata; una corsa con un altro processo è
+    # improbabile in HA e la si vede come «encoder uscito» al primo giro.
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def _tap(pcm: bytes) -> None:
+    """PCM decodificato dalla targa: in coda per l'encoder, tetto 400 ms così un
+    ritardo non si accumula sul video (si perde un pezzetto, non il sincronismo)."""
+    _pcm.extend(pcm)
+    if len(_pcm) > 4 * _CHUNK:
+        del _pcm[:len(_pcm) - 4 * _CHUNK]
+
+
+async def _audio_in(port: int):
+    """Connessione all'ingresso audio di ffmpeg, che si mette in ascolto appena parte."""
+    for _ in range(50):
+        try:
+            _, w = await asyncio.open_connection("127.0.0.1", port)
+            return w
+        except OSError:
+            await asyncio.sleep(0.1)
+    raise OSError(f"ffmpeg non ascolta su {port}")
+
+
+async def _run(enc, standby: bytes, is_live, on_live, port: int) -> None:
+    """Un fotogramma e 100 ms di audio ogni 1/FPS all'encoder, finché c'è un client."""
     global _live
     pump = asyncio.create_task(_pump(enc.stdout))
     decoder: asyncio.Task | None = None
+    audio = None
     loop = asyncio.get_running_loop()
     t0, n = loop.time(), 0
     cancelled = False
+    _pcm.clear()
+    media.pcm_tap = _tap
     try:
+        audio = await _audio_in(port)
         while not pump.done():
             if is_live() and (decoder is None or decoder.done()):
                 decoder = asyncio.create_task(_decode(is_live, on_live))
+            chunk = bytes(_pcm[:_CHUNK]) if is_live() else b""
+            del _pcm[:_CHUNK]
+            audio.write(chunk + _SILENCE[len(chunk):])  # mancante = silenzio, mai un buco
             enc.stdin.write(_live or standby)
+            await audio.drain()
             await enc.stdin.drain()
             n += 1
             await asyncio.sleep(max(0.0, t0 + n / FPS - loop.time()))
         _LOGGER.warning("Stream passivo continuo: encoder uscito")
-    except (BrokenPipeError, ConnectionResetError):
-        _LOGGER.warning("Stream passivo continuo: encoder uscito")
+    except (OSError, BrokenPipeError, ConnectionResetError) as e:
+        _LOGGER.warning("Stream passivo continuo: encoder uscito (%s)", e)
     except asyncio.CancelledError:
         cancelled = True
         raise
     finally:
+        media.pcm_tap = None
+        _pcm.clear()
+        if audio:
+            audio.close()
         if decoder:
             decoder.cancel()
             await asyncio.gather(decoder, return_exceptions=True)
