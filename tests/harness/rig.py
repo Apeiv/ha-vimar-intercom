@@ -18,7 +18,7 @@ import socket
 import tempfile
 import time
 
-from custom_components.vimar_intercom import av_stream, frame_grabber
+from custom_components.vimar_intercom import av_stream, away_tts, frame_grabber
 from custom_components.vimar_intercom import const as C
 from custom_components.vimar_intercom import hub as hub_mod
 from custom_components.vimar_intercom import media_handler as media
@@ -81,9 +81,12 @@ class Rig:
                          LOCAL_PROXY="127.0.0.1", SIP_PROXY="localhost",
                          USE_LOCAL_UDP=self.transport == "udp", LOCAL_UDP_PORT=0,
                          INTERCOM=f"sip:{PANEL}@{DOMAIN}", DEVICE_UUID="uuid-test",
-                         DEVICE_IMEI="000", AWAY_MESSAGE_FILE="", AWAY_MESSAGE_DELAY=0,
+                         DEVICE_IMEI="000", AWAY_MESSAGE_FILE="", AWAY_MESSAGE_TEXT="",
+                         AWAY_MESSAGE_TTS="", AWAY_MESSAGE_DELAY=0,
                          SNAPSHOT_DIR="", MEDIA_ENC=self.srtp).items():
             mp.setattr(R, k, v, raising=False)
+        mp.setattr(away_tts, "_hass", None)
+        mp.setattr(away_tts, "_cache", None)
         mp.setattr(C, "LOCAL_SIP_PORT", peer.port)
         mp.setattr(C, "PN_TOKEN", "", raising=False)
         a, v = _free_udp_port(), _free_udp_port()

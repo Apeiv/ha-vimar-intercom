@@ -7,6 +7,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 
 from . import sip_client as sip
+from . import away_tts
 from . import frame_grabber
 from . import media_handler as media
 from . import push_sender
@@ -769,7 +770,7 @@ class VimarIntercomHub:
                 if self._photo_task:
                     self._photo_task.cancel()
                 self._photo_task = asyncio.create_task(self._save_ring_photo(name))
-            if R.AWAY_MESSAGE_FILE and R.AWAY_MESSAGE_DELAY:
+            if (R.AWAY_MESSAGE_FILE or R.AWAY_MESSAGE_TEXT) and R.AWAY_MESSAGE_DELAY:
                 self._cancel_away()
                 self._away_task = asyncio.create_task(
                     self._away_message(sip.pending_incoming["cid"]))
@@ -815,13 +816,15 @@ class VimarIntercomHub:
 
     async def _away_message(self, ring_cid) -> None:
         """Se dopo AWAY_MESSAGE_DELAY s QUESTO squillo suona ancora (nessuno ha
-        risposto: Tab, telefono o HA), risponde, fa sentire il file e riaggancia."""
+        risposto: Tab, telefono o HA), risponde, fa sentire il file (o il testo
+        letto dal TTS, se non c'è un file) e riaggancia."""
         await asyncio.sleep(R.AWAY_MESSAGE_DELAY)
         if not sip.ringing(ring_cid) or sip.in_call:
             return
-        pcm = await media.load_pcm(R.AWAY_MESSAGE_FILE)
+        pcm = await (media.load_pcm(R.AWAY_MESSAGE_FILE) if R.AWAY_MESSAGE_FILE
+                     else away_tts.load_pcm())
         if not pcm or not sip.ringing(ring_cid):
-            return  # file illeggibile: meglio lasciar squillare che rispondere muti
+            return  # file illeggibile o TTS fallito: meglio lasciar squillare che rispondere muti
         ok, msg = await sip.do_answer_incoming()
         if not ok:
             _LOGGER.warning("Messaggio di assenza: risposta fallita (%s)", msg)

@@ -22,6 +22,7 @@ from homeassistant.helpers.service import async_register_admin_service
 from homeassistant.helpers.storage import Store
 
 from .const import DOMAIN
+from . import away_tts
 from . import log_buffer as _log_buffer
 from . import validate
 from .hub import VimarIntercomHub
@@ -136,6 +137,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         runtime.SIP_USER, runtime.SIP_DOMAIN,
         runtime.LOCAL_PROXY, entry.data.get("use_local_udp", True),
     )
+
+    away_tts.setup(hass)  # sintetizza il messaggio di assenza da testo, se configurato
 
     hub = VimarIntercomHub()
 

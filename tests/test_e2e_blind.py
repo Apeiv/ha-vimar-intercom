@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
 import time
 import types
 
@@ -19,7 +20,7 @@ from harness.peer import DOMAIN, Msg, answer_200, check_digest, is_, response
 from harness.rig import Rig, run, wait_until
 from harness.web import Request, load_views, make_hass, open_av
 
-from custom_components.vimar_intercom import frame_grabber, ring_log
+from custom_components.vimar_intercom import away_tts, frame_grabber, ring_log
 from custom_components.vimar_intercom import media_handler as media
 from custom_components.vimar_intercom import runtime as R
 from custom_components.vimar_intercom import sip_client as sip
@@ -279,6 +280,52 @@ def test_parlare_dalla_card_durante_il_messaggio_lo_ferma_e_tiene_la_linea(monke
             await rig.peer.wait_for(is_("BYE"))
             ws.inbox.put_nowait(None)
             await wst
+    run(s())
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg non installato")
+def test_messaggio_di_assenza_da_testo_letto_dal_tts(monkeypatch, tmp_path):
+    """Niente file, solo il testo nelle opzioni: il TTS di HA (finto: un wav di 1 s
+    fatto qui) e l'ffmpeg vero; nessuno risponde, la targa riceve la voce a pacchetti
+    PCMU da 20 ms, poi BYE. Registro: «Messaggio di assenza»."""
+    import io
+    import wave
+
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1), w.setsampwidth(2), w.setframerate(16000)
+        w.writeframes(bytes(x % 64 for x in range(2 * 16000)))  # 1 s di dente di sega
+    sintesi = []
+
+    async def audio(hass, media_id):
+        sintesi.append(media_id)
+        return "wav", buf.getvalue()
+
+    async def s():
+        async with Rig(monkeypatch) as rig:
+            snapshots(monkeypatch, tmp_path)
+            monkeypatch.setattr(R, "AWAY_MESSAGE_TEXT", "Non siamo in casa")
+            monkeypatch.setattr(R, "AWAY_MESSAGE_TTS", "tts.google_translate_it_com")
+            monkeypatch.setattr(R, "AWAY_MESSAGE_DELAY", 1)
+            monkeypatch.setattr(away_tts, "_hass", types.SimpleNamespace(
+                config=types.SimpleNamespace(language="it")))
+            monkeypatch.setattr(away_tts, "tts", types.SimpleNamespace(
+                generate_media_source_id=lambda hass, msg, engine, language: f"{engine}/{language}/{msg}",
+                async_get_media_source_audio=audio))
+            await rig.register()
+            rig.ring()
+            await rig.peer.wait_for(is_(code=183))
+            ok200 = await rig.peer.wait_for(is_(code=200, cid="ring-1"), timeout=4)
+            rig.peer.request("ACK", "ring-1", 1, "pnl", to_tag=ok200.h("to").split("tag=")[1])
+            await rig.peer.wait_for(is_("BYE", cid="ring-1"), timeout=4)
+            await wait_until(lambda: rig.hub.status == "idle")
+            assert sintesi == ["tts.google_translate_it_com/it/Non siamo in casa"]
+            assert len(rig.peer.audio_rx) >= 40, f"solo {len(rig.peer.audio_rx)} pacchetti di voce"
+            assert {(p[1] & 0x7F, len(p) - 12) for p in rig.peer.audio_rx} == {(0, 160)}  # PCMU, 20 ms
+            assert len({p[12:] for p in rig.peer.audio_rx}) > 1, "voce piatta: non è il wav"
+            await asyncio.sleep(0.3)
+            assert rings_log(str(tmp_path))[0]["outcome"] == "away"
+            assert away_tts._cache and away_tts._cache[0] == ("Non siamo in casa", "tts.google_translate_it_com", "it")
     run(s())
 
 

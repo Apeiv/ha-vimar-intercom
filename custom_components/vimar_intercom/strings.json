@@ -88,6 +88,8 @@
           "internal_panel_target": "Pannello interno (id SIP «Chiama Casa»)",
           "door_target": "Targa che apre la porta",
           "away_message_file": "Messaggio se nessuno risponde (file audio)",
+          "away_message_text": "Messaggio se nessuno risponde (testo, letto dal TTS)",
+          "away_message_tts": "Voce (entità TTS)",
           "away_message_delay": "Dopo quanti secondi di squillo (0 = mai)",
           "snapshot_dir": "Cartella foto squillo",
           "snapshot_delay": "Secondi dopo lo squillo per la foto"
@@ -101,6 +103,8 @@
           "internal_panel_target": "Destinatario del pulsante «Chiama Casa (interno)». La rubrica non lo dice: va inserito a mano. Vuoto = default storico (55002).",
           "door_target": "La targa a cui va il comando di apertura: il GID_PE dell'attuatore porta nella rubrica (su un 2FV2 non è l'SGA). Si compila da sola importando o scaricando la rubrica. Vuoto = la targa dell'attuatore porta, se gli attuatori sono stati importati, altrimenti l'SGA.",
           "away_message_file": "File audio (mp3, wav...) da far sentire al visitatore se nessuno risponde, es. /config/media/citofono/messaggio.mp3. Vuoto = disattivato.",
+          "away_message_text": "Testo da far leggere al visitatore dalla sintesi vocale di Home Assistant, se il campo file è vuoto (il file ha la precedenza). Nella lingua di HA, max 30 s di audio. Vuoto = disattivato.",
+          "away_message_tts": "Entità TTS che legge il testo (es. tts.google_translate_it_com, tts.piper). Vuoto = il motore TTS predefinito di HA. Se la sintesi fallisce, il citofono squilla come sempre.",
           "away_message_delay": "Se dopo questi secondi sta ancora squillando (nessuno ha risposto da Tab, telefono o HA), l'integrazione risponde, fa sentire il file e riaggancia. Deve essere più breve della segreteria del Tab, se attiva. 0 = mai.",
           "snapshot_dir": "Cartella dove salvare la foto di chi suona (squillo_AAAAMMGG_HHMMSS_mmm.jpg e ultimo_squillo.jpg), es. /config/media/citofono. Deve essere in allowlist_external_dirs o fra le cartelle media. Vuoto = non salvare.",
           "snapshot_delay": "Attesa dopo lo squillo prima della foto: l'anteprima deve partire e la telecamera regolare l'esposizione. 3 s va bene per Tab 5S Up 40515; aumenta se le foto escono scure."

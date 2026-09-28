@@ -117,6 +117,7 @@ Settings → Vimar Intercom → **Configure**:
 | **Ring snapshot folder** (`snapshot_dir`) | Where the visitor's photo is saved on every ring (`squillo_YYYYMMDD_HHMMSS_mmm.jpg` + `ultimo_squillo.jpg`), e.g. `/config/media/citofono`. Must be writable by HA. Empty = off |
 | **Seconds after the ring** (`snapshot_delay`) | Wait before the photo (preview start + exposure). Default 3 (Tab 5S Up 40515) |
 | **Away message** (`away_message_file`, `away_message_delay`) | Audio file (mp3, wav…) played to the visitor if nobody answers within N seconds (0 = off, max 60); then the integration hangs up |
+| **Away message from text** (`away_message_text`, `away_message_tts`) | If the file field is empty, this text is read by Home Assistant's text-to-speech (`away_message_tts` = a `tts.*` entity; empty = HA's default engine) in HA's language, max 30 s. The audio is generated at startup and cached; if TTS fails the doorbell keeps ringing as usual |
 | **Media encryption (SRTP)** (`media_enc`) | **Automatic** (default since 1.0.11): follows the `media_enc` the plant declares in its `GET_INIT_STATUS` reply (`"srtp"` on a cloud 40515); plants with the short reply (the 40507) stay on plain RTP. **On** / **Off** force it. Entries saved as "on" by 1.0.10 or earlier stay on; "off" becomes automatic. Try **On** if the camera stays black or the call fails with `488` |
 
 Example, Tab 5S Up 40515 (Due Fili Plus, cloud): SGA `61000`, PICG `60001`, video and door panel

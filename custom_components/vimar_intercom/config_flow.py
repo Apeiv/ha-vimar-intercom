@@ -60,6 +60,8 @@ KEY_CAMERA_TARGET  = "camera_target"
 KEY_INTERNAL_PANEL_TARGET = "internal_panel_target"
 KEY_DOOR_TARGET    = "door_target"
 KEY_AWAY_FILE      = "away_message_file"
+KEY_AWAY_TEXT      = "away_message_text"
+KEY_AWAY_TTS       = "away_message_tts"
 KEY_AWAY_DELAY     = "away_message_delay"
 KEY_SNAP_DIR       = "snapshot_dir"
 KEY_SNAP_DELAY     = "snapshot_delay"
@@ -603,6 +605,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     errors[key] = "invalid_target"
 
             away_file  = str(user_input.get(KEY_AWAY_FILE, "")).strip()
+            away_text  = str(user_input.get(KEY_AWAY_TEXT, "")).strip()
+            away_tts   = str(user_input.get(KEY_AWAY_TTS) or "").strip()
             away_delay = user_input.get(KEY_AWAY_DELAY, 0)
             # Come snapshot_dir: solo cartelle che HA può leggere (allowlist_external_dirs,
             # media). Il percorso va dritto a `ffmpeg -i`.
@@ -661,6 +665,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                         KEY_ACTUATORS:      actuators,
                         **targets,
                         KEY_AWAY_FILE:      away_file,
+                        KEY_AWAY_TEXT:      away_text,
+                        KEY_AWAY_TTS:       away_tts,
                         KEY_AWAY_DELAY:     away_delay,
                         KEY_SNAP_DIR:       snap_dir,
                         KEY_SNAP_DELAY:     snap_delay,
@@ -728,6 +734,16 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     KEY_AWAY_FILE,
                     default=form.get(KEY_AWAY_FILE, ""),
                 ): str,
+                vol.Optional(
+                    KEY_AWAY_TEXT,
+                    default=form.get(KEY_AWAY_TEXT, ""),
+                ): selector.TextSelector(selector.TextSelectorConfig(multiline=True)),
+                # Niente default: un EntitySelector non accetta "" (vuoto = motore
+                # predefinito di HA); il valore salvato torna come suggerimento.
+                vol.Optional(
+                    KEY_AWAY_TTS,
+                    description={"suggested_value": form.get(KEY_AWAY_TTS) or None},
+                ): selector.EntitySelector(selector.EntitySelectorConfig(domain="tts")),
                 vol.Optional(
                     KEY_AWAY_DELAY,
                     default=form.get(KEY_AWAY_DELAY, 0),

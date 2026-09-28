@@ -863,30 +863,32 @@ async def _tx_loop():
         pass
 
 
-async def load_pcm(path: str, max_seconds: int = 30) -> bytes | None:
+async def load_pcm(path: str | bytes, max_seconds: int = 30) -> bytes | None:
     """Decodifica un file audio (mp3, wav, ...) in PCM 8 kHz mono 16 bit.
+    `path` può essere anche l'audio stesso (bytes, es. dal TTS): va a ffmpeg da stdin.
 
     Si fa PRIMA di rispondere: un file sparito o illeggibile non deve
     trasformarsi in una risposta muta. Tetto di durata: la linea è occupata.
     """
+    data = path if isinstance(path, bytes) else None
     try:
         # `file:`: un nome che comincia con «-» non diventa un'opzione di ffmpeg.
         proc = await asyncio.create_subprocess_exec(
-            "ffmpeg", "-loglevel", "error", "-i", f"file:{path}", "-t", str(max_seconds),
+            "ffmpeg", "-loglevel", "error", "-i", "pipe:0" if data else f"file:{path}", "-t", str(max_seconds),
             "-f", "s16le", "-ac", "1", "-ar", "8000", "pipe:1",
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            stdin=subprocess.PIPE if data else None, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except OSError as e:
         _LOGGER.warning("Messaggio audio: ffmpeg non avviabile (%s)", e)
         return None
     try:
-        pcm, err = await proc.communicate()
+        pcm, err = await proc.communicate(data)
     finally:
         if proc.returncode is None:  # annullato a metà (unload, squillo finito)
             proc.kill()
             await proc.wait()
     if proc.returncode or not pcm:
         _LOGGER.warning("Messaggio audio non leggibile (%s): %s",
-                        path, err.decode(errors="replace").strip()[-200:])
+                        "tts" if data else path, err.decode(errors="replace").strip()[-200:])
         return None
     return pcm
 

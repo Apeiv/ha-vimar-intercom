@@ -98,7 +98,11 @@ ACTUATORS: list = []
 SGA_TARGET:  str = _const.SGA_TARGET
 PICG_TARGET: str = _const.PICG_TARGET
 # Messaggio di assenza: file audio fatto sentire se dopo N s squilla ancora (0 = mai).
+# Senza file, un testo letto dal TTS di HA (motore AWAY_MESSAGE_TTS; vuoto = il
+# predefinito di HA): vedi away_tts.py.
 AWAY_MESSAGE_FILE: str = ""
+AWAY_MESSAGE_TEXT: str = ""
+AWAY_MESSAGE_TTS: str = ""
 AWAY_MESSAGE_DELAY: int = 0
 # Foto di chi suona: cartella (vuoto = non salvare) e secondi dopo lo squillo.
 SNAPSHOT_DIR: str = ""
@@ -176,7 +180,8 @@ def configure(data: dict) -> None:
     global ACTUATORS
     global SGA_TARGET, PICG_TARGET
     global CAMERA_TARGET, INTERNAL_PANEL_TARGET, DOOR_TARGET
-    global AWAY_MESSAGE_FILE, AWAY_MESSAGE_DELAY, SNAPSHOT_DIR, SNAPSHOT_DELAY
+    global AWAY_MESSAGE_FILE, AWAY_MESSAGE_TEXT, AWAY_MESSAGE_TTS, AWAY_MESSAGE_DELAY
+    global SNAPSHOT_DIR, SNAPSHOT_DELAY
     global DEVICE_IMEI, DEVICE_UUID
 
     SIP_USER     = data.get("sip_user", "")
@@ -253,6 +258,8 @@ def configure(data: dict) -> None:
     DOOR_ESTERNO = f"sip:{DOOR_TARGET}@{SIP_DOMAIN}"
 
     AWAY_MESSAGE_FILE  = str(data.get("away_message_file") or "").strip()
+    AWAY_MESSAGE_TEXT  = str(data.get("away_message_text") or "").strip()
+    AWAY_MESSAGE_TTS   = str(data.get("away_message_tts") or "").strip()
     AWAY_MESSAGE_DELAY = int(data.get("away_message_delay") or 0)
     SNAPSHOT_DIR   = str(data.get("snapshot_dir") or "").strip()
     SNAPSHOT_DELAY = int(data.get("snapshot_delay", _const.DEFAULT_SNAPSHOT_DELAY))

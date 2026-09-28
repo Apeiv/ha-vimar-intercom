@@ -69,10 +69,9 @@ def _stub_ha() -> None:
     for sub in [
         "core", "config_entries", "const", "exceptions", "helpers", "helpers.entity", "helpers.entity_platform",
         "helpers.restore_state", "helpers.device_registry", "helpers.storage", "helpers.event", "helpers.aiohttp_client",
-        "helpers.config_validation", "components", "components.http", "components.camera", "components.sensor",
-        "components.binary_sensor", "components.switch", "components.button", "components.event", "components.lock",
-        "components.select",
-        "components.ffmpeg", "util", "util.dt",
+        "helpers.config_validation", "helpers.selector", "helpers.start", "components", "components.http", "components.camera",
+        "components.sensor", "components.binary_sensor", "components.switch", "components.button", "components.event",
+        "components.lock", "components.select", "components.ffmpeg", "components.tts", "util", "util.dt",
     ]:
         m = _mod(f"homeassistant.{sub}")
         m.__getattr__ = lambda name, _m=m: _Any  # type: ignore[attr-defined]
