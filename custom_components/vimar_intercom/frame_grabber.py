@@ -5,7 +5,9 @@ Un ffmpeg per chiamata (o anteprima) decodifica i NAL H.264 che arrivano da
 tiene l'ultimo JPEG. Chi chiede una foto non aspetta il prossimo IDR (di notte,
 a scena ferma, anche >8 s). Allo squillo (record) un secondo ffmpeg riceve gli
 stessi NAL e li copia, senza ricodifica, in un MP4: dal primo IDR alla fine del
-video (stop) o al tetto di durata.
+video (stop) o al tetto di durata. Se nel frattempo arriva del PCM della targa
+(media.pcm_tap, lo stesso di av_passive) da quando il video è partito, un terzo
+ffmpeg lo rimuxa in AAC a clip già chiuso; senza PCM il clip resta muto come prima.
 """
 
 import asyncio
@@ -13,6 +15,8 @@ import contextlib
 import logging
 import os
 import subprocess
+
+from . import media_handler as media
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -24,6 +28,7 @@ _clip_q: asyncio.Queue | None = None    # NAL per il clip in corso
 _clip_req = None                        # (path, max_s, on_done) in attesa che il video parta
 
 _SC = b"\x00\x00\x00\x01"
+_AR = 8000  # PCM della targa (PCMU decodificato): 8 kHz, 16 bit, mono — come in av_passive
 
 
 async def wait_frame(timeout: float = 6, after: int = 0) -> bytes | None:
@@ -114,6 +119,21 @@ def _end_clip() -> None:
 
 async def _record(q: asyncio.Queue, ps, path: str, max_s: float, on_done) -> None:
     part = path + ".part"  # rinominato solo a file chiuso bene: mai un clip a metà
+    # PCM della targa in un buffer, tenuto solo da quando parte il video (in fase con
+    # l'inizio del clip): a fine giro, se non è vuoto, ci si rimuxa sopra l'AAC. Si
+    # aggancia a media.pcm_tap senza sostituirlo: durante lo squillo può già servire
+    # allo stream passivo continuo (av_passive).
+    prev_tap = media.pcm_tap
+    pcm_buf = bytearray()
+    started = False
+
+    def tap(pcm: bytes) -> None:
+        if prev_tap:
+            prev_tap(pcm)
+        if started:
+            pcm_buf.extend(pcm)
+
+    media.pcm_tap = tap
     try:
         proc = await asyncio.create_subprocess_exec(
             # Timestamp dall'orologio: l'H.264 grezzo non ne ha, e la targa non va a 25 fps
@@ -125,11 +145,11 @@ async def _record(q: asyncio.Queue, ps, path: str, max_s: float, on_done) -> Non
             stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except OSError as e:
         _LOGGER.warning("Clip squillo: ffmpeg non avviabile (%s)", e)
+        media.pcm_tap = prev_tap
         on_done(None)
         return
     loop = asyncio.get_running_loop()
     sps, pps = ps or (None, None)
-    started = False
     end = loop.time() + max_s
     try:
         while True:
@@ -155,6 +175,8 @@ async def _record(q: asyncio.Queue, ps, path: str, max_s: float, on_done) -> Non
             await proc.stdin.drain()
     except (BrokenPipeError, ConnectionResetError):
         pass
+    finally:
+        media.pcm_tap = prev_tap
     with contextlib.suppress(Exception):
         proc.stdin.close()  # EOF: ffmpeg scrive il moov ed esce
     try:
@@ -168,6 +190,8 @@ async def _record(q: asyncio.Queue, ps, path: str, max_s: float, on_done) -> Non
     except OSError as e:
         _LOGGER.warning("Clip squillo non salvato (%s): %s", path, e)
         ok = False
+    if ok and pcm_buf:
+        await _add_audio(path, bytes(pcm_buf))
     on_done(path if ok else None)
 
 
@@ -177,6 +201,31 @@ def _finish(part: str, path: str | None) -> None:
     else:
         with contextlib.suppress(FileNotFoundError):
             os.unlink(part)
+
+
+async def _add_audio(path: str, pcm: bytes) -> None:
+    """Rimuxa il PCM tappato durante la registrazione nel clip appena chiuso: un ffmpeg
+    in più, senza ricodifica video, con l'audio (raw, via stdin) codificato in AAC. Se
+    fallisce il clip resta quello già scritto, muto: niente perso."""
+    tmp = path + ".a.part"
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ffmpeg", "-y", "-loglevel", "error", "-i", path,
+            "-f", "s16le", "-ar", str(_AR), "-ac", "1", "-i", "pipe:0",
+            "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac", "-b:a", "32k",
+            "-movflags", "+faststart", "-f", "mp4", tmp,
+            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError as e:
+        _LOGGER.warning("Audio clip squillo non aggiunto (%s)", e)
+        return
+    try:
+        await asyncio.wait_for(proc.communicate(pcm), 15)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        return
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, _finish, tmp, path if proc.returncode == 0 else None)
 
 
 async def _grab(q: asyncio.Queue) -> None:

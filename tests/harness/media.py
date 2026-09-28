@@ -157,6 +157,13 @@ def clip_info(path: str) -> tuple[str, float, int]:
     return codec, float(duration or 0), int(frames) if frames.isdigit() else 0
 
 
+def clip_audio_codec(path: str) -> str:
+    """Codec audio (o "" se non c'è traccia audio) di un file secondo ffprobe."""
+    return subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a:0",
+                           "-show_entries", "stream=codec_name", "-of", "csv=p=0", path],
+                          capture_output=True, text=True, timeout=60).stdout.strip()
+
+
 def luma_means(ts: bytes) -> list[float]:
     """Luminanza media di ogni fotogramma di un MPEG-TS (per distinguere lo standby
     scuro dal testsrc della targa), nell'ordine in cui escono dal decoder."""

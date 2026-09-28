@@ -12,9 +12,9 @@ import time
 from types import SimpleNamespace
 
 import pytest
-from harness.media import clip_info
+from harness.media import clip_audio_codec, clip_info
 
-from custom_components.vimar_intercom import frame_grabber
+from custom_components.vimar_intercom import frame_grabber, media_handler
 
 # Solo il test con ffmpeg vero salta su Windows: le pipe asincrone di ffmpeg
 # trattengono l'output a intermittenza; l'integrazione gira su Linux (HA), dove è affidabile.
@@ -140,11 +140,23 @@ async def _feed(proto, nals, fps=25, skip=0):
             await asyncio.sleep(max(0.0, t0 + i / fps - loop.time()))
 
 
+async def _feed_pcm(seconds: float):
+    """PCM finto ogni 20 ms (come i pacchetti PCMU decodificati dalla targa), passato a
+    media_handler.pcm_tap se e finché frame_grabber lo tiene agganciato."""
+    loop = asyncio.get_running_loop()
+    end = loop.time() + seconds
+    while loop.time() < end:
+        if media_handler.pcm_tap:
+            media_handler.pcm_tap(b"\x00\x01" * 160)  # 320 B = 20 ms a 8 kHz, 16 bit, mono
+        await asyncio.sleep(0.02)
+
+
 @ffmpeg_vero[0]
 def test_clip_mp4_dal_primo_idr_con_durata_reale(tmp_path):
     """record() prima del video (come allo squillo: il 183 fa partire l'anteprima dopo);
     stop() chiude il file: MP4 con moov in testa, H.264 copiato (tutti i 40 fotogrammi),
-    durata quella dell'orologio (i 40 a 25 fps = 1,6 s; l'H.264 grezzo non ha tempi)."""
+    durata quella dell'orologio (i 40 a 25 fps = 1,6 s; l'H.264 grezzo non ha tempi). Col
+    PCM della targa tappato durante la registrazione, il clip esce anche con l'audio (AAC)."""
     proto = SimpleNamespace(frame_sink=None, sps_pps=lambda: None)
     path = str(tmp_path / "squillo_20260927_101500_001.mp4")
 
@@ -152,7 +164,7 @@ def test_clip_mp4_dal_primo_idr_con_durata_reale(tmp_path):
         done = asyncio.get_running_loop().create_future()
         frame_grabber.record(path, 60, done.set_result)
         frame_grabber.start(proto)
-        await _feed(proto, _nals(), fps=25)
+        await asyncio.gather(_feed(proto, _nals(), fps=25), _feed_pcm(2))
         frame_grabber.stop(proto)
         return await asyncio.wait_for(done, 20)
 
@@ -163,6 +175,7 @@ def test_clip_mp4_dal_primo_idr_con_durata_reale(tmp_path):
     codec, dur, n = clip_info(path)
     assert codec == "h264" and n == 40, (codec, n)
     assert 1.3 < dur < 2.2, f"durata {dur} s: non è quella dell'orologio"
+    assert clip_audio_codec(path) == "aac", "PCM tappato durante la registrazione: audio atteso"
 
 
 @ffmpeg_vero[0]
