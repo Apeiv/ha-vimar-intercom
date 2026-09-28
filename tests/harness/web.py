@@ -70,10 +70,11 @@ WEB = types.SimpleNamespace(
 
 
 class Request:
-    def __init__(self, admin=True):
+    def __init__(self, admin=True, query=None):
         self.headers = {}
         self.remote = "127.0.0.1"
         self.path = "/api/vimar_intercom/x"
+        self.query = query or {}
         self._user = types.SimpleNamespace(is_admin=admin)
 
     def get(self, k, d=None):
@@ -120,9 +121,11 @@ def make_hass(rig) -> types.SimpleNamespace:
         async_add_executor_job=lambda f, *a: asyncio.get_running_loop().run_in_executor(None, f, *a))
 
 
-def open_av(views, hass, request=None) -> asyncio.Task:
-    """Un client di /av (go2rtc, stream worker): il task finisce con la risposta."""
-    return asyncio.create_task(views.VimarAVStreamView(hass).get(request or Request()))
+def open_av(views, hass, request=None, passive=False) -> asyncio.Task:
+    """Un client di /av (go2rtc, stream worker): il task finisce con la risposta.
+    `passive`: /av?autocall=0, come Scrypted o Frigate (docs/EXTERNAL.md)."""
+    request = request or Request(query={"autocall": "0"} if passive else None)
+    return asyncio.create_task(views.VimarAVStreamView(hass).get(request))
 
 
 # ─── aiohttp vero ──────────────────────────────────────────────────────────────
@@ -191,8 +194,8 @@ class AvClient:
     """Legge /av come go2rtc: finito uno stream si riconnette dopo `retry` s
     (`reconnect=False`: una volta sola, come l'iPhone che apre la camera)."""
 
-    def __init__(self, base, retry=0.3, reconnect=True):
-        self.base, self.retry, self.reconnect = base, retry, reconnect
+    def __init__(self, base, retry=0.3, reconnect=True, path="/api/vimar_intercom/av"):
+        self.base, self.retry, self.reconnect, self.path = base, retry, reconnect, path
         self.segments: list[bytearray] = []
         self.statuses: list[int] = []
         self.task: asyncio.Task | None = None
@@ -211,7 +214,7 @@ class AvClient:
             while True:
                 buf = bytearray()
                 try:
-                    async with s.get(self.base + "/api/vimar_intercom/av") as r:
+                    async with s.get(self.base + self.path) as r:
                         self.statuses.append(r.status)
                         if r.status == 200:
                             self.segments.append(buf)

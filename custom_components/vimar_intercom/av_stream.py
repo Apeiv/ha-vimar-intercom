@@ -170,11 +170,22 @@ _av_clients: set[asyncio.Queue] = set()
 _av_pump: asyncio.Task | None = None
 
 
-def _av_end(q: asyncio.Queue) -> None:
-    _av_clients.discard(q)
+def end_client(q: asyncio.Queue, clients: set[asyncio.Queue]) -> None:
+    """Stacca un client: None in coda = fine dello stream."""
+    clients.discard(q)
     if q.full():
         q.get_nowait()
     q.put_nowait(None)
+
+
+def fanout(chunk: bytes, clients: set[asyncio.Queue]) -> None:
+    """Lo stesso pezzo a tutti i client; uno troppo lento va staccato, non si
+    corrompe il TS (anche per av_passive)."""
+    for q in list(clients):
+        if q.full():
+            end_client(q, clients)
+        else:
+            q.put_nowait(chunk)
 
 
 async def _av_pump_run(proc) -> None:
@@ -184,16 +195,12 @@ async def _av_pump_run(proc) -> None:
             chunk = await loop.run_in_executor(None, proc.stdout.read1, 4096)
             if not chunk:
                 break
-            for q in list(_av_clients):
-                if q.full():
-                    _av_end(q)  # client troppo lento: staccarlo, non corrompere il TS
-                else:
-                    q.put_nowait(chunk)
+            fanout(chunk, _av_clients)
     except (OSError, ValueError) as e:
         _LOGGER.debug("AV pump ended: %s", e)
     finally:
         for q in list(_av_clients):
-            _av_end(q)
+            end_client(q, _av_clients)
 
 
 async def av_subscribe() -> asyncio.Queue | None:

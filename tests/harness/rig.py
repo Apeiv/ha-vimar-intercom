@@ -18,7 +18,7 @@ import socket
 import tempfile
 import time
 
-from custom_components.vimar_intercom import av_stream, away_tts, frame_grabber
+from custom_components.vimar_intercom import av_passive, av_stream, away_tts, frame_grabber
 from custom_components.vimar_intercom import const as C
 from custom_components.vimar_intercom import hub as hub_mod
 from custom_components.vimar_intercom import media_handler as media
@@ -111,6 +111,8 @@ class Rig:
             mp.setattr(av_stream, k, val)
         for k in ("_grabber", "_clip_q", "_clip_req"):  # niente foto o clip di un test prima
             mp.setattr(frame_grabber, k, None)
+        for k, val in dict(_lock=asyncio.Lock(), _clients=set(), _task=None, _live=None).items():
+            mp.setattr(av_passive, k, val)
         if self.real_av:
             from .media import free_even_port_pair
             vp = free_even_port_pair()

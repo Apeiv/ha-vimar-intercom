@@ -342,6 +342,12 @@ serve un'automazione: imposta **Cartella foto squillo** nelle opzioni. Prova le 
 `vimar_intercom.simulate_ring`. Non puntare una `camera: platform: ffmpeg` su `/api/vimar_intercom/av`:
 blocca Home Assistant finché la sonda di ffmpeg non scade.
 
+**Scrypted (campanello Alexa, Echo Show), go2rtc, Frigate**: usa
+`/api/vimar_intercom/av?autocall=0&idle=image`, uno stream continuo che non chiama mai la targa
+(immagine di standby a riposo, video dal vivo durante squilli e chiamate; `?autocall=0` da solo
+risponde invece 503 a riposo), e inoltra l'`event` del campanello con un'automazione. Istruzioni
+in [`docs/EXTERNAL.md`](docs/EXTERNAL.md) (in inglese).
+
 In `docs/lovelace_example.yaml` c'è una card Lovelace di base con i pulsanti rispondi / apri porta /
 riaggancia. Il riquadro del video mostra il video dal vivo durante una chiamata o uno squillo. Per
 parlare usa la card del citofono qui sotto.

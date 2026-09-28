@@ -141,7 +141,7 @@ def test_load_pcm_passa_il_file_come_url_file(monkeypatch):
     class _Proc:
         returncode = 0
 
-        async def communicate(self):
+        async def communicate(self, data=None):
             return b"\0" * 320, b""
 
     async def _exec(*args, **kw):

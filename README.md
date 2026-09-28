@@ -341,6 +341,12 @@ automation: set **Ring snapshot folder** in the options. Test your automations w
 `vimar_intercom.simulate_ring`. Don't point a `camera: platform: ffmpeg` at `/api/vimar_intercom/av`:
 that hangs Home Assistant until the ffmpeg probe times out.
 
+**Scrypted (Alexa chime, Echo Show), go2rtc, Frigate**: use
+`/api/vimar_intercom/av?autocall=0&idle=image`, a continuous stream that never calls the panel
+(standby frame while idle, live video during rings and calls; `?autocall=0` alone answers 503
+while idle instead), and forward the doorbell `event` with an automation. Setup in
+[`docs/EXTERNAL.md`](docs/EXTERNAL.md).
+
 `docs/lovelace_example.yaml` has a basic Lovelace card with the answer / open door / hang up buttons.
 The video pane shows live video while a call or a ring is up. For voice, use the intercom card below.
 

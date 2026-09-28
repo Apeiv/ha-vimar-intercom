@@ -26,6 +26,7 @@ from . import away_tts
 from . import log_buffer as _log_buffer
 from . import validate
 from .hub import VimarIntercomHub
+from . import av_passive
 from . import av_stream
 from . import media_handler as media
 from . import ring_log
@@ -805,8 +806,17 @@ class VimarAVStreamView(HomeAssistantView):
         hub = _entry_data(self._hass).get("hub")
         if hub is None:
             return web.Response(status=503, text="Integration not loaded")
-        _LOGGER.info("AV stream requested")
-        wait = await hub.stream_opened()
+        # ?autocall=0 (o mode=passive): Scrypted, go2rtc, Frigate (docs/EXTERNAL.md).
+        # Mai una chiamata da soli e nessuno spettatore per l'hub (non tiene aperto un
+        # auto-call): video solo se c'è già (squillo o chiamata), altrimenti 503 subito,
+        # così i loro tentativi in ciclo non toccano la targa condominiale.
+        passive = request.query.get("autocall") == "0" or request.query.get("mode") == "passive"
+        if passive and request.query.get("idle") == "image":
+            return await self._idle_image(request, hub)
+        if passive and not hub.video_active:
+            return web.Response(status=503, text="No call (passive)")
+        _LOGGER.info("AV stream requested%s", " (passive)" if passive else "")
+        wait = passive or await hub.stream_opened()
         queue = None
         response = web.StreamResponse()
         response.content_type = "video/mp2t"
@@ -840,5 +850,28 @@ class VimarAVStreamView(HomeAssistantView):
         finally:
             if queue is not None:
                 await av_stream.av_unsubscribe(queue)
-            await hub.stream_closed()
+            if not passive:
+                await hub.stream_closed()
+        return response
+
+    async def _idle_image(self, request: web.Request, hub) -> web.StreamResponse:
+        """`&idle=image`: stream continuo, standby a riposo e video della targa durante
+        squillo o chiamata (av_passive). Mai una chiamata, mai uno spettatore per l'hub."""
+        _LOGGER.info("AV stream requested (passive, idle image)")
+        queue = await av_passive.subscribe(
+            lambda: hub.video_active,
+            lambda: self._hass.async_create_background_task(
+                sip.send_keyframe_request(), "vimar_intercom keyframe"))
+        if queue is None:
+            return web.Response(status=503, text="ffmpeg failed to start")
+        response = web.StreamResponse()
+        response.content_type = "video/mp2t"
+        try:
+            await response.prepare(request)
+            while (chunk := await queue.get()) is not None:
+                await response.write(chunk)
+        except ConnectionResetError:
+            pass
+        finally:
+            await av_passive.unsubscribe(queue)
         return response

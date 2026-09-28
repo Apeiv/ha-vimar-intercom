@@ -157,6 +157,24 @@ def clip_info(path: str) -> tuple[str, float, int]:
     return codec, float(duration or 0), int(frames) if frames.isdigit() else 0
 
 
+def luma_means(ts: bytes) -> list[float]:
+    """Luminanza media di ogni fotogramma di un MPEG-TS (per distinguere lo standby
+    scuro dal testsrc della targa), nell'ordine in cui escono dal decoder."""
+    out = subprocess.run(["ffmpeg", "-v", "error", "-f", "mpegts", "-i", "pipe:0", "-an",
+                          "-vf", "scale=16:16", "-pix_fmt", "gray", "-f", "rawvideo", "pipe:1"],
+                         input=bytes(ts), capture_output=True, timeout=60).stdout
+    return [sum(out[i:i + 256]) / 256 for i in range(0, len(out) - 255, 256)]
+
+
+def frame_sizes(ts: bytes) -> set[str]:
+    """«larghezza,altezza» di ogni fotogramma video: un solo valore = niente cambio di
+    parametri a metà stream."""
+    out = subprocess.run(["ffprobe", "-v", "error", "-f", "mpegts", "-select_streams", "v:0",
+                          "-show_entries", "frame=width,height", "-of", "csv=p=0", "-i", "pipe:0"],
+                         input=bytes(ts), capture_output=True, timeout=60).stdout.decode()
+    return {line.strip().rstrip(",") for line in out.splitlines() if line.strip()}
+
+
 def free_even_port_pair() -> int:
     """Porta pari con la successiva libera (ffmpeg apre RTP e RTCP = RTP+1). Fuori dal
     range effimero: Windows riassegna subito una porta appena liberata al primo socket

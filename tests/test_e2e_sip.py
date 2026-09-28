@@ -988,6 +988,75 @@ def test_spettatore_se_ne_va_la_chiamata_si_chiude(monkeypatch):
     run(s())
 
 
+# ─── /av?autocall=0 (Scrypted, go2rtc, Frigate: docs/EXTERNAL.md) ────────────
+
+def test_av_passivo_a_riposo_503_subito_e_niente_invite(monkeypatch):
+    """Un NVR che riapre /av in ciclo non deve mai chiamare la targa: a riposo 503
+    subito (niente attesa, niente spettatore, niente ffmpeg), per quante volte riprovi."""
+    views = load_views(monkeypatch)
+
+    async def s():
+        async with Rig(monkeypatch) as rig:
+            hass = make_hass(rig)
+            await rig.register()
+            rig.peer.on_invite = answer_200
+            for _ in range(3):
+                t0 = time.monotonic()
+                r = await asyncio.wait_for(open_av(views, hass, passive=True), 2)
+                assert r.status == 503 and time.monotonic() - t0 < 0.5
+            await asyncio.sleep(0.5)
+            assert not rig.peer.got(is_("INVITE")) and rig.hub.status == "idle"
+            assert rig.hub._stream_viewers == 0 and av_stream.av_ffmpeg_proc is None
+    run(s())
+
+
+def test_av_passivo_durante_lo_squillo_riceve_l_anteprima_e_chiude_alla_fine(monkeypatch):
+    views = load_views(monkeypatch)
+
+    async def s():
+        async with Rig(monkeypatch) as rig:
+            hass = make_hass(rig)
+            await rig.register()
+            rig.ring()
+            await rig.peer.wait_for(is_(code=183))
+            t = open_av(views, hass, passive=True)
+            await asyncio.sleep(0.8)
+            assert not t.done() and len(av_stream._av_clients) == 1
+            assert rig.hub._stream_viewers == 0, "il passivo non conta come spettatore"
+            assert not [m for m in rig.peer.log if m.kind == "INVITE" and m.cid != "ring-1"]
+            rig.peer.request("CANCEL", "ring-1", 1, "pnl")
+            resp = await asyncio.wait_for(t, 5)
+            assert resp.status == 200 and resp.chunks, "nessun byte dell'anteprima"
+            assert not av_stream._av_clients
+    run(s())
+
+
+def test_av_passivo_in_chiamata_si_aggancia_ma_non_tiene_la_linea(monkeypatch):
+    """Auto-call dalla camera di HA con Scrypted agganciato in passivo: quando lo
+    spettatore vero se ne va la chiamata si chiude lo stesso (Scrypted non è uno
+    spettatore) e lo stream passivo finisce con lei."""
+    views = load_views(monkeypatch)
+    monkeypatch.setattr(hub_mod, "STREAM_HANGUP_DELAY", 0.5)
+
+    async def s():
+        async with Rig(monkeypatch) as rig:
+            hass = make_hass(rig)
+            await rig.register()
+            rig.peer.on_invite = answer_200
+            t = open_av(views, hass)                       # camera di HA → auto-call
+            await wait_until(lambda: rig.hub.status == "in_call")
+            p = open_av(views, hass, passive=True)         # Scrypted si aggancia
+            await asyncio.sleep(0.5)
+            assert not p.done() and len(av_stream._av_clients) == 2
+            assert rig.hub._stream_viewers == 1 and len(rig.peer.got(is_("INVITE"))) == 1
+            t.cancel()                                     # lo spettatore vero se ne va
+            await asyncio.gather(t, return_exceptions=True)
+            await rig.peer.wait_for(is_("BYE"), timeout=3)
+            resp = await asyncio.wait_for(p, 5)
+            assert resp.status == 200 and resp.chunks and not av_stream._av_clients
+    run(s())
+
+
 # ─── il campanello suona mentre si guarda la telecamera ──────────────────────
 
 def test_squillo_subito_dopo_il_bye_della_visione(monkeypatch):

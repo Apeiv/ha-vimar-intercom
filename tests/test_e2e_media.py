@@ -7,14 +7,15 @@ escono. Solo i casi in cui il bug era nel media; il resto è in test_e2e_sip.py.
 from __future__ import annotations
 
 import asyncio
+import time
 
 import pytest
-from harness.media import audio_info, decodable_frames
+from harness.media import audio_info, decodable_frames, frame_sizes, luma_means
 from harness.peer import is_
 from harness.rig import Rig, run, wait_until
 from harness.web import AvClient
 
-from custom_components.vimar_intercom import av_stream, frame_grabber
+from custom_components.vimar_intercom import av_passive, av_stream, frame_grabber
 from custom_components.vimar_intercom import media_handler as media
 
 pytestmark = pytest.mark.media
@@ -115,6 +116,97 @@ def test_seconda_chiamata_video_e_foto_prima_dell_sps_in_banda(monkeypatch):
             assert len(av.segments) == 2, av.statuses
             n = decodable_frames(av.segments[1])
             assert n >= 15, f"seconda chiamata: {n} fotogrammi decodificabili senza SPS in banda"
+    run(s())
+
+
+def test_av_passivo_come_go2rtc_anteprima_vera_e_mai_un_invite(monkeypatch):
+    """go2rtc/Frigate su /av?autocall=0, in ciclo: a riposo 503 dietro l'aiohttp vero;
+    allo squillo l'anteprima decodificabile; al CANCEL lo stream finisce e i retry
+    tornano 503. Mai un INVITE nostro."""
+    async def s():
+        async with Rig(monkeypatch, real_av=True, http=True) as rig:
+            await rig.register()
+            av = AvClient(rig.base, path="/api/vimar_intercom/av?autocall=0").start()
+            await wait_until(lambda: av.statuses.count(503) >= 3, 5, "503 a riposo")
+            rig.ring()
+            r183 = await rig.peer.wait_for(is_(code=183))
+            rig.start_media(r183.body)
+            await wait_until(lambda: av.bytes > 20000, 10, "anteprima su /av passivo")
+            n503 = av.statuses.count(503)
+            rig.peer.request("CANCEL", "ring-1", 1, "pnl")
+            await wait_until(lambda: av.statuses.count(503) > n503, 10, "/av chiuso al CANCEL")
+            await av.close()
+            assert len(av.segments) == 1 and decodable_frames(av.segments[0]) >= 15
+            assert not [m for m in rig.peer.got(is_("INVITE")) if m.cid != "ring-1"], "auto-call"
+            assert rig.hub._stream_viewers == 0
+    run(s())
+
+
+def test_av_passivo_continuo_standby_live_standby_sulla_stessa_connessione(monkeypatch):
+    """/av?autocall=0&idle=image (Frigate, Scrypted): un solo MPEG-TS che non finisce mai.
+    A riposo lo standby scuro; allo squillo il video della targa entro ~2 s sulla stessa
+    connessione; al CANCEL di nuovo lo standby. Parametri video costanti, nessun INVITE
+    nostro, nessuno spettatore per l'hub, decoder e ffmpeg di /av fermi a riposo."""
+    async def s():
+        async with Rig(monkeypatch, real_av=True, http=True) as rig:
+            await rig.register()
+            av = AvClient(rig.base, reconnect=False,
+                          path="/api/vimar_intercom/av?autocall=0&idle=image").start()
+            await wait_until(lambda: av.bytes > 0, 10, "standby su /av continuo")
+            t_first = time.monotonic()
+            await asyncio.sleep(2)
+            assert av_stream.av_ffmpeg_proc is None and not av_stream._av_clients, "decoder a riposo"
+            rig.ring()
+            r183 = await rig.peer.wait_for(is_(code=183))
+            rig.start_media(r183.body)
+            t_ring = time.monotonic()
+            await asyncio.sleep(4)
+            rig.peer.request("CANCEL", "ring-1", 1, "pnl")
+            await wait_until(lambda: rig.hub.status == "idle", 5, "fine dello squillo")
+            await wait_until(lambda: av_stream.av_ffmpeg_proc is None and not av_stream._av_clients,
+                             5, "decoder staccato a fine squillo")
+            await asyncio.sleep(3)
+            assert not av.task.done() and av.statuses == [200], "connessione caduta"
+            await av.close()
+            await wait_until(lambda: av_passive._task is None, 5, "encoder fermato con l'ultimo client")
+            ts = av.segments[0]
+            means = luma_means(ts)
+            assert len(means) >= 80, f"solo {len(means)} fotogrammi in ~11 s"
+            assert frame_sizes(ts) == {f"{av_passive.W},{av_passive.H}"}
+            standby = means[0]
+            live = [i for i, m in enumerate(means) if abs(m - standby) > 20]
+            assert live, "mai il video della targa"
+            first = live[0] / av_passive.FPS - (t_ring - t_first)
+            assert first < 3, f"video live dopo {first:.1f} s dallo squillo"
+            assert all(abs(m - standby) <= 20 for m in means[-15:]), "non torna allo standby"
+            assert not [m for m in rig.peer.got(is_("INVITE")) if m.cid != "ring-1"], "auto-call"
+            assert rig.hub._stream_viewers == 0
+    run(s())
+
+
+def test_av_passivo_continuo_un_encoder_per_tutti(monkeypatch):
+    """Due client (Frigate e Scrypted) condividono l'encoder: gli stessi byte, un solo
+    ffmpeg; il primo che se ne va non lo ferma, l'ultimo sì."""
+    async def s():
+        async with Rig(monkeypatch, real_av=True, http=True) as rig:
+            await rig.register()
+            path = "/api/vimar_intercom/av?autocall=0&idle=image"
+            a = AvClient(rig.base, reconnect=False, path=path).start()
+            await wait_until(lambda: a.bytes > 0, 10, "primo client")
+            b = AvClient(rig.base, reconnect=False, path=path).start()
+            await wait_until(lambda: b.bytes > 0, 10, "secondo client")
+            task = av_passive._task
+            assert task and not task.done() and len(av_passive._clients) == 2
+            await asyncio.sleep(1.5)
+            await a.close()
+            await asyncio.sleep(0.5)
+            assert av_passive._task is task and not task.done() and len(av_passive._clients) == 1
+            n = b.bytes
+            await asyncio.sleep(1)
+            assert b.bytes > n, "il secondo client non riceve più"
+            await b.close()
+            await wait_until(lambda: av_passive._task is None, 5, "encoder fermato")
+            assert not rig.peer.got(is_("INVITE"))
     run(s())
 
 
