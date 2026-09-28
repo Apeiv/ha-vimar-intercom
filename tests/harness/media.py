@@ -148,6 +148,15 @@ def audio_info(ts: bytes) -> dict:
         os.unlink(path)
 
 
+def clip_info(path: str) -> tuple[str, float, int]:
+    """(codec video, durata in s, fotogrammi decodificabili) di un file secondo ffprobe."""
+    out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-count_frames",
+                          "-show_entries", "stream=codec_name,nb_read_frames:format=duration",
+                          "-of", "default=nw=1:nk=1", path], capture_output=True, text=True, timeout=60).stdout.split()
+    codec, frames, duration = (out + ["", "0", "0"])[:3]
+    return codec, float(duration or 0), int(frames) if frames.isdigit() else 0
+
+
 def free_even_port_pair() -> int:
     """Porta pari con la successiva libera (ffmpeg apre RTP e RTCP = RTP+1). Fuori dal
     range effimero: Windows riassegna subito una porta appena liberata al primo socket

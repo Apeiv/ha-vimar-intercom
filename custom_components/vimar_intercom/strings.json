@@ -92,7 +92,7 @@
           "away_message_tts": "Voce (entità TTS)",
           "away_message_delay": "Dopo quanti secondi di squillo (0 = mai)",
           "snapshot_dir": "Cartella foto squillo",
-          "snapshot_delay": "Secondi dopo lo squillo per la foto"
+          "snapshot_delay": "Secondi per la foto migliore (0 = solo la prima)"
         },
         "data_description": {
           "media_enc": "Automatico: segue quello che dichiara l'impianto nella risposta a GET_INIT_STATUS (\"media_enc\": \"srtp\" su un Tab 5S Up 40515 in cloud); se l'impianto non lo dichiara (risposta corta, come sul 40507) resta in chiaro. Attivo/Disattivo forzano. Se la camera non si accende o la chiamata fallisce con 488, prova Attivo.",
@@ -106,8 +106,8 @@
           "away_message_text": "Testo da far leggere al visitatore dalla sintesi vocale di Home Assistant, se il campo file è vuoto (il file ha la precedenza). Nella lingua di HA, max 30 s di audio. Vuoto = disattivato.",
           "away_message_tts": "Entità TTS che legge il testo (es. tts.google_translate_it_com, tts.piper). Vuoto = il motore TTS predefinito di HA. Se la sintesi fallisce, il citofono squilla come sempre.",
           "away_message_delay": "Se dopo questi secondi sta ancora squillando (nessuno ha risposto da Tab, telefono o HA), l'integrazione risponde, fa sentire il file e riaggancia. Deve essere più breve della segreteria del Tab, se attiva. 0 = mai.",
-          "snapshot_dir": "Cartella dove salvare la foto di chi suona (squillo_AAAAMMGG_HHMMSS_mmm.jpg e ultimo_squillo.jpg), es. /config/media/citofono. Deve essere in allowlist_external_dirs o fra le cartelle media. Vuoto = non salvare.",
-          "snapshot_delay": "Attesa dopo lo squillo prima della foto: l'anteprima deve partire e la telecamera regolare l'esposizione. 3 s va bene per Tab 5S Up 40515; aumenta se le foto escono scure."
+          "snapshot_dir": "Cartella dove salvare la foto di chi suona (squillo_AAAAMMGG_HHMMSS_mmm.jpg e ultimo_squillo.jpg) e il clip dello squillo (.mp4, fino a 60 s), es. /config/media/citofono. Deve essere in allowlist_external_dirs o fra le cartelle media. Vuoto = non salvare.",
+          "snapshot_delay": "La prima foto si salva appena arriva il primo fotogramma (~1 s dallo squillo); dopo questi secondi la sostituisce un fotogramma con l'esposizione regolata (il primo della targa è scuro). 3 s va bene per Tab 5S Up 40515; aumenta se le foto escono scure, 0 = resta la prima."
         }
       },
       "import_rubrica": {

@@ -34,7 +34,7 @@ def snapshots(monkeypatch, tmp_path, delay=0, jpeg=JPEG):
     monkeypatch.setattr(R, "SNAPSHOT_DIR", str(tmp_path))
     monkeypatch.setattr(R, "SNAPSHOT_DELAY", delay)
 
-    async def wait_frame(timeout=6):
+    async def wait_frame(timeout=6, after=0):
         return jpeg
     monkeypatch.setattr(frame_grabber, "wait_frame", wait_frame)
 
@@ -428,17 +428,21 @@ def test_cloud_sordo_al_bye_squillo_e_risposta_mentre_il_bye_aspetta(monkeypatch
 
 
 def test_squillo_cloud_record_route_rispondi_keyframe_riaggancia_niente_scartato(monkeypatch):
-    """Cloud (proxy con Record-Route e routing rigido): squillo → risposta → INFO di
-    keyframe → BYE nostro. Il proxy non deve scartare niente (Route e Contact giusti)."""
+    """Cloud (proxy con Record-Route e routing rigido): squillo → INFO di keyframe già
+    nell'anteprima (dialogo early: foto e card non aspettano l'IDR della targa) → risposta
+    → INFO → BYE nostro. Il proxy non deve scartare niente (Route e Contact giusti)."""
     async def s():
         async with Rig(monkeypatch, "tls") as rig:
             await rig.register()
             rig.ring("ring-rr")
             await rig.peer.wait_for(is_(code=183))
+            early = await rig.peer.wait_for(is_("INFO", cid="ring-rr"))
+            assert "picture_fast_update" in early.body and not sip.in_call
+            n = len(rig.peer.log)
             assert (await rig.hub.async_answer())[0]
             ok200 = await rig.peer.wait_for(is_(code=200, cid="ring-rr"))
             rig.peer.request("ACK", "ring-rr", 1, "pnl", to_tag=ok200.h("to").split("tag=")[1])
-            await rig.peer.wait_for(is_("INFO", cid="ring-rr"))
+            await rig.peer.wait_for(is_("INFO", cid="ring-rr"), start=n)
             await asyncio.sleep(0.3)
             await rig.hub.async_hangup()
             bye = await rig.peer.wait_for(is_("BYE", cid="ring-rr"))
@@ -613,4 +617,66 @@ def test_foto_vera_dello_squillo_dal_frame_grabber(monkeypatch, tmp_path):
             assert jpeg[:2] == b"\xff\xd8" and jpeg[-2:] == b"\xff\xd9" and len(jpeg) > 2000
             assert (tmp_path / "ultimo_squillo.jpg").read_bytes() == jpeg
             assert ring_log.ring_photo_path(str(tmp_path), r["photo"])
+    run(s())
+
+
+@pytest.mark.media
+def test_clip_dello_squillo_e_foto_subito_poi_migliore(monkeypatch, tmp_path):
+    """Come un Ring. Suonano, H.264 vero nell'anteprima: la foto di chi ha suonato c'è entro
+    1,5 s dal primo IDR (senza aspettare snapshot_delay), i sensori la indicano, e dopo
+    snapshot_delay la sostituisce quella con l'esposizione regolata (stesso nome, versione
+    nuova). Nessuno risponde (CANCEL): il video dello squillo è in squillo_<ora>.mp4 (H.264
+    copiato, durata reale), nel registro e nei sensori, servito anche a pezzi (Range) alla
+    card; il file a metà (.part) non è mai raggiungibile."""
+    import aiohttp
+    from harness.media import clip_info
+
+    async def s():
+        async with Rig(monkeypatch, real_av=True, http=True) as rig:
+            monkeypatch.setattr(R, "SNAPSHOT_DIR", str(tmp_path))
+            monkeypatch.setattr(R, "SNAPSHOT_DELAY", 2)
+            await rig.register()
+            rig.ring()
+            r183 = await rig.peer.wait_for(is_(code=183))
+            rig.start_media(r183.body)
+            await wait_until(lambda: rig.panel_media.idr_at, 3, "IDR della targa")
+            await wait_until(lambda: any(ring_log.RING_PHOTO.fullmatch(n) for n in os.listdir(tmp_path)),
+                             5, "foto dello squillo")
+            t_photo = time.time()
+            [r] = ring_log.recent_rings(str(tmp_path), 10)
+            first = (tmp_path / r["photo"]).read_bytes()
+            assert t_photo - rig.panel_media.idr_at < 1.5, "prima foto in ritardo"
+            assert r["clip"] is None, "clip elencato mentre è ancora in scrittura"
+            media_attrs = rig.hub.ring_media()
+            assert media_attrs["foto"] == str(tmp_path / r["photo"]) and media_attrs["clip"] is None
+            assert media_attrs["foto_url"] == f"/api/vimar_intercom/rings/{r['photo']}?v={r['photo_v']}"
+            info = rig.peer.got(is_("INFO", cid="ring-1"))
+            assert info and "picture_fast_update" in info[0].body, "keyframe non chiesto allo squillo"
+            await asyncio.sleep(3.5)                       # snapshot_delay 2 + un IDR (ogni 1 s)
+            [r2] = ring_log.recent_rings(str(tmp_path), 10)
+            better = (tmp_path / r2["photo"]).read_bytes()
+            assert r2["photo"] == r["photo"] and better != first and r2["photo_v"] > r["photo_v"]
+            assert (tmp_path / "ultimo_squillo.jpg").read_bytes() == better
+            assert rig.hub.ring_media()["foto_url"].endswith(f"?v={r2['photo_v']}")
+            clip = r["photo"][:-4] + ".mp4"
+            assert (tmp_path / (clip + ".part")).exists()
+            async with aiohttp.ClientSession() as http:
+                async with http.get(f"{rig.base}/api/vimar_intercom/rings/{clip}.part") as resp:
+                    assert resp.status == 404
+            rig.peer.request("CANCEL", "ring-1", 1, "pnl")
+            await wait_until(lambda: rig.hub.status == "idle")
+            await wait_until(lambda: (tmp_path / clip).exists(), 15, "clip chiuso")
+            assert not (tmp_path / (clip + ".part")).exists()
+            codec, dur, n = clip_info(str(tmp_path / clip))
+            assert codec == "h264" and dur > 3 and n > 40, (codec, dur, n)
+            [r3] = ring_log.recent_rings(str(tmp_path), 10)
+            assert r3["clip"] == clip and r3["outcome"] == "missed"
+            await wait_until(lambda: rig.hub.stats["last_clip"] == clip, 2, "clip nei sensori")
+            assert rig.hub.ring_media()["clip_url"] == f"/api/vimar_intercom/rings/{clip}"
+            async with aiohttp.ClientSession() as http:
+                async with http.get(f"{rig.base}/api/vimar_intercom/rings/{clip}",
+                                    headers={"Range": "bytes=0-99"}) as resp:
+                    assert resp.status == 206 and resp.headers["Content-Type"] == "video/mp4"
+                    part = await resp.read()
+                    assert len(part) == 100 and part[4:8] == b"ftyp"
     run(s())

@@ -1,5 +1,5 @@
-"""Foto degli squilli e registro squillo.json accanto (per la card). Solo I/O su file,
-da chiamare nell'executor."""
+"""Foto e clip degli squilli e registro squillo.json accanto (per la card). Solo I/O su
+file, da chiamare nell'executor."""
 
 import contextlib
 import json
@@ -13,20 +13,24 @@ from collections.abc import Callable
 RING_LOG = "squillo.json"
 RING_LOG_MAX = 200
 RING_PHOTO = re.compile(r"squillo_\d{8}_\d{6}(_\d{3})?\.jpg")
+RING_FILE = re.compile(r"squillo_\d{8}_\d{6}(_\d{3})?\.(jpg|mp4)")  # foto o clip di uno squillo
 _lock = threading.Lock()  # letture/scritture dal pool dell'executor
 
 
-def write_photo(folder: str, name: str, jpeg: bytes) -> None:
-    """Foto con data e ora, più ultimo_squillo.jpg sempre aggiornata."""
+def write_photo(folder: str, name: str, jpeg: bytes) -> int:
+    """Foto con data e ora, più ultimo_squillo.jpg sempre aggiornata. Restituisce la
+    versione della foto (mtime in ms): cambia quando la foto migliore sostituisce la
+    prima sullo stesso nome, e la card non tiene quella vecchia in cache."""
     os.makedirs(folder, exist_ok=True)
     for n in (name, "ultimo_squillo.jpg"):
         with open(os.path.join(folder, n), "wb") as fh:
             fh.write(jpeg)
+    return int(os.path.getmtime(os.path.join(folder, name)) * 1000)
 
 
 def update_ring_log(folder: str, change: Callable[[list], None]) -> None:
     """Legge il registro, applica change(lista) e lo riscrive. Le voci che escono dal
-    registro (oltre RING_LOG_MAX) si portano via la loro foto: la cartella non cresce
+    registro (oltre RING_LOG_MAX) si portano via foto e clip: la cartella non cresce
     per sempre. Mai ultimo_squillo.jpg, mai file fuori dalla cartella (ring_photo_path)."""
     with _lock:
         rings = read_ring_log(folder)
@@ -44,9 +48,10 @@ def update_ring_log(folder: str, change: Callable[[list], None]) -> None:
             with contextlib.suppress(FileNotFoundError):
                 os.unlink(tmp)
         for r in dropped:
-            if path := ring_photo_path(folder, str(r.get("photo") or "")):
-                with contextlib.suppress(OSError):
-                    os.unlink(path)
+            for k in ("photo", "clip"):
+                if path := ring_photo_path(folder, str(r.get(k) or "")):
+                    with contextlib.suppress(OSError):
+                        os.unlink(path)
 
 
 def read_ring_log(folder: str) -> list[dict]:
@@ -60,8 +65,9 @@ def read_ring_log(folder: str) -> list[dict]:
 
 
 def ring_photo_path(folder: str, name: str) -> str | None:
-    """Percorso della foto `name` se è davvero una foto squillo dentro `folder`."""
-    if not folder or not RING_PHOTO.fullmatch(name):
+    """Percorso del file `name` se è davvero una foto (jpg) o un clip (mp4) di uno
+    squillo dentro `folder`: nient'altro (nemmeno un .mp4.part in scrittura)."""
+    if not folder or not RING_FILE.fullmatch(name):
         return None
     base = os.path.realpath(folder)
     path = os.path.realpath(os.path.join(base, name))
@@ -71,9 +77,16 @@ def ring_photo_path(folder: str, name: str) -> str | None:
 
 
 def recent_rings(folder: str, limit: int) -> list[dict]:
-    """Ultimi squilli, dal più recente; la foto solo se c'è davvero."""
+    """Ultimi squilli, dal più recente; foto e clip solo se ci sono davvero. photo_v:
+    versione della foto (vedi write_photo), per l'URL che la card mette in cache."""
     rings = read_ring_log(folder)[::-1][:limit]
     for r in rings:
-        if r.get("photo") and not ring_photo_path(folder, str(r["photo"])):
-            r["photo"] = None
+        for k in ("photo", "clip"):
+            if not r.get(k):
+                continue
+            path = ring_photo_path(folder, str(r[k]))
+            if not path:
+                r[k] = None
+            elif k == "photo":
+                r["photo_v"] = int(os.path.getmtime(path) * 1000)
     return rings

@@ -108,10 +108,10 @@ window.WebSocket = class extends WS {
   send(b) { T.sent++; if (T.frames.length < 5 && b.byteLength) T.frames.push([new Uint8Array(b)[0], b.byteLength]); super.send(b); }
   close() { T.wsClosed++; super.close(); }
 };
-const mkHass = (status) => ({
+const mkHass = (status, lastRing = {}) => ({
   states: {
     "sensor.vimar_intercom_intercom_stato": { state: status },
-    "sensor.vimar_intercom_intercom_ultimo_squillo": { state: "unknown" },
+    "sensor.vimar_intercom_intercom_ultimo_squillo": { state: "unknown", attributes: lastRing },
     "lock.vimar_intercom_serratura": { state: "locked" },
   },
   callService: async (d, sv) => {
@@ -120,14 +120,14 @@ const mkHass = (status) => ({
     if (d === "lock" && !j.ok) throw new Error(j.result);
     return { context: {}, response: j };
   },
-  callWS: async (m) => ({ path: m.path + "?authSig=x" }),
+  callWS: async (m) => ({ path: m.path + (m.path.includes("?") ? "&" : "?") + "authSig=x" }),  // come HA: firma anche la query
   callApi: async (method, path) => (await fetch("/api/" + path)).json(),
 });
 let last = "";
 setInterval(async () => {
   try {
-    const s = (await (await fetch("/state")).json()).status;
-    if (s !== last && window.card) { last = s; card.hass = mkHass(s); }
+    const j = await (await fetch("/state")).json(), s = JSON.stringify(j);
+    if (s !== last && window.card) { last = s; card.hass = mkHass(j.status, j.last_ring); }
   } catch (e) {}
 }, 100);
 document.querySelector("home-assistant").hass = mkHass("unknown");

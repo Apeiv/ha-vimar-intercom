@@ -10,6 +10,7 @@ card con webcodecs=False; il bench e la prova di ripiego stanno in fondo.
 from __future__ import annotations
 
 import asyncio
+import re
 import struct
 import time
 
@@ -262,7 +263,7 @@ def test_socchiusa_e_ultimi_squilli_con_foto(monkeypatch, engine, tmp_path):  # 
                 st = await c.page.evaluate(js)
                 assert st["media"] == 0, st
                 src = st["hist"][0][1]
-                assert src == "/api/vimar_intercom/rings/squillo_20260927_101500.jpg?authSig=x", st
+                assert re.fullmatch(r"/api/vimar_intercom/rings/squillo_20260927_101500\.jpg\?v=\d+&authSig=x", src), st
                 assert "Messaggio di assenza" in st["hist"][0][0] and "Nessuna risposta" in st["hist"][1][0]
                 assert await c.page.evaluate(f"fetch('{src}').then(r => r.status)") == 200
                 assert await c.page.evaluate("fetch('/api/vimar_intercom/rings/ultimo_squillo.jpg')"
@@ -283,6 +284,70 @@ def test_socchiusa_e_ultimi_squilli_con_foto(monkeypatch, engine, tmp_path):  # 
                 rig.peer.request("CANCEL", "ring-1", 1, "pnl")
                 await c.until("card.shadowRoot.querySelector('.media').getBoundingClientRect().height === 0")
                 assert not rig.services
+    run(s())
+
+
+def test_clip_nella_cronologia_play_e_video(monkeypatch, engine, tmp_path):  # noqa: F811
+    """Squillo con clip: la miniatura ha il tasto play (anche senza foto) e il tocco apre il
+    video (<video controls playsinline>, percorso firmato) al posto della foto; un tocco sui
+    controlli del video non chiude la finestra, uno fuori sì e il video si ferma. Lo squillo
+    con la sola foto apre la foto. Quando arrivano foto e clip di uno squillo nuovo (attributi
+    del sensore) la lista si ricarica da sola."""
+    ring_log.update_ring_log(str(tmp_path), lambda r: r.extend([
+        {"time": "2026-09-27T09:00:00+02:00", "photo": "squillo_20260927_090000.jpg", "outcome": "missed"},
+        {"time": "2026-09-27T10:15:00+02:00", "photo": None, "clip": "squillo_20260927_101500.mp4", "outcome": "missed"},
+        {"time": "2026-09-27T10:20:00+02:00", "photo": "squillo_20260927_102000.jpg",
+         "clip": "squillo_20260927_102000.mp4", "outcome": "answered"}]))
+    for n in ("squillo_20260927_090000.jpg", "squillo_20260927_102000.jpg"):
+        (tmp_path / n).write_bytes(b"\xff\xd8\xff\xd9")
+    for n in ("squillo_20260927_101500.mp4", "squillo_20260927_102000.mp4"):
+        (tmp_path / n).write_bytes(b"\x00\x00\x00\x18ftypmp42")
+    js = """(() => { const r = card.shadowRoot, d = r.querySelector('dialog.photo'), v = d.querySelector('video');
+      return { rows: [...r.querySelectorAll('.hist button')].map(b => [!!b.querySelector('.play'), !!b.querySelector('img'), b.disabled]),
+               open: d.open, video: !v.hidden && !!v.getAttribute('src') ? v.getAttribute('src') : null, paused: v.paused,
+               img: !d.querySelector('img').hidden, controls: v.controls && v.hasAttribute('playsinline') }; })()"""
+
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            monkeypatch.setattr(R, "SNAPSHOT_DIR", str(tmp_path))
+            await rig.register()
+            async with Card(rig, engine) as c:
+                await c.until("card.shadowRoot.querySelectorAll('.hist button').length === 3")
+                st = await c.page.evaluate(js)
+                assert st["rows"] == [[True, True, False], [True, False, False], [False, True, False]], st
+                await c.page.evaluate("card.shadowRoot.querySelectorAll('.hist button')[0].click()")
+                await c.until("card.shadowRoot.querySelector('dialog.photo video').getAttribute('src')")
+                st = await c.page.evaluate(js)
+                assert st["open"] and st["controls"] and not st["img"], st
+                assert st["video"] == "/api/vimar_intercom/rings/squillo_20260927_102000.mp4?authSig=x", st
+                assert await c.page.evaluate(f"fetch('{st['video']}').then(r => r.status)") == 200
+                await c.page.evaluate("card.shadowRoot.querySelector('dialog.photo video').click()")
+                assert (await c.page.evaluate(js))["open"], "il tocco sul video ha chiuso la finestra"
+                await c.page.evaluate("card.shadowRoot.querySelector('dialog.photo .cap').click()")
+                await c.until("!card.shadowRoot.querySelector('dialog.photo').open")  # l'evento close arriva dopo
+                await c.until("!card.shadowRoot.querySelector('dialog.photo video').getAttribute('src')")
+                assert (await c.page.evaluate(js))["paused"]
+                await c.page.evaluate("card.shadowRoot.querySelectorAll('.hist button')[2].click()")
+                await c.until("card.shadowRoot.querySelector('dialog.photo').open")
+                st = await c.page.evaluate(js)
+                assert st["img"] and st["video"] is None, st
+                await c.page.evaluate("card.shadowRoot.querySelector('dialog.photo').close()")
+                # Squillo nuovo: la foto arriva ~1 s dopo (sensore), poi il clip: la lista si aggiorna da sola
+                rig.hub.stats.update(last_photo="squillo_20260927_110000.jpg", last_photo_v=1)
+                await asyncio.sleep(0.5)
+                assert await c.page.evaluate("card.shadowRoot.querySelectorAll('.hist button').length") == 3
+                ring_log.update_ring_log(str(tmp_path), lambda r: r.append(
+                    {"time": "2026-09-27T11:00:00+02:00", "photo": "squillo_20260927_110000.jpg",
+                     "clip": "squillo_20260927_110000.mp4", "outcome": "missed"}))
+                (tmp_path / "squillo_20260927_110000.jpg").write_bytes(b"\xff\xd8\xff\xd9")
+                rig.hub.stats.update(last_photo_v=2)
+                await c.until("card.shadowRoot.querySelectorAll('.hist button').length === 4")
+                assert (await c.page.evaluate(js))["rows"][0] == [False, True, False]
+                (tmp_path / "squillo_20260927_110000.mp4").write_bytes(b"\x00\x00\x00\x18ftypmp42")
+                rig.hub.stats.update(last_clip="squillo_20260927_110000.mp4")
+                await c.until("!!card.shadowRoot.querySelector('.hist button').querySelector('.play')")
+                assert (await c.page.evaluate(js))["rows"][0] == [True, True, False]
+                assert not rig.services and not rig.peer.got(is_("INVITE")) and not (await c.T())["errors"]
     run(s())
 
 

@@ -116,8 +116,8 @@ Impostazioni → Vimar Intercom → **Configura**:
 | **Targa video** (`camera_target`) | targa chiamata dalla camera, da *Chiama* e da *Chiama Video (esterno)*: la riga `PHONEBOOK` con `TYPE='PE'`. **Non è l'SGA.** Vuoto = default `55100` |
 | **Pannello interno** (`internal_panel_target`) | destinatario di *Chiama Casa (interno)*. La rubrica non lo dice: va inserito a mano. Vuoto = default `55002` |
 | **Targa che apre la porta** (`door_target`) | destinatario del comando di apertura (serratura, *Apri Porta*, `open_door` senza `target`, attuatori con target `AUTO`): il `GID_PE` dell'attuatore porta nella rubrica. **Non sempre è l'SGA**: su un 2FV2 l'SGA è `61000` e la porta la apre la targa `55001`. Vuoto = la targa dell'attuatore porta salvato, altrimenti l'SGA |
-| **Cartella foto squillo** (`snapshot_dir`) | dove salvare la foto di chi suona a ogni squillo (`squillo_AAAAMMGG_HHMMSS_mmm.jpg` + `ultimo_squillo.jpg`), es. `/config/media/citofono`. Deve essere scrivibile da HA. Vuoto = disattivato |
-| **Secondi dopo lo squillo** (`snapshot_delay`) | attesa prima della foto (avvio anteprima + esposizione). Default 3 (Tab 5S Up 40515) |
+| **Cartella foto squillo** (`snapshot_dir`) | dove salvare, a ogni squillo, la foto di chi suona (`squillo_AAAAMMGG_HHMMSS_mmm.jpg` + `ultimo_squillo.jpg`) e il clip dello squillo (`squillo_AAAAMMGG_HHMMSS_mmm.mp4`: il video dell'anteprima, e della chiamata se si risponde da HA, fino a 60 s, senza audio), es. `/config/media/citofono`. Deve essere scrivibile da HA. Vuoto = disattivato |
+| **Secondi per la foto migliore** (`snapshot_delay`) | la prima foto si salva appena arriva il primo fotogramma (~1 s dallo squillo); dopo questi secondi la sostituisce un fotogramma con l'esposizione regolata (il primo keyframe della targa è scuro). Default 3 (Tab 5S Up 40515), 0 = resta la prima |
 | **Messaggio di assenza** (`away_message_file`, `away_message_delay`) | file audio (mp3, wav…) fatto sentire al visitatore se nessuno risponde entro N secondi (0 = mai, max 60); poi l'integrazione riaggancia |
 | **Messaggio di assenza da testo** (`away_message_text`, `away_message_tts`) | se il campo file è vuoto, questo testo lo legge la sintesi vocale di Home Assistant (`away_message_tts` = un'entità `tts.*`; vuoto = il motore predefinito di HA) nella lingua di HA, max 30 s. L'audio si genera all'avvio e resta in cache; se il TTS fallisce il citofono squilla come sempre |
 | **Cifratura del media (SRTP)** (`media_enc`) | **Automatico** (default dalla 1.0.11): segue il `media_enc` che l'impianto dichiara nella risposta a `GET_INIT_STATUS` (`"srtp"` su un 40515 in cloud); gli impianti con la risposta corta (il 40507) restano in RTP chiaro. **Attivo** / **Disattivo** lo forzano. Chi aveva salvato «attivo» con la 1.0.10 o prima resta attivo; «spento» diventa automatico. Prova **Attivo** se la camera resta nera o la chiamata fallisce con `488` |
@@ -155,7 +155,7 @@ tuo impianto o vuoi modificare la lista attuatori prodotta dall'import).
 | Intercom Chiamata In Uscita | `binary_sensor` | ON mentre HA chiama |
 | Intercom Stato | `sensor` (enum) | offline / idle / ringing / in_call / calling (+ attributi rete; sugli impianti con la risposta lunga anche il `GID` dell'appartamento, `apt_names` e il `media_enc` dichiarato) |
 | Intercom Ultimo Chiamante | `sensor` | targa/monitor dell'ultimo squillo |
-| Intercom Ultimo Squillo | `sensor` (timestamp) | ora dell'ultimo squillo |
+| Intercom Ultimo Squillo | `sensor` (timestamp) | ora dell'ultimo squillo (attr: chiamante, foto/foto_url e clip/clip_url con `snapshot_dir`) |
 | Intercom Squilli | `sensor` (contatore) | squilli dall'avvio |
 | Intercom Chiamate | `sensor` (contatore) | chiamate connesse |
 | Intercom Durata Ultima Chiamata | `sensor` (s) | durata ultima chiamata |
@@ -236,8 +236,13 @@ squillo.
 sulla riga è il tasto della cronologia (in chiamata il tasto sta sul video): gli ultimi squilli
 (opzione `history`, predefinito 8) con foto, ora ed esito: *Risposto* (risposto da HA),
 *Messaggio di assenza*, *Nessuna risposta* (nessuna risposta da HA; anche uno squillo risposto
-dal Tab finisce qui). Un tocco sulla foto la apre in grande. L'integrazione tiene l'elenco in
-`squillo.json` accanto alle foto (ultimi 200 squilli). Senza cartella non c'è cronologia.
+dal Tab finisce qui). Un tocco sulla foto la apre in grande; uno squillo col clip ha il tasto
+play sulla miniatura e il tocco fa partire il video al posto della foto. La foto compare circa
+un secondo dopo lo squillo e dopo `snapshot_delay` la sostituisce quella migliore; il clip a
+squillo (o chiamata) finiti. L'integrazione tiene l'elenco in `squillo.json` accanto ai file
+(ultimi 200 squilli). Senza cartella non c'è cronologia. Per le notifiche, il sensore
+«Intercom Ultimo Squillo» porta `foto` / `clip` (percorsi su disco) e `foto_url` / `clip_url`
+(URL relativi, che l'app companion scarica col suo login) appena ogni file esiste.
 
 ---
 
@@ -428,9 +433,10 @@ questo componente), ricontrolla che entrambe le patch siano ancora presenti (ved
   `register`, `reconnect`) sono riservate agli amministratori. Il payload del QR non viene loggato
   a livello INFO.
 - Ultimi squilli per la card: `GET /api/vimar_intercom/rings` (elenco, `?limit=` fino a 50) e
-  `GET /api/vimar_intercom/rings/<nome>` (la foto) richiedono l'autenticazione HA (la card carica
-  le foto con percorsi firmati). Il secondo serve solo file `squillo_AAAAMMGG_HHMMSS_mmm.jpg` dentro
-  `snapshot_dir`, nient'altro; la cartella non viene mai esposta sotto `/local`.
+  `GET /api/vimar_intercom/rings/<nome>` (la foto o il clip, anche a pezzi con Range) richiedono
+  l'autenticazione HA (la card li carica con percorsi firmati). Il secondo serve solo file
+  `squillo_AAAAMMGG_HHMMSS[_mmm].jpg` / `.mp4` dentro `snapshot_dir`, nient'altro (nemmeno un
+  clip ancora in scrittura); la cartella non viene mai esposta sotto `/local`.
 - In modalità UDP locale i pacchetti SIP che non arrivano dal citofono vengono scartati: un altro
   dispositivo in LAN non può simulare uno squillo.
 - Nessuna dipendenza cloud obbligatoria in modalità UDP locale.

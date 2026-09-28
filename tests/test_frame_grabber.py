@@ -1,14 +1,18 @@
-"""Frame grabber: dai NAL H.264 della chiamata esce subito l'ultimo JPEG."""
+"""Frame grabber: dai NAL H.264 della chiamata esce subito l'ultimo JPEG, e il clip MP4
+dello squillo (record) copia gli stessi NAL dal primo IDR."""
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import shutil
 import subprocess
 import sys
+import time
 from types import SimpleNamespace
 
 import pytest
+from harness.media import clip_info
 
 from custom_components.vimar_intercom import frame_grabber
 
@@ -21,9 +25,11 @@ ffmpeg_vero = [
 
 
 def _nals() -> list[bytes]:
+    """40 fotogrammi (4 s a 10 fps, IDR ogni 10), un NAL per fotogramma (niente slice),
+    SPS/PPS solo in testa: gli IDR dopo il primo si decodificano solo con quelli in cache."""
     raw = subprocess.run(
         ["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=320x240:rate=10",
-         "-t", "4", "-g", "10", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-profile:v", "baseline", "-tune", "zerolatency",
+         "-t", "4", "-g", "10", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-profile:v", "baseline", "-threads", "1",
          "-bsf:v", "h264_mp4toannexb", "-f", "h264", "pipe:1"],
         check=True, capture_output=True).stdout
     return [n for n in re.split(b"\x00\x00\x00\x01|\x00\x00\x01", raw) if n]
@@ -123,3 +129,85 @@ def test_reinvite_riavvia_il_grabber_senza_perdere_la_foto(monkeypatch):
         assert frame_grabber.last_jpeg is None
 
     asyncio.run(run())
+async def _feed(proto, nals, fps=25, skip=0):
+    """I NAL a ritmo reale (un fotogramma ogni 1/fps), saltando i primi `skip` NAL."""
+    loop = asyncio.get_running_loop()
+    t0, i = loop.time(), 0
+    for n in nals[skip:]:
+        proto.frame_sink(n)
+        if n[0] & 0x1F in (1, 5):
+            i += 1
+            await asyncio.sleep(max(0.0, t0 + i / fps - loop.time()))
+
+
+@ffmpeg_vero[0]
+def test_clip_mp4_dal_primo_idr_con_durata_reale(tmp_path):
+    """record() prima del video (come allo squillo: il 183 fa partire l'anteprima dopo);
+    stop() chiude il file: MP4 con moov in testa, H.264 copiato (tutti i 40 fotogrammi),
+    durata quella dell'orologio (i 40 a 25 fps = 1,6 s; l'H.264 grezzo non ha tempi)."""
+    proto = SimpleNamespace(frame_sink=None, sps_pps=lambda: None)
+    path = str(tmp_path / "squillo_20260927_101500_001.mp4")
+
+    async def run():
+        done = asyncio.get_running_loop().create_future()
+        frame_grabber.record(path, 60, done.set_result)
+        frame_grabber.start(proto)
+        await _feed(proto, _nals(), fps=25)
+        frame_grabber.stop(proto)
+        return await asyncio.wait_for(done, 20)
+
+    assert asyncio.run(run()) == path
+    assert os.path.exists(path) and not os.path.exists(path + ".part")
+    head = open(path, "rb").read(40)
+    assert head[4:8] == b"ftyp" and b"moov" in head, "moov non in testa (faststart)"
+    codec, dur, n = clip_info(path)
+    assert codec == "h264" and n == 40, (codec, n)
+    assert 1.3 < dur < 2.2, f"durata {dur} s: non è quella dell'orologio"
+
+
+@ffmpeg_vero[0]
+def test_clip_parte_dal_primo_idr_senza_niente_prima(tmp_path):
+    """Video già in corso e SPS/PPS in cache (chiamata prima): P-frame prima dell'IDR non
+    entrano nel clip (sarebbero grigi), il clip parte dall'IDR con SPS/PPS davanti."""
+    nals = _nals()
+    sps, pps = nals[0], nals[1]
+    assert (sps[0] & 0x1F, pps[0] & 0x1F) == (7, 8)
+    proto = SimpleNamespace(frame_sink=None, sps_pps=lambda: (sps, pps))
+    path = str(tmp_path / "squillo_20260927_101500_002.mp4")
+    idr0 = next(i for i, n in enumerate(nals) if n[0] & 0x1F == 5)
+
+    async def run():
+        done = asyncio.get_running_loop().create_future()
+        frame_grabber.start(proto)
+        frame_grabber.record(path, 60, done.set_result)
+        await _feed(proto, nals[idr0 + 1:], fps=50)  # dal primo P: niente SPS/PPS/IDR iniziali
+        frame_grabber.stop(proto)
+        return await asyncio.wait_for(done, 20)
+
+    assert asyncio.run(run()) == path
+    codec, dur, n = clip_info(path)
+    assert codec == "h264" and n == 30, n  # dal secondo IDR (30 fotogrammi), non 39
+
+
+@ffmpeg_vero[0]
+def test_clip_finisce_da_solo_al_tetto_e_senza_video_niente_file(tmp_path):
+    proto = SimpleNamespace(frame_sink=None, sps_pps=lambda: None)
+    path = str(tmp_path / "squillo_20260927_101500_003.mp4")
+    nals = _nals()
+
+    async def run():
+        done = asyncio.get_running_loop().create_future()
+        frame_grabber.record(path, 0.6, done.set_result)
+        frame_grabber.start(proto)
+        t0 = time.monotonic()
+        feeder = asyncio.create_task(_feed(proto, nals, fps=25))
+        got = await asyncio.wait_for(done, 20)  # senza stop(): il tetto chiude il clip
+        feeder.cancel()
+        vuoto = asyncio.get_running_loop().create_future()
+        frame_grabber.record(str(tmp_path / "squillo_20260927_101500_004.mp4"), 0.3, vuoto.set_result)
+        frame_grabber.stop(proto)  # squillo finito prima del video: niente file
+        return got, time.monotonic() - t0, await asyncio.wait_for(vuoto, 20)
+
+    got, took, vuoto = asyncio.run(run())
+    assert got == path and took < 3
+    assert vuoto is None and sorted(os.listdir(tmp_path)) == [os.path.basename(path)]

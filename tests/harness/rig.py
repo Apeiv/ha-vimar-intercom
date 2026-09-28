@@ -109,6 +109,8 @@ class Rig:
         for k, val in dict(_av_lock=asyncio.Lock(), _av_clients=set(), _av_pump=None,
                            av_ffmpeg_proc=None).items():
             mp.setattr(av_stream, k, val)
+        for k in ("_grabber", "_clip_q", "_clip_req"):  # niente foto o clip di un test prima
+            mp.setattr(frame_grabber, k, None)
         if self.real_av:
             from .media import free_even_port_pair
             vp = free_even_port_pair()
@@ -120,7 +122,8 @@ class Rig:
             mp.setattr(av_stream, "_AV_SDP_PATH", os.path.join(tempfile.mkdtemp(), "av.sdp"))
         else:
             mp.setattr(frame_grabber, "start", lambda vp: None)
-            mp.setattr(frame_grabber, "stop", lambda vp: None)
+            mp.setattr(frame_grabber, "stop", lambda vp, clip=True: None)
+            mp.setattr(frame_grabber, "record", lambda *a: None)
             self._fake_av_ffmpeg()
         if self.transport == "tls":
             mp.setattr(sip, "_resolve_sip_targets", lambda proxy, port: [("127.0.0.1", peer.port)])

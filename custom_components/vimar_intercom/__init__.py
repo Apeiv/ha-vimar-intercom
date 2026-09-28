@@ -821,8 +821,9 @@ class VimarRingsView(HomeAssistantView):
 
 
 class VimarRingPhotoView(HomeAssistantView):
-    """Foto di uno squillo. Solo squillo_AAAAMMGG_HHMMSS.jpg dentro la cartella foto:
-    nessun altro file è raggiungibile. La card la carica con un percorso firmato."""
+    """Foto (jpg) o clip (mp4) di uno squillo. Solo squillo_AAAAMMGG_HHMMSS[_mmm].{jpg,mp4}
+    dentro la cartella foto: nessun altro file è raggiungibile. La card li carica con un
+    percorso firmato; FileResponse serve il clip anche a pezzi (Range) per il <video>."""
 
     url = "/api/vimar_intercom/rings/{name}"
     name = "api:vimar_intercom:ring_photo"

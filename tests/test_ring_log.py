@@ -25,17 +25,18 @@ def test_registro_limitato_e_dal_piu_recente(tmp_path):
 
 
 def test_le_foto_degli_squilli_usciti_dal_registro_si_cancellano(tmp_path):
-    """Oltre RING_LOG_MAX la voce sparisce e con lei la sua foto; restano ultimo_squillo.jpg,
+    """Oltre RING_LOG_MAX la voce sparisce e con lei foto e clip; restano ultimo_squillo.jpg,
     le foto delle voci ancora in registro e i file che non sono foto squillo registrate."""
     folder = str(tmp_path)
     vecchia, ultima = "squillo_20260101_000000.jpg", "squillo_20260927_101500.jpg"
-    for n in (vecchia, ultima, "ultimo_squillo.jpg", "squillo_20260102_000000.jpg"):
+    clip = "squillo_20260101_000000.mp4"
+    for n in (vecchia, clip, ultima, "ultimo_squillo.jpg", "squillo_20260102_000000.jpg"):
         (tmp_path / n).write_bytes(b"jpg")
-    rl.update_ring_log(folder, lambda r: r.append({"time": "0", "photo": vecchia}))
+    rl.update_ring_log(folder, lambda r: r.append({"time": "0", "photo": vecchia, "clip": clip}))
     rl.update_ring_log(folder, lambda r: r.extend(
         {"time": str(i), "photo": ultima if i == rl.RING_LOG_MAX else None}
         for i in range(1, rl.RING_LOG_MAX + 1)))
-    assert not (tmp_path / vecchia).exists()
+    assert not (tmp_path / vecchia).exists() and not (tmp_path / clip).exists()
     assert sorted(os.listdir(folder)) == [rl.RING_LOG, "squillo_20260102_000000.jpg", ultima, "ultimo_squillo.jpg"]
 
 
@@ -68,9 +69,13 @@ def test_foto_solo_squillo_dentro_la_cartella(tmp_path):
     (tmp_path / "squillo_20260927_101501.jpg").write_bytes(b"fuori")
     ok = rl.ring_photo_path(str(folder), "squillo_20260927_101500.jpg")
     assert ok and os.path.samefile(ok, folder / "squillo_20260927_101500.jpg")
+    (folder / "squillo_20260927_101500_123.mp4").write_bytes(b"mp4")
+    (folder / "squillo_20260927_101500_123.mp4.part").write_bytes(b"mp4 a meta")
+    assert rl.ring_photo_path(str(folder), "squillo_20260927_101500_123.mp4")
     for bad in ("ultimo_squillo.jpg", "squillo.json", "../squillo_20260927_101501.jpg",
                 "squillo_20260927_101500.jpg/..", "squillo_20260927_999999.jpg",
-                "squillo_20260927_101500.jpgx", "..%2Fsquillo_20260927_101501.jpg"):
+                "squillo_20260927_101500.jpgx", "..%2Fsquillo_20260927_101501.jpg",
+                "squillo_20260927_101500_123.mp4.part", "squillo_20260927_101500.mkv"):
         assert rl.ring_photo_path(str(folder), bad) is None, bad
     assert rl.ring_photo_path("", "squillo_20260927_101500.jpg") is None
 
@@ -84,12 +89,28 @@ def test_lista_toglie_le_foto_mancanti(tmp_path):
         None, "squillo_20260927_101500.jpg"]
 
 
+def test_lista_clip_solo_se_chiuso_e_versione_della_foto(tmp_path):
+    """Il clip in scrittura (.part) non c'è ancora; photo_v cambia quando la foto migliore
+    riscrive il file (la card non tiene in cache la prima)."""
+    photo, clip = "squillo_20260927_101500_001.jpg", "squillo_20260927_101500_001.mp4"
+    (tmp_path / (clip + ".part")).write_bytes(b"mp4 a meta")
+    v1 = rl.write_photo(str(tmp_path), photo, b"prima")
+    rl.update_ring_log(str(tmp_path), lambda r: r.append({"time": "a", "photo": photo, "clip": clip}))
+    [r] = rl.recent_rings(str(tmp_path), 10)
+    assert r["clip"] is None and r["photo"] == photo and r["photo_v"] == v1
+    os.utime(tmp_path / photo, (0, os.path.getmtime(tmp_path / photo) + 3))  # come riscritta 3 s dopo
+    (tmp_path / clip).write_bytes(b"mp4")
+    [r] = rl.recent_rings(str(tmp_path), 10)
+    assert r["clip"] == clip and r["photo_v"] > v1
+
+
 def test_squillo_registrato_poi_risposto(tmp_path, monkeypatch):
     monkeypatch.setattr(R, "SNAPSHOT_DIR", str(tmp_path))
     monkeypatch.setattr(R, "AWAY_MESSAGE_FILE", "")
     monkeypatch.setattr(sip, "in_call", False)
     monkeypatch.setattr(sip, "calling", False)
-    monkeypatch.setattr(sip, "pending_incoming", {"caller_uri": "sip:55001@dom", "cid": "c1"})
+    monkeypatch.setattr(sip, "pending_incoming", {"caller_uri": "sip:55001@dom", "cid": "c1",
+                                                  "active": True, "early": False})
     monkeypatch.setattr(hub_mod.push_sender, "get_sender", lambda: None)
 
     async def answer():

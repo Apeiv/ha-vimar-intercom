@@ -13,7 +13,7 @@
 // registro del frontend; stato, ultimo squillo e serratura dall'attributo
 // `card_entities` della camera. Scritte e esistenti, vincono quelle della config.
 //   anchor: citofono      (URL con #citofono: la card si porta in vista; "" = no)
-//   history: 8            (ultimi squilli con foto, se c'è la cartella foto; 0 = no)
+//   history: 8            (ultimi squilli con foto e clip, se c'è la cartella foto; 0 = no)
 //   layout: overlay       (o "sotto"; anche dall'editor visuale)
 //
 //   layout: overlay   (default) "Video a tutta card": da fermo riga da 72 px (foto dell'ultimo
@@ -132,10 +132,13 @@ const STYLE = `
           padding: 0 6px; border-radius: 10px; text-align: left; transition: background .15s; }
   .ring:not(:disabled):hover, .ring:not(:disabled):active { background: var(--fill); }
   .ring:focus-visible { outline-offset: -2px; }
-  .th { display: grid; place-items: center; width: 56px; height: 42px; border-radius: 6px; overflow: hidden;
+  .th { position: relative; display: grid; place-items: center; width: 56px; height: 42px; border-radius: 6px; overflow: hidden;
         background: var(--fill); color: var(--dim); }
   .th img { width: 100%; height: 100%; object-fit: cover; }
   .th ha-icon { --mdc-icon-size: 20px; }
+  /* Squillo con clip: tasto play sulla miniatura (anche senza foto). */
+  .th .play { position: absolute; inset: 0; display: grid; place-items: center; color: #fff; background: rgba(0,0,0,.3); }
+  .th .play ha-icon { --mdc-icon-size: 24px; }
   .ring:disabled .th { opacity: .6; }
   .txt { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
   .at { font-size: 13px; font-weight: 600; line-height: 1.2; }
@@ -156,7 +159,8 @@ const STYLE = `
                            border-top-color: transparent; animation: spin 1s linear infinite; }
   dialog.photo { padding: 0; border: 0; background: none; max-width: 95vw; color: #fff; text-align: center; }
   dialog.photo::backdrop { background: rgba(0,0,0,.8); }
-  dialog.photo img { display: block; max-width: 95vw; max-height: 80vh; border-radius: 14px; }
+  dialog.photo img, dialog.photo video { display: block; max-width: 95vw; max-height: 80vh; border-radius: 14px; }
+  dialog.photo video { width: min(95vw, 640px); background: #000; }
   .cap { margin: 12px 0 0; font-size: 14px; font-weight: 500; }
   @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 
@@ -252,7 +256,9 @@ const LOG = `<button id="log" aria-label="Cronologia squilli" aria-expanded="fal
 const SUB = `<span class="sub"><span class="pill" role="status" aria-live="polite"></span><span class="last"></span><span class="err" role="alert"></span></span>`;
 const ROW = `<div class="row">${btn("view", "mdi:cctv", "Vedi esterno")}${btn("talk", "mdi:microphone", "Parla")}` +
   `${btn("hangup", "mdi:phone-hangup", "Riaggancia")}${btn("open", "mdi:door-open", "Apri")}</div>`;
-const PHOTO_DLG = `<dialog class="photo" aria-label="Foto dello squillo"><img alt="Foto dello squillo"><p class="cap"></p></dialog>`;
+// Foto dello squillo in grande, o il suo clip (<video>) se c'è.
+const PHOTO_DLG = `<dialog class="photo" aria-label="Squillo"><img alt="Foto dello squillo">` +
+  `<video controls playsinline preload="metadata" hidden></video><p class="cap"></p></dialog>`;
 
 const TEMPLATE = `<ha-card>
   <div class="media">${SCENE}<span class="badge dyn" aria-hidden="true"></span>${LOG}${DRAWER}</div>
@@ -491,9 +497,10 @@ class VimarIntercomCard extends HTMLElement {
       this._err.textContent = this._hint;
     }
     if (state !== "calling") this._cancelled = false;
-    const last = hass.states[this._ent("last_ring")]?.state;
+    const lr = hass.states[this._ent("last_ring")], last = lr?.state, a = lr?.attributes || {};
     this._last.textContent = isNaN(Date.parse(last)) ? "" : `ultimo ${when(last)}`;
-    const key = `${last}|${this._live}`;
+    // La lista si ricarica anche quando arrivano la foto (subito, poi quella migliore) e il clip.
+    const key = `${last}|${this._live}|${a.foto_url}|${a.clip_url}`;
     if (this._cfg.history > 0 && key !== this._histKey) {
       this._histKey = key;
       this._loadHistory();
@@ -539,7 +546,10 @@ class VimarIntercomCard extends HTMLElement {
     this._hist = $(".hist");
     this._empty = $(".empty span");
     this._dlg = $("dialog.photo");
-    this._dlg.onclick = () => this._dlg.close();  // tocco ovunque (o Esc) chiude
+    this._clipEl = $("dialog.photo video");
+    // Tocco ovunque (o Esc) chiude, tranne sui controlli del video.
+    this._dlg.onclick = (e) => e.target !== this._clipEl && this._dlg.close();
+    this._dlg.onclose = () => { this._clipEl.pause(); this._clipEl.removeAttribute("src"); this._clipEl.load(); };
     this._err = $(".err");
     this._hint = "";  // niente avviso permanente: in HTTP il microfono è semplicemente spento
     this._view = $("#view");
@@ -591,7 +601,8 @@ class VimarIntercomCard extends HTMLElement {
     const n = (this._histN = (this._histN || 0) + 1);
     try {
       const rings = await this._hass.callApi("GET", `vimar_intercom/rings?limit=${this._cfg.history}`);
-      const srcs = await Promise.all(rings.map((r) => r.photo && this._sign(r.photo)));
+      // ?v=: la foto migliore sostituisce la prima sullo stesso nome; il browser non tiene la vecchia.
+      const srcs = await Promise.all(rings.map((r) => r.photo && this._sign(`${r.photo}?v=${r.photo_v}`)));
       if (n !== this._histN) return;  // arrivata dopo una più recente
       const nodes = [];
       let day;
@@ -616,8 +627,8 @@ class VimarIntercomCard extends HTMLElement {
     }
   }
 
-  async _sign(photo) {
-    return (await this._hass.callWS({ type: "auth/sign_path", path: `/api/vimar_intercom/rings/${photo}` })).path;
+  async _sign(file) {
+    return (await this._hass.callWS({ type: "auth/sign_path", path: `/api/vimar_intercom/rings/${file}` })).path;
   }
 
   _ringItem(r, src) {
@@ -631,20 +642,28 @@ class VimarIntercomCard extends HTMLElement {
     at.textContent = hm(r.time);
     out.textContent = OUTCOME[r.outcome] || "";
     const cap = `${whenFull(r.time)} · ${out.textContent}`;
-    b.setAttribute("aria-label", `Squillo ${cap}`);
-    if (!src) b.disabled = true;
-    else {
+    b.setAttribute("aria-label", `Squillo ${cap}${r.clip ? " · video" : ""}`);
+    if (src) {
       const img = document.createElement("img");
       img.src = src;
       img.alt = "";
       th.replaceChildren(img);
+    }
+    if (r.clip) th.insertAdjacentHTML("beforeend", `<span class="play"><ha-icon icon="mdi:play-circle" aria-hidden="true"></ha-icon></span>`);
+    if (!src && !r.clip) b.disabled = true;
+    else {
       b.onclick = async () => {  // firmata di nuovo: la prima firma scade dopo poco
         try {
-          this._dlg.querySelector("img").src = await this._sign(r.photo);
+          const img = this._dlg.querySelector("img");
+          img.hidden = !!r.clip;
+          this._clipEl.hidden = !r.clip;
+          if (r.clip) this._clipEl.src = await this._sign(r.clip);
+          else img.src = await this._sign(`${r.photo}?v=${r.photo_v}`);
           this._dlg.querySelector(".cap").textContent = cap;
           this._dlg.showModal();
-        } catch (e) {  // HA scollegato, foto sparita: detto sulla card, non in console
-          this._err.textContent = `Foto non disponibile: ${e.message || e}`;
+          if (r.clip) this._clipEl.play().catch(() => {});  // dove non parte da solo (iOS, dopo l'await) ci sono i controlli
+        } catch (e) {  // HA scollegato, file sparito: detto sulla card, non in console
+          this._err.textContent = `Media non disponibile: ${e.message || e}`;
         }
       };
     }

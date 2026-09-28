@@ -88,8 +88,11 @@ SENSORS: tuple[VimarSensorDescription, ...] = (
         icon="mdi:bell-clock",
         device_class=SensorDeviceClass.TIMESTAMP,
         value_fn=lambda hub: hub.stats.get("last_ring_time"),
+        # foto/foto_url, clip/clip_url: percorso e URL (autenticato) di foto e clip
+        # dell'ultimo squillo, per le notifiche (hub.ring_media)
         attrs_fn=lambda hub: {
             "chiamante": sip_id_name(hub.stats.get("last_caller_id")),
+            **hub.ring_media(),
         },
     ),
     VimarSensorDescription(

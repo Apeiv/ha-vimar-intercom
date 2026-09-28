@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 import time
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -30,6 +31,8 @@ STREAM_HANGUP_DELAY = 30
 # (dashboard, HomeKit, anche entro il minuto) chiama: non è una riconnessione.
 AUTO_CALL_COOLDOWN = 60
 QUICK_REOPEN_S = 5
+# Tetto del clip dello squillo (video dell'anteprima e, se rispondiamo noi, della chiamata).
+CLIP_MAX_S = 60
 
 # Nomi "umani" degli indirizzi SIP dell'impianto
 SIP_ID_NAMES = {
@@ -134,6 +137,9 @@ class VimarIntercomHub:
             "last_videomessage": None,     # ultimo change grezzo
             "last_fuoriporta": None,       # dict {sip_id, msg}
             "last_call_info": None,        # dict {sip_id, reason, media_type, video_src}
+            # Foto e clip dell'ultimo squillo (snapshot_dir): nome file, percorso, versione foto
+            "last_photo": None, "last_photo_path": None, "last_photo_v": None,
+            "last_clip": None, "last_clip_path": None,
             "started_at": datetime.now(timezone.utc),
         }
         self._call_started_mono: float | None = None
@@ -204,6 +210,19 @@ class VimarIntercomHub:
     def dnd(self) -> bool | None:
         """Stato Non disturbare annunciato dal Tab (None finché sconosciuto)."""
         return self.stats.get("dnd")
+
+    def ring_media(self) -> dict:
+        """Foto e clip dell'ultimo squillo per i sensori: percorso su disco e URL (con
+        l'autenticazione di HA, come la card) per le notifiche. La foto c'è ~1 s dopo
+        lo squillo, il clip a squillo (o chiamata) finiti."""
+        st = self.stats
+        photo, clip = st.get("last_photo"), st.get("last_clip")
+        return {
+            "foto": st.get("last_photo_path"),
+            "foto_url": f"/api/vimar_intercom/rings/{photo}?v={st.get('last_photo_v')}" if photo else None,
+            "clip": st.get("last_clip_path"),
+            "clip_url": f"/api/vimar_intercom/rings/{clip}" if clip else None,
+        }
 
     @property
     def status(self) -> str:
@@ -750,6 +769,9 @@ class VimarIntercomHub:
                 return
 
             self.fire_ring_callbacks()
+            # IDR subito (INFO nel dialogo early del 183), non al giro della targa (~3 s):
+            # foto, clip e card partono prima.
+            self._request_keyframe()
 
             # Send VoIP push to wake iOS devices
             sender = push_sender.get_sender()
@@ -762,11 +784,15 @@ class VimarIntercomHub:
                 now = datetime.now().astimezone()
                 # Millisecondi: due squilli nello stesso secondo (CANCEL e INVITE nuovo)
                 # restano due voci, ognuna col suo esito e la sua foto.
-                name = now.strftime("squillo_%Y%m%d_%H%M%S_") + f"{now.microsecond // 1000:03d}.jpg"
+                stem = now.strftime("squillo_%Y%m%d_%H%M%S_") + f"{now.microsecond // 1000:03d}"
+                name = stem + ".jpg"
                 self._ring_time = now.isoformat(timespec="milliseconds")
-                ring = {"time": self._ring_time, "photo": name, "outcome": "missed",
-                        "caller": _uri_to_id(sip.pending_incoming.get("caller_uri"))}
+                ring = {"time": self._ring_time, "photo": name, "clip": stem + ".mp4",
+                        "outcome": "missed", "caller": _uri_to_id(sip.pending_incoming.get("caller_uri"))}
                 asyncio.create_task(self._ring_log(lambda rings: rings.append(ring)))
+                # Clip come un Ring: il video dello squillo, dall'anteprima alla fine (o
+                # alla fine della chiamata se rispondiamo noi), fino a CLIP_MAX_S.
+                frame_grabber.record(os.path.join(R.SNAPSHOT_DIR, stem + ".mp4"), CLIP_MAX_S, self._clip_done)
                 if self._photo_task:
                     self._photo_task.cancel()
                 self._photo_task = asyncio.create_task(self._save_ring_photo(name))
@@ -796,18 +822,39 @@ class VimarIntercomHub:
         asyncio.create_task(self._ring_log(change))
 
     async def _save_ring_photo(self, name: str) -> None:
-        """Foto di chi ha suonato (anteprima dello squillo) nella cartella delle opzioni.
-        Il nome (ora dello squillo) è quello già scritto nel registro."""
-        await asyncio.sleep(R.SNAPSHOT_DELAY)
+        """Foto di chi ha suonato (anteprima dello squillo) nella cartella delle opzioni,
+        col nome (ora dello squillo) già scritto nel registro: il primo fotogramma appena
+        decodificato (~1 s dallo squillo: notifiche e card la vedono subito), poi, se
+        SNAPSHOT_DELAY > 0, dopo quei secondi quello con l'esposizione regolata sullo
+        stesso file (il primo IDR della targa è scuro: la telecamera si è appena accesa)."""
         jpeg = await frame_grabber.wait_frame()
         if not jpeg:
             _LOGGER.warning("Foto squillo: nessuna immagine (anteprima video non arrivata)")
             return
+        if not await self._write_photo(name, jpeg) or not R.SNAPSHOT_DELAY:
+            return
+        await asyncio.sleep(R.SNAPSHOT_DELAY)
+        better = await frame_grabber.wait_frame(after=1)
+        if better and better != jpeg:
+            await self._write_photo(name, better)
+
+    async def _write_photo(self, name: str, jpeg: bytes) -> bool:
         try:
-            await asyncio.get_running_loop().run_in_executor(
+            v = await asyncio.get_running_loop().run_in_executor(
                 None, ring_log.write_photo, R.SNAPSHOT_DIR, name, jpeg)
         except OSError as e:
             _LOGGER.warning("Foto squillo non salvata in %s: %s", R.SNAPSHOT_DIR, e)
+            return False
+        self.stats.update(last_photo=name, last_photo_path=os.path.join(R.SNAPSHOT_DIR, name),
+                          last_photo_v=v)
+        self._touch()
+        return True
+
+    def _clip_done(self, path: str | None) -> None:
+        """Clip dello squillo chiuso (frame_grabber.record); None se non c'è stato video."""
+        if path:
+            self.stats.update(last_clip=os.path.basename(path), last_clip_path=path)
+            self._touch()
 
     def _cancel_away(self) -> None:
         if self._away_task and not self._away_task.done():
@@ -854,6 +901,9 @@ class VimarIntercomHub:
                     st["last_caller_id"] = _uri_to_id(caller)
                     st["ring_count"] += 1
                     self._ring_answered = False
+                    # Foto e clip sono di questo squillo: quelli di prima non vanno in notifica
+                    for k in ("last_photo", "last_photo_path", "last_photo_v", "last_clip", "last_clip_path"):
+                        st[k] = None
             elif msg_type == "ring_ended":
                 if not self._ring_answered and st["last_ring_time"]:
                     st["missed_count"] += 1

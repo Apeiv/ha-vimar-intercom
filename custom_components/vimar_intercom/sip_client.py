@@ -1482,13 +1482,22 @@ async def send_keyframe_request():
     L'INFO è in-dialog: request-URI = Contact del peer (55100/targa), non
     l'hardcode R.INTERCOM (55001). Gestisce la challenge 407/401 rispedendo
     con Proxy-Authorization (come MESSAGE/INVITE) invece di lasciare il proxy
-    a rifiutare a ripetizione ("Stale response 407")."""
-    if not in_call or not call_state["call_id"]:
+    a rifiutare a ripetizione ("Stale response 407").
+
+    Anche nell'anteprima dello squillo (dialogo early del nostro 183, RFC 3261 §12.1.1):
+    foto, clip e card non aspettano l'IDR della targa (~3 s), e un pacchetto perso
+    durante l'anteprima si recupera subito (media_handler._lost)."""
+    if in_call and call_state["call_id"]:
+        cid, to_uri = call_state["call_id"], call_state.get("original_target") or R.INTERCOM
+        to_tag, from_tag = call_state["to_tag"], call_state["from_tag"]
+        contact, route_set = call_state.get("remote_contact"), call_state.get("route_set")
+    elif early_media():
+        p = pending_incoming
+        cid, to_uri, to_tag, from_tag = p["cid"], p["caller_uri"], p["caller_tag"], p["my_tag"]
+        contact, route_set = p["contact"], p["route_set"]
+    else:
         return
-    to_uri = call_state.get("original_target") or R.INTERCOM
-    info_target, route = _dialog_target(call_state.get("remote_contact"), to_uri,
-                                        call_state.get("route_set"))
-    cid = call_state["call_id"]
+    info_target, route = _dialog_target(contact, to_uri, route_set)
     body = ('<?xml version="1.0" encoding="utf-8" ?>'
             '<media_control><vc_primitive><to_encoder>'
             '<picture_fast_update></picture_fast_update>'
@@ -1503,8 +1512,8 @@ async def send_keyframe_request():
             f"{_via_line(_gen())}"
             f"{route}"
             f"Max-Forwards: 70\r\n"
-            f"To: <{to_uri}>;tag={call_state['to_tag']}\r\n"
-            f"From: <sip:{R.SIP_USER}@{R.SIP_DOMAIN}>;tag={call_state['from_tag']}\r\n"
+            f"To: <{to_uri}>;tag={to_tag}\r\n"
+            f"From: <sip:{R.SIP_USER}@{R.SIP_DOMAIN}>;tag={from_tag}\r\n"
             f"Call-ID: {cid}\r\n"
             f"CSeq: {seq} INFO\r\n")
         if auth:
@@ -1978,6 +1987,7 @@ async def do_decline_incoming(reason: str = "603 Decline"):
 async def _end_ring():
     """Squillo finito senza risposta nostra: chiude l'eventuale early media."""
     _close_ring()
+    pending_responses.pop(pending_incoming["cid"], None)  # coda dell'INFO di keyframe dell'anteprima
     # Anche se un secondo INVITE ha sovrascritto lo squillo, l'anteprima del primo
     # va chiusa: fuori da una nostra chiamata non deve restare media acceso.
     if not (in_call or calling):

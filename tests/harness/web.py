@@ -169,8 +169,8 @@ async def start(rig):
     async def card(r):
         return web.FileResponse(CARD_JS)
 
-    async def state(r):
-        return web.json_response({"status": rig.state_override or hub.status})
+    async def state(r):  # come i sensori: stato, e foto/clip dell'ultimo squillo (attributi)
+        return web.json_response({"status": rig.state_override or hub.status, "last_ring": hub.ring_media()})
 
     async def ring_photo(r):
         return await photo.get(r, r.match_info["name"])

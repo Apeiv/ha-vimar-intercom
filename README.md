@@ -114,8 +114,8 @@ Settings → Vimar Intercom → **Configure**:
 | **Video entrance panel** (`camera_target`) | Panel called by the camera, *Call* and *Call Video (outdoor)*: the `PHONEBOOK` row with `TYPE='PE'`. **Not the SGA.** Empty = default `55100` |
 | **Internal panel** (`internal_panel_target`) | Target of *Call Home (indoor)*. The phonebook does not say which one it is: set it by hand. Empty = default `55002` |
 | **Entrance panel that opens the door** (`door_target`) | Recipient of the door command (lock, *Open Door*, `open_door` without `target`, actuators with target `AUTO`): the `GID_PE` of the door actuator in the phonebook. **Not always the SGA**: on a 2FV2 the SGA is `61000` and the door is opened by panel `55001`. Empty = the saved door actuator's panel, otherwise the SGA |
-| **Ring snapshot folder** (`snapshot_dir`) | Where the visitor's photo is saved on every ring (`squillo_YYYYMMDD_HHMMSS_mmm.jpg` + `ultimo_squillo.jpg`), e.g. `/config/media/citofono`. Must be writable by HA. Empty = off |
-| **Seconds after the ring** (`snapshot_delay`) | Wait before the photo (preview start + exposure). Default 3 (Tab 5S Up 40515) |
+| **Ring snapshot folder** (`snapshot_dir`) | Where the visitor's photo (`squillo_YYYYMMDD_HHMMSS_mmm.jpg` + `ultimo_squillo.jpg`) and the ring clip (`squillo_YYYYMMDD_HHMMSS_mmm.mp4`: the preview video, and the call if answered from HA, up to 60 s, no audio) are saved on every ring, e.g. `/config/media/citofono`. Must be writable by HA. Empty = off |
+| **Seconds for the better photo** (`snapshot_delay`) | The first photo is saved as soon as the first frame arrives (~1 s after the ring); after this many seconds it is replaced by a frame with the exposure settled (the panel's first keyframe is dark). Default 3 (Tab 5S Up 40515), 0 = keep the first |
 | **Away message** (`away_message_file`, `away_message_delay`) | Audio file (mp3, wav…) played to the visitor if nobody answers within N seconds (0 = off, max 60); then the integration hangs up |
 | **Away message from text** (`away_message_text`, `away_message_tts`) | If the file field is empty, this text is read by Home Assistant's text-to-speech (`away_message_tts` = a `tts.*` entity; empty = HA's default engine) in HA's language, max 30 s. The audio is generated at startup and cached; if TTS fails the doorbell keeps ringing as usual |
 | **Media encryption (SRTP)** (`media_enc`) | **Automatic** (default since 1.0.11): follows the `media_enc` the plant declares in its `GET_INIT_STATUS` reply (`"srtp"` on a cloud 40515); plants with the short reply (the 40507) stay on plain RTP. **On** / **Off** force it. Entries saved as "on" by 1.0.10 or earlier stay on; "off" becomes automatic. Try **On** if the camera stays black or the call fails with `488` |
@@ -234,8 +234,13 @@ into view, e.g. `/lovelace/camera#citofono` as the tap action of a ring notifica
 row is the history button (during a call the button is on the video): the latest rings
 (option `history`, default 8) with photo, time and outcome: *Risposto* (answered from HA),
 *Messaggio di assenza* (away message), *Nessuna risposta* (not answered from HA; a ring answered
-on the panel counts here too). Tap a photo to see it large. The integration keeps the list in
-`squillo.json` next to the photos (last 200 rings). Without the folder there is no history.
+on the panel counts here too). Tap a photo to see it large; a ring with a clip shows a play
+icon on its thumbnail and the tap plays the video instead. The photo appears about a second
+after the ring and is replaced by a better one after `snapshot_delay`; the clip when the ring
+(or the call) ends. The integration keeps the list in `squillo.json` next to the files (last 200
+rings). Without the folder there is no history. For notifications, the "Intercom Ultimo Squillo"
+sensor carries `foto` / `clip` (paths on disk) and `foto_url` / `clip_url` (relative URLs the
+companion app fetches with its own login) as soon as each file exists.
 
 ---
 
@@ -425,9 +430,10 @@ this component), check that both patches are still in place — see the note und
   WebSocket requires Home Assistant authentication, and its debug actions (`command`, `probe`,
   `scan`, `register`, `reconnect`) are admin-only. The QR payload is never logged at INFO level.
 - Ring history for the card: `GET /api/vimar_intercom/rings` (list, `?limit=` up to 50) and
-  `GET /api/vimar_intercom/rings/<name>` (the photo) require Home Assistant authentication (the
-  card loads photos through signed paths). The second serves only `squillo_YYYYMMDD_HHMMSS_mmm.jpg`
-  files inside `snapshot_dir`, nothing else; the folder is never exposed under `/local`.
+  `GET /api/vimar_intercom/rings/<name>` (the photo or the clip, with HTTP ranges) require Home
+  Assistant authentication (the card loads them through signed paths). The second serves only
+  `squillo_YYYYMMDD_HHMMSS[_mmm].jpg` / `.mp4` files inside `snapshot_dir`, nothing else (not
+  even a clip still being written); the folder is never exposed under `/local`.
 - In local UDP mode, SIP packets from any host other than the intercom are dropped, so another
   device on the LAN can't fake a ring.
 - No mandatory cloud dependency when running in local UDP mode.

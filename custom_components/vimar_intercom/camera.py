@@ -111,4 +111,4 @@ class VimarIntercomCamera(Camera):
         """
         if not self._hub.video_active:
             return None
-        return await frame_grabber.wait_frame()
+        return await frame_grabber.wait_frame(after=1)  # non il primo IDR, scuro

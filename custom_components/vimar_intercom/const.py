@@ -128,7 +128,8 @@ ACTUATORS = []  # RIMOSSI 18/08/2026: i token ipotizzati (OPEN_F1/OPEN_2/OPEN_2F
 # proprio appartamento, altrimenti la prima riga PE) — rubrica_import.py.
 CAMERA_TARGET = "55100"
 
-# Secondi fra lo squillo e la foto: avvio anteprima + esposizione (Tab 5S Up 40515).
+# Secondi fra lo squillo e la foto migliore (la prima si salva subito): la telecamera
+# della targa regola l'esposizione (Tab 5S Up 40515). 0 = solo la prima.
 DEFAULT_SNAPSHOT_DELAY = 3
 
 # ─── Comandi di stato (in USCITA, Panda: blue) ───────────────────────────────
