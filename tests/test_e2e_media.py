@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from harness.media import decodable_frames
+from harness.media import audio_info, decodable_frames
 from harness.peer import is_
 from harness.rig import Rig, run, wait_until
 from harness.web import AvClient
@@ -66,6 +66,28 @@ def test_anteprima_poi_risposta_senza_riavviare_ffmpeg(monkeypatch):
             await asyncio.wait_for(av.task, 5)
             assert decodable_frames(av.segments[0]) >= 40
             assert not [m for m in rig.peer.got(is_("INVITE")) if m.cid != "ring-1"], "auto-call"
+    run(s())
+
+
+def test_av_audio_aac_per_stream_worker_e_homekit(monkeypatch):
+    """L'audio della targa è PCMU: in MPEG-TS con «-c:a copy» finiva come bin_data e lo
+    stream worker di HA (HLS, camera.record) e HomeKit non lo vedevano. /av lo
+    transcodifica in AAC (48 kHz mono, come la PR #21 ma a 24): ffprobe lo riconosce e ne
+    decodifica i fotogrammi, come fa lo stream worker con PyAV. Il video resta «copy»."""
+    async def s():
+        async with Rig(monkeypatch, real_av=True, http=True) as rig:
+            await rig.register()
+            rig.answer(media_on=True)
+            assert (await rig.hub.async_call())[0]
+            av = AvClient(rig.base).start()
+            await wait_until(lambda: av.bytes > 20000, 10, "video su /av")
+            await asyncio.sleep(2)
+            await rig.hub.async_hangup()
+            await av.close()
+            info = audio_info(av.segments[0])
+            assert (info.get("codec_name"), info.get("sample_rate"), info.get("channels")) == ("aac", "48000", 1), info
+            assert int(info.get("nb_read_frames", 0)) >= 20, f"audio AAC non decodificabile: {info}"
+            assert decodable_frames(av.segments[0]) >= 15
     run(s())
 
 

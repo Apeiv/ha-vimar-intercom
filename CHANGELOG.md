@@ -125,6 +125,14 @@ Small follow-up to 1.0.9, from the first days of use on the 2F (Tab 7S 40507).
   `tx=` packet count says packets leave, not that they carry a voice, so a muted or wrong
   microphone can now be told apart from a panel that does not play it.
 
+### Changed
+
+- `/av` audio is AAC-LC (48 kHz mono, 32 kb/s) instead of the panel's raw G.711. In MPEG-TS
+  PCMU ends up as private data (`bin_data`), so HA's stream worker (HLS, `camera.record`) and
+  HomeKit had no audio. Transcoding and low-latency mux flags as in #21 by @m4r1k; 48 kHz
+  instead of 24 because the muxer holds the first video packet until the first AAC frame
+  (measured +10 ms vs +60 ms). Video is still copied.
+
 ## [1.0.9] - 2026-09-28
 
 Builds on 1.0.8. Field-tested on a Tab 5S Up 40515 (cloud TLS + SRTP).

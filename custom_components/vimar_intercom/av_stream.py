@@ -110,7 +110,19 @@ async def _start_av_ffmpeg_locked():
         "-fpsprobesize", "0", "-max_ts_probe", "0",
         "-i", sdp_path,
         "-c:v", "copy",
-        "-c:a", "copy",
+        # G.711 non è un codec valido in MPEG-TS: con «copy» finiva come dati
+        # privati (bin_data) e lo stream worker di HA (HLS, camera.record) e
+        # HomeKit non lo vedevano. AAC-LC mono a 32 kb/s, come nella PR #21
+        # (@m4r1k). La frequenza non aggiunge nulla a una sorgente a 8 kHz ma
+        # decide quanto il mux trattiene il primo pacchetto video: esce solo con
+        # il primo AAC, e l'encoder ne dà uno dopo 2048 campioni (priming). A
+        # 24 kHz sono 85 ms di audio, a 48 kHz 43. Misurato (test_av_latency):
+        # primo fotogramma decodificabile +60 ms a 24 kHz, +10 ms a 48 kHz.
+        "-c:a", "aac", "-b:a", "32k", "-ar", "48000", "-ac", "1",
+        # Mux senza attese: niente ritardo iniziale (default 0,7 s), le due
+        # tracce escono al massimo 0,1 s l'una dall'altra, ogni pacchetto è
+        # scritto subito sulla pipe (PR #21).
+        "-muxdelay", "0", "-max_interleave_delta", "100000", "-flush_packets", "1",
         "-f", "mpegts",
         "pipe:1",
     ]

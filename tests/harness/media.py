@@ -3,6 +3,7 @@ reale, e ffprobe per contare i fotogrammi decodificabili che escono da /av."""
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import random
 import shutil
@@ -126,6 +127,23 @@ def decodable_frames(ts: bytes) -> int:
                              capture_output=True, text=True, timeout=60).stdout.strip()
         first = out.split()[0] if out else ""
         return int(first) if first.isdigit() else 0
+    finally:
+        os.unlink(path)
+
+
+def audio_info(ts: bytes) -> dict:
+    """Traccia audio di un MPEG-TS vista da ffprobe (codec_name, sample_rate, channels) e
+    nb_read_frames decodificati: ciò che lo stream worker di HA vede con PyAV. Vuoto se
+    ffprobe non riconosce un audio (PCMU in TS = bin_data)."""
+    fd, path = tempfile.mkstemp(suffix=".ts")
+    os.write(fd, bytes(ts))
+    os.close(fd)
+    try:
+        out = subprocess.run(["ffprobe", "-v", "error", "-count_frames", "-select_streams", "a:0",
+                              "-show_entries", "stream=codec_name,sample_rate,channels,nb_read_frames",
+                              "-of", "json", path], capture_output=True, text=True, timeout=60).stdout
+        streams = json.loads(out or "{}").get("streams") or [{}]
+        return streams[0]
     finally:
         os.unlink(path)
 
