@@ -155,6 +155,10 @@ tuo impianto o vuoi modificare la lista attuatori prodotta dall'import).
 
 ## Card del citofono (audio bidirezionale)
 
+![La card del citofono: a riposo con la cronologia degli squilli, durante lo squillo e in chiamata](docs/images/intercom-card.png)
+
+*La card a riposo con la cronologia degli squilli, durante uno squillo (anteprima video prima di rispondere) e in chiamata. L'immagine della telecamera è una scena dimostrativa.*
+
 L'integrazione include una card per le dashboard e la carica da sola: non va aggiunta tra le
 Risorse. Si sceglie **Citofono Vimar** dall'elenco delle card (telecamera, nome, layout e
 cronologia hanno l'editor visuale; il resto resta in YAML) oppure si scrive a mano:

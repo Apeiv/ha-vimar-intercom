@@ -153,6 +153,10 @@ already know your plant's SGA or want to tweak the imported actuator list.
 
 ## Intercom card (two-way audio)
 
+![The intercom card: at rest with the ring history, while the doorbell rings, and in a call](docs/images/intercom-card.png)
+
+*The card at rest with the ring history, during a ring (video preview before answering) and in a call. The camera picture is a demo scene.*
+
 The integration ships a dashboard card and loads it itself, so there is nothing to add under
 Resources. Pick **Citofono Vimar** in the card picker (camera, name, layout and history have a
 visual editor; the rest stays in YAML) or add it by hand:
