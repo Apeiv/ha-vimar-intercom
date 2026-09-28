@@ -38,8 +38,16 @@ class _Entry:
         self.options = options or {}
 
 
+def _hass(**kw) -> types.SimpleNamespace:
+    """hass finto: l'elenco utenti (per `allowed_users`) e ciò che il test aggiunge."""
+    async def _users():
+        return []
+    return types.SimpleNamespace(auth=types.SimpleNamespace(async_get_users=_users), **kw)
+
+
 def _flow(cf, data: dict, options: dict | None = None):
     flow = cf.OptionsFlowHandler(_Entry(data, options))
+    flow.hass = _hass()
     flow.async_show_form = lambda **kw: {"type": "form", **kw}
     flow.async_create_entry = lambda **kw: {"type": "create_entry", **kw}
     return flow
@@ -87,7 +95,7 @@ def test_cartella_foto_sotto_www_rifiutata(cf, tmp_path):
     async def _job(f, *a):
         return f(*a)
 
-    flow.hass = types.SimpleNamespace(
+    flow.hass = _hass(
         async_add_executor_job=_job,
         config=types.SimpleNamespace(is_allowed_path=lambda p: True, path=lambda *p: str(tmp_path.joinpath(*p))))
     result = asyncio.run(flow.async_step_settings({
@@ -105,7 +113,7 @@ def test_messaggio_di_assenza_fuori_dalle_cartelle_lette_da_ha(cf, tmp_path):
     async def _job(fn, *a):
         return fn(*a)
 
-    flow.hass = types.SimpleNamespace(
+    flow.hass = _hass(
         async_add_executor_job=_job,
         config=types.SimpleNamespace(is_allowed_path=lambda p: False, path=lambda *p: str(tmp_path.joinpath("cfg", *p))))
     result = asyncio.run(flow.async_step_settings({

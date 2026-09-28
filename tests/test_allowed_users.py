@@ -1,0 +1,63 @@
+"""Opzione `allowed_users`: squilli, foto e media live solo agli utenti scelti."""
+import asyncio
+import types
+
+import pytest
+from harness.web import Request, load_views, make_hass
+
+from custom_components.vimar_intercom import runtime
+
+
+class _NotAllowed(Exception):
+    pass
+
+
+def _req(admin=False, uid="u1"):
+    r = Request(admin=admin)
+    r._user = types.SimpleNamespace(is_admin=admin, id=uid)
+    return r
+
+
+@pytest.mark.parametrize("allowed,admin,uid,ok", [
+    ([], False, "u1", True),        # lista vuota: ogni utente autenticato
+    (["u1"], False, "u1", True),
+    (["u1"], False, "u2", False),
+    (["u1"], True, "u2", True),     # admin sempre
+])
+def test_rings_solo_agli_utenti_ammessi(monkeypatch, hub, allowed, admin, uid, ok):
+    views = load_views(monkeypatch)
+    monkeypatch.setattr(views, "Unauthorized", _NotAllowed)
+    monkeypatch.setattr(runtime, "ALLOWED_USERS", allowed)
+    monkeypatch.setattr(runtime, "SNAPSHOT_DIR", "")
+    monkeypatch.setattr(views.web, "json_response", lambda d: d, raising=False)
+    view = views.VimarRingsView(make_hass(types.SimpleNamespace(hub=hub)))
+
+    async def run():
+        return await view.get(_req(admin, uid))
+
+    if ok:
+        asyncio.run(run())
+    else:
+        with pytest.raises(_NotAllowed):
+            asyncio.run(run())
+
+
+def test_audio_ws_e_av_chiusi_a_chi_non_e_ammesso(monkeypatch, hub):
+    views = load_views(monkeypatch)
+    monkeypatch.setattr(runtime, "ALLOWED_USERS", ["u1"])
+    rig = types.SimpleNamespace(hub=hub)
+    hass = make_hass(rig)
+    ws = views.web.WebSocketResponse()
+    monkeypatch.setattr(views.web, "WebSocketResponse", lambda: ws)
+
+    async def run():
+        await views.VimarAudioWSView(hass).get(_req(uid="u2"))
+        av = await views.VimarAVStreamView(hass).get(_req(uid="u2"))
+        senza = Request(admin=False)
+        senza._user = None
+        anon = await views.VimarAVStreamView(hass).get(senza)
+        return av.status, anon.status
+
+    av, anon = asyncio.run(run())
+    assert ws.closed and not rig.audio_ws_clients  # mai entrato fra i client
+    assert av == 403 and anon != 403               # senza utente (stream worker, go2rtc): come oggi

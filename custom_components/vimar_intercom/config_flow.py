@@ -65,6 +65,7 @@ KEY_AWAY_TTS       = "away_message_tts"
 KEY_AWAY_DELAY     = "away_message_delay"
 KEY_SNAP_DIR       = "snapshot_dir"
 KEY_SNAP_DELAY     = "snapshot_delay"
+KEY_ALLOWED_USERS  = "allowed_users"
 
 DEFAULT_CLOUD_PROXY    = "ipvdes.vimar.cloud"
 DEFAULT_LOCAL_SIP_PORT = 5060
@@ -617,6 +618,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
             snap_dir   = str(user_input.get(KEY_SNAP_DIR, "")).strip()
             snap_delay = user_input.get(KEY_SNAP_DELAY, DEFAULT_SNAPSHOT_DELAY)
+            allowed_users = [str(u) for u in user_input.get(KEY_ALLOWED_USERS) or []]
             if snap_dir and not self.hass.config.is_allowed_path(snap_dir):
                 errors[KEY_SNAP_DIR] = "path_not_allowed"
             elif snap_dir and await self.hass.async_add_executor_job(
@@ -670,6 +672,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                         KEY_AWAY_DELAY:     away_delay,
                         KEY_SNAP_DIR:       snap_dir,
                         KEY_SNAP_DELAY:     snap_delay,
+                        KEY_ALLOWED_USERS:  allowed_users,
                     },
                 )
 
@@ -679,6 +682,10 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         # validazione. `current` resta intatto perché serve ai confronti sopra
         # (sip_changed) per capire cosa è davvero cambiato.
         form = {**current, **(user_input or {})}
+        # HA non ha un selettore di utenti: elenco a scelta multipla dagli utenti veri
+        # (non quelli di sistema). Un utente cancellato sparisce dalla lista al salvataggio.
+        users = [{"value": u.id, "label": u.name or u.id}
+                 for u in await self.hass.auth.async_get_users() if not u.system_generated]
 
         return self.async_show_form(
             step_id="settings",
@@ -756,6 +763,11 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     KEY_SNAP_DELAY,
                     default=form.get(KEY_SNAP_DELAY, DEFAULT_SNAPSHOT_DELAY),
                 ): vol.All(vol.Coerce(int), vol.Range(min=0, max=30)),
+                vol.Optional(
+                    KEY_ALLOWED_USERS,
+                    default=[u for u in form.get(KEY_ALLOWED_USERS) or [] if any(u == x["value"] for x in users)],
+                ): selector.SelectSelector(selector.SelectSelectorConfig(
+                    options=users, multiple=True, mode="list")),  # caselle, non un menu
             }),
             errors=errors,
             description_placeholders={

@@ -108,6 +108,15 @@ OPEN_DOOR_SCHEMA = vol.Schema({
     vol.Optional("command", default="OPEN_2F"): vol.All(cv.string, vol.Match(r"^OPEN(_[A-Z0-9_]{1,16})?\Z")),
 })
 
+def _user_allowed(request: web.Request) -> bool:
+    """Opzione `allowed_users`: chi può vedere squilli, foto, clip e media live. Admin
+    sempre; lista vuota = ogni utente autenticato; senza utente (/av in LAN dallo stream
+    worker o da go2rtc, senza token) come oggi."""
+    user = request.get("hass_user")
+    return (user is None or user.is_admin or not runtime.ALLOWED_USERS
+            or getattr(user, "id", None) in runtime.ALLOWED_USERS)
+
+
 def _entry_data(hass: HomeAssistant) -> dict:
     """Dati dell'entry attiva. Le view HTTP restano registrate anche dopo aver
     tolto e riaggiunto l'integrazione (entry_id nuovo), e la prima registrata
@@ -527,6 +536,9 @@ class VimarAudioWSView(HomeAssistantView):
             return ws
         user = request.get("hass_user")
         is_admin = user is not None and user.is_admin
+        if not _user_allowed(request):
+            await ws.close(code=1008, message=b"Not allowed")
+            return ws
         clients = self._ws_clients
         clients.add(ws)
         _LOGGER.info("Audio WS client connected (%d total)", len(clients))
@@ -759,6 +771,8 @@ class VimarRingsView(HomeAssistantView):
         self._hass = hass
 
     async def get(self, request: web.Request) -> web.Response:
+        if not _user_allowed(request):
+            raise Unauthorized()
         if not runtime.SNAPSHOT_DIR:
             return web.json_response([])
         try:  # ?limit=: 10 se manca o non è un numero, fra 1 e 50
@@ -783,6 +797,8 @@ class VimarRingPhotoView(HomeAssistantView):
         self._hass = hass
 
     async def get(self, request: web.Request, name: str) -> web.StreamResponse:
+        if not _user_allowed(request):
+            raise Unauthorized()
         path = await self._hass.async_add_executor_job(
             ring_log.ring_photo_path, runtime.SNAPSHOT_DIR, name)
         if path is None:
@@ -803,6 +819,8 @@ class VimarAVStreamView(HomeAssistantView):
     async def get(self, request: web.Request) -> web.StreamResponse:
         if not _is_local_request(request):
             return web.Response(status=403, text="Forbidden (local network only)")
+        if not _user_allowed(request):
+            return web.Response(status=403, text="Forbidden (user)")
         hub = _entry_data(self._hass).get("hub")
         if hub is None:
             return web.Response(status=503, text="Integration not loaded")

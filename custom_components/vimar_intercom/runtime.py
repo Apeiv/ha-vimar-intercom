@@ -107,6 +107,8 @@ AWAY_MESSAGE_DELAY: int = 0
 # Foto di chi suona: cartella (vuoto = non salvare) e secondi dopo lo squillo.
 SNAPSHOT_DIR: str = ""
 SNAPSHOT_DELAY: int = _const.DEFAULT_SNAPSHOT_DELAY
+# Id degli utenti HA ammessi a squilli, foto, clip e media live (vuoto = tutti).
+ALLOWED_USERS: list[str] = []
 
 # ─── Targhe da chiamare (da options flow; issue #3) ──────────────────────────
 # CAMERA_TARGET = targa video (PE) chiamata dalla camera, da «Chiama» e da
@@ -181,7 +183,7 @@ def configure(data: dict) -> None:
     global SGA_TARGET, PICG_TARGET
     global CAMERA_TARGET, INTERNAL_PANEL_TARGET, DOOR_TARGET
     global AWAY_MESSAGE_FILE, AWAY_MESSAGE_TEXT, AWAY_MESSAGE_TTS, AWAY_MESSAGE_DELAY
-    global SNAPSHOT_DIR, SNAPSHOT_DELAY
+    global SNAPSHOT_DIR, SNAPSHOT_DELAY, ALLOWED_USERS
     global DEVICE_IMEI, DEVICE_UUID
 
     SIP_USER     = data.get("sip_user", "")
@@ -263,6 +265,7 @@ def configure(data: dict) -> None:
     AWAY_MESSAGE_DELAY = int(data.get("away_message_delay") or 0)
     SNAPSHOT_DIR   = str(data.get("snapshot_dir") or "").strip()
     SNAPSHOT_DELAY = int(data.get("snapshot_delay", _const.DEFAULT_SNAPSHOT_DELAY))
+    ALLOWED_USERS  = [str(u) for u in data.get("allowed_users") or []]
 
     # Identità dispositivo: salvata nell'entry al primo avvio. Se manca (entry
     # creato da una versione precedente, o probe/test senza entry) se ne genera
