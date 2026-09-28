@@ -436,6 +436,8 @@ this component), check that both patches are still in place — see the note und
 - Internal HTTP endpoint: `/av` is **LAN-only** (`_is_local_request`); the `/audio_ws`
   WebSocket requires Home Assistant authentication, and its debug actions (`command`, `probe`,
   `scan`, `register`, `reconnect`) are admin-only. The QR payload is never logged at INFO level.
+- Talking on `/audio_ws` while the doorbell rings answers the call (mic RMS above a threshold
+  for 200 ms): how Echo Show and HomeKit answer through Scrypted. While idle, mic frames are dropped.
 - Ring history for the card: `GET /api/vimar_intercom/rings` (list, `?limit=` up to 50) and
   `GET /api/vimar_intercom/rings/<name>` (the photo or the clip, with HTTP ranges) require Home
   Assistant authentication (the card loads them through signed paths). The second serves only

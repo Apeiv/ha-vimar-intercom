@@ -1,7 +1,9 @@
 """Vimar Intercom integration for Home Assistant."""
 
+import array
 import asyncio
 import ipaddress
+import math
 import json
 import logging
 import os
@@ -482,6 +484,18 @@ def _register_services(hass: HomeAssistant) -> None:
 ADMIN_WS_ACTIONS = {"command", "probe", "scan", "register", "reconnect"}
 
 
+# Voce sul WS mentre squilla = «Rispondi»: RMS del PCM16 sopra VOICE_RMS per almeno
+# VOICE_ANSWER_MS di fila (il rumore del microfono sta sotto i 300, la voce a 8 kHz
+# sopra i 2000). Serve a chi risponde parlando da Echo Show o HomeKit via Scrypted.
+VOICE_RMS = 800
+VOICE_ANSWER_MS = 200
+
+
+def _rms(pcm: bytes) -> float:
+    a = array.array("h", pcm[:len(pcm) & ~1])
+    return math.sqrt(sum(x * x for x in a) / len(a)) if a else 0.0
+
+
 class VimarAudioWSView(HomeAssistantView):
     """WebSocket endpoint for bidirectional audio + intercom control.
 
@@ -554,15 +568,26 @@ class VimarAudioWSView(HomeAssistantView):
             "in_call": hub.in_call,
         }))
 
+        loud_ms = 0.0  # voce di fila sopra soglia mentre squilla
         try:
             async for msg in ws:
                 if msg.type == web.WSMsgType.TEXT:
                     await self._handle_text(ws, msg.data, is_admin)
                 elif msg.type == web.WSMsgType.BINARY:
                     # Client sending mic audio: 0x02 prefix + PCM16LE
-                    if len(msg.data) > 1 and msg.data[0] == 0x02 and hub.in_call:
+                    if len(msg.data) <= 1 or msg.data[0] != 0x02:
+                        continue
+                    pcm = msg.data[1:]
+                    if hub.in_call:
                         hub.claim_call()
-                        media.send_audio(msg.data[1:])
+                        media.send_audio(pcm)
+                    elif hub.is_ringing:
+                        # Parlare mentre squilla risponde (stessa strada di "Rispondi");
+                        # sotto soglia, o a riposo, il PCM si butta.
+                        loud_ms = loud_ms + len(pcm) / 16 if _rms(pcm) >= VOICE_RMS else 0.0
+                        if loud_ms >= VOICE_ANSWER_MS:
+                            loud_ms = 0.0
+                            await hub.async_answer()
                 elif msg.type in (web.WSMsgType.ERROR, web.WSMsgType.CLOSE):
                     break
         except Exception as e:
