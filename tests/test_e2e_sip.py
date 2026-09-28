@@ -109,6 +109,13 @@ def test_cloud_irraggiungibile_all_avvio_si_riprova(monkeypatch):
     monkeypatch.setattr(sys.modules["homeassistant.exceptions"], "ConfigEntryNotReady",
                         _NotReady, raising=False)
     views = load_views(monkeypatch)
+
+    class _Store:  # storage degli SPS/PPS (stub di HA): vuoto
+        def __init__(self, *a): ...
+
+        async def async_load(self):
+            return None
+    monkeypatch.setattr(views, "Store", _Store)
     for k, v in vars(R).items():  # configure() riscrive il modulo: ripristino a fine test
         if k.isupper():
             monkeypatch.setattr(R, k, v)

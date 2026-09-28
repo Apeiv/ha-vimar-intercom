@@ -19,6 +19,7 @@ import homeassistant.helpers.config_validation as cv
 from homeassistant.exceptions import ConfigEntryNotReady, Unauthorized
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.service import async_register_admin_service
+from homeassistant.helpers.storage import Store
 
 from .const import DOMAIN
 from . import log_buffer as _log_buffer
@@ -188,7 +189,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hub.register_event_callback(_on_hub_event)
 
     try:
-        await hub.async_start()
+        # Ultimi SPS/PPS della targa (pochi byte): .storage/vimar_intercom.<entry>.sps_pps
+        await hub.async_start(Store(hass, 1, f"{DOMAIN}.{entry.entry_id}.sps_pps"))
     except OSError as e:
         # Cloud irraggiungibile (dopo un blackout HA riparte prima del router):
         # HA riprova da solo. Un'eccezione qualsiasi lasciava l'entry in errore

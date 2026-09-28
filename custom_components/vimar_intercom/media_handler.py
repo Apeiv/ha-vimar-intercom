@@ -2,6 +2,7 @@
 
 import array
 import asyncio
+import base64
 import logging
 import os
 import random
@@ -198,6 +199,9 @@ class RTPVideoProtocol(asyncio.DatagramProtocol):
 
     # Riceve ogni NAL riassemblato (frame grabber delle foto), se impostato.
     frame_sink = None
+    # Chiamato con (sps, pps) quando la targa ne manda di diversi: restore_sps_pps
+    # li salva nello storage di HA.
+    on_sps_pps = None
 
     REORDER_BUF_SIZE = 5  # Hold up to 5 packets for reordering (~30ms at 15fps)
 
@@ -483,10 +487,15 @@ class RTPVideoProtocol(asyncio.DatagramProtocol):
             return  # riferisce un fotogramma perso: né WS, né foto, né GOP
         # SPS/PPS servono anche a /av (sprop nell'SDP di ffmpeg): memorizzali
         # anche quando non c'è nessun client WebSocket.
-        if nal_data and nal_data[0] & 0x1F == 7:
-            self._last_sps = nal_data
-        elif nal_data and nal_data[0] & 0x1F == 8:
-            self._last_pps = nal_data
+        if t in (7, 8):
+            old = (self._last_sps, self._last_pps)
+            if t == 7:
+                self._last_sps = nal_data
+            else:
+                self._last_pps = nal_data
+            new = (self._last_sps, self._last_pps)
+            if new != old and all(new) and self.on_sps_pps:
+                self.on_sps_pps(*new)
         if nal_data and self.frame_sink:
             self.frame_sink(nal_data)
         if not nal_data or not ws_send_bytes or not self._nal_queue:
@@ -631,6 +640,21 @@ async def setup_transports():
         RTPAudioProtocol, sock=audio_sock)
     _, video_proto = await loop.create_datagram_endpoint(
         RTPVideoProtocol, sock=video_sock)
+
+
+async def restore_sps_pps(store) -> None:
+    """SPS/PPS dell'ultima chiamata dallo storage di HA (Store, uno per entry) al
+    protocollo video, e da qui in poi ogni coppia diversa che la targa manda viene
+    salvata. Senza, la prima /av dopo un riavvio di HA non ha sprop nell'SDP e aspetta
+    l'SPS in banda (~6 s sulla 40515 se la richiesta di keyframe tarda)."""
+    saved = await store.async_load()
+    try:
+        video_proto._last_sps = base64.b64decode(saved["sps"])
+        video_proto._last_pps = base64.b64decode(saved["pps"])
+    except (TypeError, KeyError, ValueError):
+        pass  # niente di salvato (o rotto): si aspetta la targa come prima
+    video_proto.on_sps_pps = lambda sps, pps: store.async_delay_save(
+        lambda: {"sps": base64.b64encode(sps).decode(), "pps": base64.b64encode(pps).decode()}, 5)
 
 
 async def setup_media(remote_sdp, local_crypto_key=None, local_video_crypto_key=None,

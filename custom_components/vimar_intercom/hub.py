@@ -492,7 +492,8 @@ class VimarIntercomHub:
         except asyncio.CancelledError:
             pass
 
-    async def async_start(self):
+    async def async_start(self, sps_store=None):
+        """sps_store: Store di HA con gli ultimi SPS/PPS della targa (media.restore_sps_pps)."""
         if self._running:
             return
 
@@ -506,6 +507,8 @@ class VimarIntercomHub:
         _LOGGER.info("Local IP: %s", sip.MY_IP)
 
         await media.setup_transports()
+        if sps_store:
+            await media.restore_sps_pps(sps_store)
         _LOGGER.info("RTP transports ready")
 
         await sip.connect()
