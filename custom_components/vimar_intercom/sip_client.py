@@ -975,7 +975,40 @@ _local_crypto_key = None
 _local_video_crypto_key = None
 
 
-def build_sdp():
+# H.264 (RFC 6184): packetization-mode e profile-level-id vanno rispettati.
+# La targa 2F (40507, baresip) offre e accetta SOLO packetization-mode=0
+# (profile-level-id 42800c); le 2FV2 accettano il mode 1. Rispondere mode 1 a
+# un'offerta mode 0 è una risposta senza codec in comune: la targa non manda
+# un pacchetto video (prova del 28/09: audio rx=3602, video rx=0 in 54 s), e
+# a un'offerta con il solo mode 1 risponde m=video 0 (probe di agosto).
+_H264_OFFER = (
+    ("96", "profile-level-id=42801F;packetization-mode=1"),
+    ("97", "profile-level-id=42800c;packetization-mode=0"),
+)
+
+
+def _h264_answer(offer: dict | None) -> tuple[tuple[str, str], ...]:
+    """Le linee H.264 della risposta: il payload type e i parametri che la
+    targa ha offerto (il primo H.264 dell'offerta). Senza offerta, o senza
+    H.264 nell'offerta, l'offerta completa (mode 1 e mode 0)."""
+    video = (offer or {}).get("video") or {}
+    for line in video.get("rtpmap", []):
+        head, _, codec = line.partition(" ")
+        if not codec.upper().startswith("H264/"):
+            continue
+        pt = head.split(":", 1)[1]
+        fmtp = ""
+        for f in video.get("fmtp", []):
+            fhead, _, params = f.partition(" ")
+            if fhead.split(":", 1)[1] == pt:
+                fmtp = params.strip()
+        keep = [kv for kv in fmtp.split(";")
+                if kv.split("=", 1)[0].strip().lower() in ("packetization-mode", "profile-level-id")]
+        return ((pt, ";".join(k.strip() for k in keep) or "packetization-mode=0"),)
+    return _H264_OFFER
+
+
+def build_sdp(offer: dict | None = None):
     """Costruisce l'offerta/risposta SDP.
 
     Su questo impianto (verificato sul campo 20/08/2026 verso la targa 55100)
@@ -1003,6 +1036,16 @@ def build_sdp():
         audio_crypto = ""
         video_crypto = ""
 
+    h264 = _h264_answer(offer)
+    h264_lines = "".join(
+        f"a=rtpmap:{pt} H264/90000\r\n"
+        f"a=fmtp:{pt} {fmtp}\r\n"
+        f"a=rtcp-fb:{pt} ccm fir\r\n"
+        f"a=rtcp-fb:{pt} nack\r\n"
+        f"a=rtcp-fb:{pt} nack pli\r\n"
+        for pt, fmtp in h264
+    )
+
     return (
         f"v=0\r\n"
         f"o=- {sid} {sid} IN IP4 {MY_IP}\r\n"
@@ -1019,13 +1062,9 @@ def build_sdp():
         f"a=ptime:20\r\n"
         f"a=sendrecv\r\n"
         f"{audio_crypto}"
-        f"m=video {C.RTP_VIDEO_PORT} {proto} 96\r\n"
+        f"m=video {C.RTP_VIDEO_PORT} {proto} {' '.join(pt for pt, _ in h264)}\r\n"
         f"b=AS:256\r\n"
-        f"a=rtpmap:96 H264/90000\r\n"
-        f"a=fmtp:96 profile-level-id=42801F;packetization-mode=1\r\n"
-        f"a=rtcp-fb:96 ccm fir\r\n"
-        f"a=rtcp-fb:96 nack\r\n"
-        f"a=rtcp-fb:96 nack pli\r\n"
+        f"{h264_lines}"
         f"a=sendrecv\r\n"
         f"{video_crypto}"
     )
@@ -1712,7 +1751,7 @@ async def handle_incoming_invite(raw):
             await send(f"SIP/2.0 488 Not Acceptable Here\r\n{via_block}To: {to_hdr}\r\nFrom: {from_hdr}\r\n"
                        f"Call-ID: {cid}\r\nCSeq: {cseq}\r\nContent-Length: 0\r\n\r\n")
             return
-        sdp = call_state.get("local_sdp") or build_sdp()
+        sdp = call_state.get("local_sdp") or build_sdp(remote)
         await send(f"SIP/2.0 200 OK\r\n{via_block}To: {to_hdr}\r\nFrom: {from_hdr}\r\n"
                    f"Call-ID: {cid}\r\nCSeq: {cseq}\r\nContact: {_simple_contact()}\r\n"
                    f"Content-Type: application/sdp\r\n"
@@ -1778,7 +1817,7 @@ async def handle_incoming_invite(raw):
         # durante lo squillo (l'"anteprima" dell'app VIEW), senza rispondere.
         # Il 200 OK riusa questo SDP e le sue chiavi SRTP. Mai durante una
         # nostra chiamata: setup_media sostituirebbe il suo media.
-        sdp = build_sdp()
+        sdp = build_sdp(parse_sdp(body))
         resp = (f"SIP/2.0 183 Session Progress\r\n{head}"
                 f"Content-Type: application/sdp\r\n"
                 f"Content-Length: {_clen(sdp)}\r\n\r\n{sdp}")
@@ -1874,7 +1913,8 @@ async def do_answer_incoming():
             await _end_ring()
             await broadcast("ring_ended", "SDP rifiutato")
             return False, "SDP rifiutato"
-    sdp = p["sdp"] or build_sdp()  # con early media: stesso SDP/chiavi del 183
+    # con early media: stesso SDP/chiavi del 183
+    sdp = p["sdp"] or build_sdp(parse_sdp(p["body"]) if p.get("body") else None)
     resp = (
         f"SIP/2.0 200 OK\r\n"
         f"{p['via_block']}To: {p['to_hdr']};tag={p['my_tag']}\r\nFrom: {p['from_hdr']}\r\n"

@@ -51,7 +51,7 @@ def rete(monkeypatch):
     monkeypatch.setattr(sip, "send_keyframe_request", _nop)
     monkeypatch.setattr(mh, "setup_media", _setup_media)
     monkeypatch.setattr(mh, "stop_media", _nop)
-    monkeypatch.setattr(sip, "build_sdp", lambda: "v=0\r\nSDP-NOSTRO\r\n")
+    monkeypatch.setattr(sip, "build_sdp", lambda offer=None: "v=0\r\nSDP-NOSTRO\r\n")
     monkeypatch.setattr(sip, "registered", True)
     monkeypatch.setattr(sip, "in_call", False)
     monkeypatch.setattr(sip, "calling", False)
