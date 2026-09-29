@@ -338,5 +338,5 @@ def test_pulsante_auto_segue_la_targa_della_porta():
 
 def test_segreteria_e_dnd_restano_all_sga():
     src = (COMPONENT / "switch.py").read_text(encoding="utf-8")
-    assert src.count("target=R.SGA_TARGET") == 2
+    assert src.count("target=R.SGA_TARGET") == 3  # segreteria, DND e lo switch del messaggio di assenza
     assert "DOOR_TARGET" not in src

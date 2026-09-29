@@ -136,6 +136,12 @@ class _Hub:
     async def async_request_status(self):
         pass
 
+    def set_away_enabled(self, on):
+        pass
+
+    def on_voicemail_on(self):
+        pass
+
 
 class _HAError(Exception):
     pass

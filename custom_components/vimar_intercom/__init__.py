@@ -46,6 +46,7 @@ PLATFORMS = ["camera", "lock", "button", "event", "binary_sensor", "sensor", "sw
 SERVICE_SEND_COMMAND = "send_command"
 SERVICE_CALL = "call"
 SERVICE_ANSWER = "answer"
+SERVICE_DECLINE = "decline"
 SERVICE_HANGUP = "hangup"
 SERVICE_OPEN_DOOR = "open_door"
 SERVICE_FETCH_LOCAL = "fetch_local"
@@ -274,7 +275,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if not hass.data[DOMAIN]:
             await av_passive.stop()
             for svc in (SERVICE_SEND_COMMAND, SERVICE_CALL, SERVICE_ANSWER,
-                        SERVICE_HANGUP, SERVICE_OPEN_DOOR, SERVICE_FETCH_LOCAL,
+                        SERVICE_DECLINE, SERVICE_HANGUP, SERVICE_OPEN_DOOR, SERVICE_FETCH_LOCAL,
                         SERVICE_SIMULATE_RING, SERVICE_FIND_SGA):
                 hass.services.async_remove(DOMAIN, svc)
     return ok
@@ -341,6 +342,11 @@ def _register_services(hass: HomeAssistant) -> None:
     async def _svc_answer(call: ServiceCall):
         hub = _entry_data(hass)["hub"]
         ok, msg = await hub.async_answer()
+        return {"ok": ok, "result": msg}
+
+    async def _svc_decline(call: ServiceCall):
+        hub = _entry_data(hass)["hub"]
+        ok, msg = await hub.async_decline()
         return {"ok": ok, "result": msg}
 
     async def _svc_hangup(call: ServiceCall):
@@ -466,6 +472,9 @@ def _register_services(hass: HomeAssistant) -> None:
         schema=CALL_SCHEMA, supports_response=SupportsResponse.OPTIONAL)
     hass.services.async_register(
         DOMAIN, SERVICE_ANSWER, _svc_answer,
+        supports_response=SupportsResponse.OPTIONAL)
+    hass.services.async_register(
+        DOMAIN, SERVICE_DECLINE, _svc_decline,
         supports_response=SupportsResponse.OPTIONAL)
     hass.services.async_register(
         DOMAIN, SERVICE_HANGUP, _svc_hangup,
@@ -742,7 +751,8 @@ class VimarAudioWSView(HomeAssistantView):
         elif action == "decline":
             try:
                 # il ring_ended lo manda già do_decline_incoming
-                if not await hub.async_decline():
+                ok, _ = await hub.async_decline()
+                if not ok:
                     await ws.send_str(json.dumps({"type": "error", "msg": "No ringing call"}))
             except Exception as e:
                 await ws.send_str(json.dumps({"type": "error", "msg": str(e)}))

@@ -22,6 +22,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
 from .device import device_info
+from . import runtime as R
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -72,7 +73,8 @@ class VimarVmTimeoutSelect(SelectEntity):
 
     @property
     def available(self) -> bool:
-        return bool(self._hub.registered and self.options)
+        # Senza registrazione o senza indirizzo del PICG il comando non può partire.
+        return bool(self._hub.registered and R.PICG_TARGET and self.options)
 
     async def async_added_to_hass(self) -> None:
         self._hub.register_state_callback(self._on_state_change)

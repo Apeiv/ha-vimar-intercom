@@ -154,7 +154,8 @@ async def start(rig):
             ok, msg = True, "Chiamata terminata"
         else:
             ok, msg = await {"vimar_intercom.call": hub.async_call, "vimar_intercom.answer": hub.async_answer,
-                             "lock.unlock": hub.async_door}[name]()
+                             "lock.unlock": hub.async_door, "button.press": hub.async_decline,
+                             "vimar_intercom.decline": hub.async_decline}[name]()
         return web.json_response({"ok": ok, "result": msg})
 
     av, aws = views.VimarAVStreamView(hass), views.VimarAudioWSView(hass)

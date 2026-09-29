@@ -71,6 +71,7 @@ async def async_setup_entry(
             icon="mdi:bell-off", target=R.SGA_TARGET,
             cmd_on=DND_ON, cmd_off=DND_OFF, state_attr="dnd",
             hname="Panda", hvalue="blue"),
+        VimarAwaySwitch(hub, entry.entry_id),
     ])
 
 
@@ -144,6 +145,13 @@ class VimarModeSwitch(SwitchEntity, RestoreEntity):
             self.async_write_ha_state()
 
     @property
+    def available(self) -> bool:
+        """Disponibile appena registrati: HA non lascia comandare un'entità non
+        disponibile, e sugli impianti che non annunciano mai lo stato (issue #9) lo
+        switch resterebbe inutilizzabile. Stato ignoto = is_on None."""
+        return bool(self._hub.registered)
+
+    @property
     def is_on(self) -> bool | None:
         if self._pending is not None and time.monotonic() < self._pending[1]:
             return self._pending[0]
@@ -196,6 +204,8 @@ class VimarModeSwitch(SwitchEntity, RestoreEntity):
             self._cancel_expire()
             self._expire_handle = asyncio.get_running_loop().call_later(CONFIRM_S, self._expire)
             self._on_state_change()  # annuncio già arrivato durante l'invio: niente attesa
+        if ok and new_state and self._key == "segreteria":
+            self._hub.on_voicemail_on()
         _LOGGER.info("%s %s → ok=%s msg=%s", self._attr_name,
                      "ON" if new_state else "OFF", ok, msg)
         self.async_write_ha_state()
@@ -204,3 +214,50 @@ class VimarModeSwitch(SwitchEntity, RestoreEntity):
         # Il Tab di solito annuncia il cambio da solo; chi non lo fa può comunque
         # rispondere a GET_INIT_STATUS con dnd/voicemail.
         await self._hub.async_request_status()
+
+
+class VimarAwaySwitch(SwitchEntity, RestoreEntity):
+    """Messaggio di assenza di HA (opzioni away_message_*), escluso a vicenda con la
+    segreteria del Tab: acceso questo, VOICEMAIL;OFF al Tab; accesa quella, questo si spegne.
+
+    Disponibile solo se il messaggio è configurato. Di default acceso, ma senza mandare
+    VOICEMAIL;OFF all'avvio: il comando parte solo su azione dell'utente."""
+
+    _attr_has_entity_name = False
+    _attr_name = "Messaggio di assenza"
+    _attr_icon = "mdi:message-voice"
+    _attr_should_poll = False
+
+    def __init__(self, hub, entry_id: str) -> None:
+        self._hub = hub
+        self._attr_unique_id = f"{entry_id}_away_message"
+        self._attr_device_info = device_info(entry_id)
+
+    @property
+    def available(self) -> bool:
+        return R.away_message_configured()
+
+    @property
+    def is_on(self) -> bool:
+        return self._hub.away_enabled
+
+    async def async_added_to_hass(self) -> None:
+        last = await self.async_get_last_state()
+        if last is not None and last.state in ("on", "off"):
+            # Segreteria del Tab già accesa: il messaggio resta spento.
+            self._hub.set_away_enabled(last.state == "on" and not self._hub.stats.get("voicemail"))
+        self._hub.register_state_callback(self.async_write_ha_state)
+
+    async def async_will_remove_from_hass(self) -> None:
+        self._hub.unregister_state_callback(self.async_write_ha_state)
+
+    async def async_turn_on(self, **kwargs) -> None:
+        ok, msg = await self._hub.async_send_command(
+            body=SEGRETERIA_OFF, target=R.SGA_TARGET,
+            header_name=SEGRETERIA_HEADER_NAME, header_value=SEGRETERIA_HEADER_VALUE)
+        if not ok:
+            raise HomeAssistantError(f"{self._attr_name}: segreteria del Tab non spenta ({msg})")
+        self._hub.set_away_enabled(True)
+
+    async def async_turn_off(self, **kwargs) -> None:
+        self._hub.set_away_enabled(False)

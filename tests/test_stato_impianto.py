@@ -346,3 +346,111 @@ def test_annuncio_arrivato_durante_l_invio_conta_come_conferma():
         return s.is_on, s.assumed_state
 
     assert asyncio.run(prova()) == (False, False)
+
+
+# --- Non disturbare: disponibilita' ----------------------------------------------------------
+
+def test_dnd_disponibile_da_registrato_anche_senza_stato_del_tab():
+    hub = _Hub()
+    sw, s = _dnd(hub)
+    assert s.available is True and s.is_on is None         # stato ignoto, ma comandabile
+    hub.registered = False
+    assert s.available is False                            # non registrato
+
+
+# --- Segreteria: switch e ritardo -------------------------------------------------------------
+
+def test_segreteria_e_ritardo_disponibili_solo_con_risposta_del_tab(monkeypatch):
+    hub = _Hub()
+    sw = _carica("switch")
+    s = sw.VimarModeSwitch(hub, "e1", key="segreteria", name="Segreteria", icon="x", target="55001",
+                           cmd_on="VOICEMAIL;ON", cmd_off="VOICEMAIL;OFF", state_attr="voicemail",
+                           hname="Panda", hvalue="blue")
+    sel = _carica("select")
+    e = sel.VimarVmTimeoutSelect(hub, "e1")
+    assert s.available is True and e.available is False   # switch comandabile, select no
+    hub.stats.update(voicemail=False, vm_timeout=5, vm_timeout_values=[5, 10])
+    assert s.available is True and e.available is True
+    monkeypatch.setattr(sel.R, "PICG_TARGET", "")
+    assert e.available is False                            # nessun indirizzo: niente comandi
+
+
+# --- Messaggio di assenza di HA: escluso a vicenda con la segreteria del Tab -----------------
+
+def _away(hub, monkeypatch):
+    sw = _carica("switch")
+    monkeypatch.setattr(sw.R, "AWAY_MESSAGE_DELAY", 10)
+    monkeypatch.setattr(sw.R, "AWAY_MESSAGE_TEXT", "ciao")
+    monkeypatch.setattr(sw.R, "AWAY_MESSAGE_FILE", "")
+    hub.away_enabled = True
+    hub.set_away_enabled = lambda on: setattr(hub, "away_enabled", on)
+    hub.on_voicemail_on = lambda: hub.set_away_enabled(False)
+    return sw, sw.VimarAwaySwitch(hub, "e1")
+
+
+def test_away_switch_disponibile_solo_se_configurato(monkeypatch):
+    hub = _Hub()
+    sw, a = _away(hub, monkeypatch)
+    assert a.available is True
+    monkeypatch.setattr(sw.R, "AWAY_MESSAGE_DELAY", 0)
+    assert a.available is False
+
+
+def test_accendere_away_spegne_la_segreteria_del_tab(monkeypatch):
+    hub = _Hub()
+    sw, a = _away(hub, monkeypatch)
+    hub.away_enabled = False
+    asyncio.run(a.async_turn_on())
+    assert hub.inviati == ["VOICEMAIL;OFF"] and hub.away_enabled is True
+    hub2 = _Hub(ok=False)
+    sw, a = _away(hub2, monkeypatch)
+    hub2.away_enabled = False
+    with pytest.raises(_HAError):
+        asyncio.run(a.async_turn_on())
+    assert hub2.away_enabled is False                      # invio fallito: resta com'era
+
+
+def test_accendere_la_segreteria_del_tab_spegne_away(monkeypatch):
+    hub = _Hub()
+    sw, a = _away(hub, monkeypatch)
+    s = sw.VimarModeSwitch(hub, "e1", key="segreteria", name="Segreteria", icon="x", target="55001",
+                           cmd_on="VOICEMAIL;ON", cmd_off="VOICEMAIL;OFF", state_attr="voicemail",
+                           hname="Panda", hvalue="blue")
+    s.async_write_ha_state = lambda: None
+    asyncio.run(s.async_turn_on())
+    assert hub.away_enabled is False
+    asyncio.run(a.async_turn_off())                        # spegnere away non manda nulla
+    assert hub.inviati == ["VOICEMAIL;ON"]
+
+
+def test_hub_annuncio_voicemail_on_spegne_away():
+    from custom_components.vimar_intercom import hub as hub_mod
+    h = object.__new__(hub_mod.VimarIntercomHub)
+    h.stats = {}
+    h._away_task = None
+    h._state_callbacks = []
+    h._away_enabled = True
+    h._handle_incoming_message("VOICEMAIL;OFF")
+    assert h.away_enabled is True
+    h._handle_incoming_message("VOICEMAIL;ON")
+    assert h.away_enabled is False and h.stats["voicemail"] is True
+
+
+def test_hub_init_status_voicemail_on_spegne_away(hub):
+    hub.set_away_enabled(True)
+    hub._handle_incoming_message(CORTA)                    # voicemail=on
+    assert hub.away_enabled is False
+
+
+def test_restore_away_non_riaccende_con_segreteria_accesa(monkeypatch):
+    hub = _Hub()
+    sw, a = _away(hub, monkeypatch)
+    hub.stats["voicemail"] = True
+
+    async def acceso():
+        return types.SimpleNamespace(state="on")
+
+    a.async_get_last_state = acceso
+    a.async_write_ha_state = lambda: None
+    asyncio.run(a.async_added_to_hass())
+    assert hub.away_enabled is False

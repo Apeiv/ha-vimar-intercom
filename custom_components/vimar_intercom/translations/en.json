@@ -270,6 +270,10 @@
       "name": "Answer",
       "description": "Answer an incoming call."
     },
+    "decline": {
+      "name": "Decline",
+      "description": "Decline the incoming call (603): the whole house stops ringing."
+    },
     "simulate_ring": {
       "name": "Test ring",
       "description": "Simulate a doorbell ring (doorbell event and automations) without the entrance panel."

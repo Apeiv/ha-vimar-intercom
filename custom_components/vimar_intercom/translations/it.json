@@ -270,6 +270,10 @@
       "name": "Rispondi",
       "description": "Risponde alla chiamata in arrivo."
     },
+    "decline": {
+      "name": "Rifiuta",
+      "description": "Rifiuta la chiamata in arrivo (603): smette di suonare tutta la casa."
+    },
     "simulate_ring": {
       "name": "Squillo di prova",
       "description": "Simula uno squillo del citofono (evento doorbell e automazioni) senza la targa."

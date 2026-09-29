@@ -8,6 +8,12 @@ Italian and are kept as they were written.
 
 ### Added
 
+- Do Not Disturb and Voicemail switches are unavailable while not registered, without an apartment
+  intercom address, or until the Tab has reported their state (they used to show a guess). Protocol
+  ported from noiseheroes-lab/ha-vimar-intercom by Luca Lo Tito (MIT).
+- **Decline** button (only while it rings) and `vimar_intercom.decline` service: answers `603 Decline`, so the
+  whole house stops ringing, as in the official app. Protocol ported from
+  noiseheroes-lab/ha-vimar-intercom by Luca Lo Tito (MIT).
 - Ring webhooks: optional options `ring_webhook_url` and `ring_end_webhook_url`, a GET
   (fire-and-forget, 5 s timeout) fired when a ring starts and when it ends (answered, cancelled
   or missed) — e.g. the `turnOn`/`turnOff` URLs of a Scrypted Dummy Switch linked via a Custom

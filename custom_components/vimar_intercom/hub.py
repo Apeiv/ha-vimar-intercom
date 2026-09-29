@@ -144,6 +144,9 @@ class VimarIntercomHub:
         }
         self._call_started_mono: float | None = None
         self._ring_answered = False
+        # Interruttore «Messaggio di assenza» (switch.py): spento, _away_message non parte.
+        # Acceso di default; niente VOICEMAIL;OFF da soli, solo su azione dell'utente.
+        self._away_enabled = True
         self._ring_declined = False  # rifiutato da noi (603): non è uno squillo perso
         self._was_ringing = False  # per il webhook di fine squillo, vedi _handle_broadcast
         # Callback per emettere eventi bus HA (registrati da __init__.py).
@@ -600,13 +603,30 @@ class VimarIntercomHub:
         self._touch()
         return ok, msg
 
-    async def async_decline(self):
+    @property
+    def away_enabled(self) -> bool:
+        return self._away_enabled
+
+    def on_voicemail_on(self) -> None:
+        """La segreteria del Tab è (o sta per essere) accesa, comunque lo si sia saputo
+        (annuncio, GET_INIT_STATUS, comando dello switch): o quella del Tab o quella di HA."""
+        self.set_away_enabled(False)
+
+    def set_away_enabled(self, on: bool) -> None:
+        """Accende/spegne il messaggio di assenza di HA; spento annulla anche quello in attesa."""
+        self._away_enabled = on
+        if not on:
+            self._cancel_away()
+        self._touch()
+
+    async def async_decline(self) -> tuple[bool, str]:
+        """Rifiuta lo squillo con 603, come l'app: il PBX smette di far suonare tutta la casa."""
         # Prima della chiamata: il ring_ended parte da dentro do_decline_incoming.
         self._ring_declined = True
         declined = await sip.do_decline_incoming()
         self._ring_declined = bool(declined)
         self._touch()
-        return declined
+        return (True, "Squillo rifiutato") if declined else (False, "Nessuna chiamata in arrivo")
 
 
     async def async_hangup(self):
@@ -805,7 +825,7 @@ class VimarIntercomHub:
                 if self._photo_task:
                     self._photo_task.cancel()
                 self._photo_task = asyncio.create_task(self._save_ring_photo(name))
-            if (R.AWAY_MESSAGE_FILE or R.AWAY_MESSAGE_TEXT) and R.AWAY_MESSAGE_DELAY:
+            if self._away_enabled and R.away_message_configured():
                 self._cancel_away()
                 self._away_task = asyncio.create_task(
                     self._away_message(sip.pending_incoming["cid"]))
@@ -969,6 +989,8 @@ class VimarIntercomHub:
         if upper.startswith("VOICEMAIL;"):
             st["voicemail"] = ("ON" in upper and "OFF" not in upper)
             st["mode_seq"] = st.get("mode_seq", 0) + 1
+            if st["voicemail"]:
+                self.on_voicemail_on()
             return
         if upper.startswith("DND;"):
             st["dnd"] = ("ON" in upper and "OFF" not in upper)
@@ -1071,6 +1093,8 @@ class VimarIntercomHub:
 
         if "voicemail" in pairs:
             st["voicemail"] = _as_bool(pairs["voicemail"])
+            if st["voicemail"]:
+                self.on_voicemail_on()
         if "dnd" in pairs:
             st["dnd"] = _as_bool(pairs["dnd"])
         if "voicemail" in pairs or "dnd" in pairs:

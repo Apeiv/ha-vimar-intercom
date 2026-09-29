@@ -183,7 +183,7 @@ def test_declined_ring_is_not_missed(hub, monkeypatch):
     monkeypatch.setattr(sip, "do_decline_incoming", _decline)
     monkeypatch.setattr(sip, "pending_incoming", {}, raising=False)
     hub._update_stats("ring", None)
-    assert asyncio.run(hub.async_decline()) is True
+    assert asyncio.run(hub.async_decline())[0] is True
     assert hub.stats["missed_count"] == 0
     hub._update_stats("ring", None)
     hub._update_stats("ring_ended", "Squillo scaduto")

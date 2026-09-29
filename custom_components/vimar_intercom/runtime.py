@@ -114,6 +114,12 @@ AWAY_MESSAGE_FILE: str = ""
 AWAY_MESSAGE_TEXT: str = ""
 AWAY_MESSAGE_TTS: str = ""
 AWAY_MESSAGE_DELAY: int = 0
+
+
+def away_message_configured() -> bool:
+    return bool(AWAY_MESSAGE_DELAY and (AWAY_MESSAGE_FILE or AWAY_MESSAGE_TEXT))
+
+
 # Foto di chi suona: cartella (vuoto = non salvare) e secondi dopo lo squillo.
 SNAPSHOT_DIR: str = ""
 SNAPSHOT_DELAY: int = _const.DEFAULT_SNAPSHOT_DELAY
