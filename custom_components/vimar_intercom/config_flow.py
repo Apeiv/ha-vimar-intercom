@@ -774,14 +774,16 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     default=[u for u in form.get(KEY_ALLOWED_USERS) or [] if any(u == x["value"] for x in users)],
                 ): selector.SelectSelector(selector.SelectSelectorConfig(
                     options=users, multiple=True, mode="list")),  # caselle, non un menu
+                # password: l'URL può portare un token segreto (es. Scrypted), non va
+                # mostrato in chiaro nel form.
                 vol.Optional(
                     KEY_RING_WEBHOOK_URL,
                     default=form.get(KEY_RING_WEBHOOK_URL, ""),
-                ): str,
+                ): selector.TextSelector(selector.TextSelectorConfig(type="password")),
                 vol.Optional(
                     KEY_RING_END_WEBHOOK_URL,
                     default=form.get(KEY_RING_END_WEBHOOK_URL, ""),
-                ): str,
+                ): selector.TextSelector(selector.TextSelectorConfig(type="password")),
             }),
             errors=errors,
             description_placeholders={
