@@ -271,6 +271,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         for ws in list(data.get("audio_ws_clients", set())):
             await ws.close()
         await data["hub"].async_stop()
+        await av_passive.stop()
         if not hass.data[DOMAIN]:
             for svc in (SERVICE_SEND_COMMAND, SERVICE_CALL, SERVICE_ANSWER,
                         SERVICE_HANGUP, SERVICE_OPEN_DOOR, SERVICE_FETCH_LOCAL,

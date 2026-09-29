@@ -40,6 +40,7 @@ _live: bytes | None = None          # ultimo fotogramma della targa, None a ripo
 _clients: set[asyncio.Queue] = set()
 _lock = asyncio.Lock()
 _task: asyncio.Task | None = None
+_enc = None  # l'encoder di _task: se il task è cancellato prima di partire, _run non lo chiude
 
 
 async def standby_frame() -> bytes:
@@ -60,9 +61,11 @@ async def standby_frame() -> bytes:
 async def subscribe(is_live: Callable[[], bool], on_live: Callable[[], None]) -> asyncio.Queue | None:
     """Aggancia un client; None se ffmpeg non parte. `is_live`: c'è video della targa
     (hub.video_active); `on_live`: chiesto un keyframe quando il decoder si aggancia."""
-    global _task
+    global _task, _enc
     async with _lock:
-        if _task is None:
+        # done(): l'encoder è morto da solo e _run ha chiuso i client; senza questo un
+        # client nuovo non avrebbe più un encoder e resterebbe a 0 byte.
+        if _task is None or _task.done():
             try:
                 standby = await standby_frame()
                 # L'audio entra da una porta TCP locale (un secondo pipe non c'è su ogni
@@ -87,6 +90,7 @@ async def subscribe(is_live: Callable[[], bool], on_live: Callable[[], None]) ->
             except (OSError, RuntimeError) as e:
                 _LOGGER.error("Stream passivo continuo: ffmpeg non parte (%s)", e)
                 return None
+            _enc = enc
             _task = asyncio.create_task(_run(enc, standby, is_live, on_live, port))
             _LOGGER.info("Stream passivo continuo avviato (%dx%d @%d fps)", W, H, FPS)
         q: asyncio.Queue = asyncio.Queue(maxsize=256)
@@ -94,17 +98,37 @@ async def subscribe(is_live: Callable[[], bool], on_live: Callable[[], None]) ->
         return q
 
 
+async def _stop_task() -> None:
+    global _task, _enc
+    if not _task:
+        return
+    # Prima di aspettare: HA cancella l'handler di /av quando il client se ne va,
+    # anche mentre siamo qui. _run si chiude da sé una volta cancellato.
+    task, _task = _task, None
+    enc, _enc = _enc, None
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    # Cancellato prima che _run partisse, il suo finally non è mai girato: l'encoder
+    # (in ascolto su TCP) resterebbe orfano.
+    if enc and enc.returncode is None:
+        enc.kill()
+        await enc.wait()
+    _LOGGER.info("Stream passivo continuo fermato")
+
+
 async def unsubscribe(q: asyncio.Queue) -> None:
-    global _task
     async with _lock:
         _clients.discard(q)
-        if not _clients and _task:
-            # Prima di aspettare: HA cancella l'handler di /av quando il client se ne va,
-            # anche mentre siamo qui. _run si chiude da sé una volta cancellato.
-            task, _task = _task, None
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
-            _LOGGER.info("Stream passivo continuo fermato")
+        if not _clients:
+            await _stop_task()
+
+
+async def stop() -> None:
+    """Scarico dell'integrazione: ferma l'encoder e chiude i client rimasti."""
+    async with _lock:
+        for q in list(_clients):
+            av_stream.end_client(q, _clients)
+        await _stop_task()
 
 
 def _free_port() -> int:
