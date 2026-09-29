@@ -51,13 +51,19 @@ def test_blocchi_del_browser_diventano_pacchetti_da_20ms(audio):
     assert all((b - a) & 0xFFFFFFFF == 160 for a, b in zip(ts, ts[1:]))
     assert all((b - a) & 0xFFFF == 1 for a, b in zip(seq, seq[1:]))
     assert all(p[1] == 0 for p in pkts)  # PT 0, PCMU
-    assert len(pkts) == 6  # 1023 campioni: 6 pacchetti pieni, il resto aspetta
+    # 1023 campioni: 6 pacchetti pieni di voce vera, poi silenzio di keepalive.
+    assert pkts[5][12:] != mh._SILENCE_ULAW
+    assert pkts[6][12:] == mh._SILENCE_ULAW
 
 
-def test_senza_voce_niente_rtp(audio):
-    """Niente silenzio di keepalive: la targa chiude comunque dopo ~10 s."""
+def test_senza_voce_rtp_di_silenzio(audio):
+    """Come l'app ufficiale: senza voce in coda si manda comunque silenzio PCMU
+    ogni 20 ms, altrimenti la targa chiude "Vedi esterno" a ~10 s (verificato
+    sul campo il 2026-09-29 con l'autoaccensione a 20 s)."""
     _run_tx(0.25)
-    assert audio.transport.out == []
+    pkts = audio.transport.out
+    assert pkts and all(len(p) == 12 + 160 for p in pkts)
+    assert all(p[12:] == mh._SILENCE_ULAW for p in pkts)
 
 
 def test_anteprima_dello_squillo_non_trasmette(audio):

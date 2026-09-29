@@ -854,6 +854,14 @@ def close_transports():
 # Tetto della voce in attesa: oltre, il browser manda più in fretta del tempo reale.
 _TX_MAX = 8000  # 1 s di μ-law
 
+# 20 ms di silenzio PCMU: keepalive quando non c'è voce in coda. La targa
+# chiude un "Vedi esterno" se non riceve RTP per ~10 s, anche se il video
+# continua ad arrivare — verificato sul campo il 2026-09-29: l'app VIEW
+# ufficiale (linphone) manda audio in continuo, muto o no, e la chiamata
+# dura i 20+ s configurati; senza RTP in uscita HA veniva chiuso dalla
+# targa a ~10 s indipendentemente dal timer di autoaccensione.
+_SILENCE_ULAW = ulaw_encode(bytes(320))
+
 
 def send_audio(pcm_data: bytes):
     """PCM16LE 8 kHz (microfono della card, messaggio di assenza) → coda del pacer.
@@ -892,9 +900,10 @@ def _note_tx_level(pcm_data: bytes) -> None:
 
 
 async def _tx_loop():
-    """Un pacchetto da 20 ms (160 B) ogni 20 ms, solo quando c'è voce in coda
-    (microfono o messaggio di assenza). Niente silenzio di keepalive: la targa
-    chiude comunque un "Vedi esterno" dopo ~10 s, anche con l'app ufficiale."""
+    """Un pacchetto da 20 ms (160 B) ogni 20 ms: voce in coda (microfono o
+    messaggio di assenza) se c'è, altrimenti silenzio PCMU (_SILENCE_ULAW)
+    come keepalive — come fa l'app ufficiale, che non lascia mai il canale
+    audio muto durante una chiamata."""
     loop = asyncio.get_running_loop()
     nxt = loop.time()
     try:
@@ -904,10 +913,13 @@ async def _tx_loop():
             if nxt < loop.time() - 0.2:
                 nxt = loop.time()  # event loop rimasto fermo: niente raffica di recupero
             ap = audio_proto
-            if not ap or not ap.remote_addr or not ap.tx_enabled or len(ap.tx_buf) < 160:
+            if not ap or not ap.remote_addr or not ap.tx_enabled:
                 continue
-            frame = bytes(ap.tx_buf[:160])
-            del ap.tx_buf[:160]
+            if len(ap.tx_buf) >= 160:
+                frame = bytes(ap.tx_buf[:160])
+                del ap.tx_buf[:160]
+            else:
+                frame = _SILENCE_ULAW
             ap.send_rtp(frame)
     except asyncio.CancelledError:
         pass
