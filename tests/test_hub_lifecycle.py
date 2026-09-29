@@ -577,3 +577,54 @@ def test_reset_state_wakes_waiters_closes_the_transport_and_notifies_nobody(monk
     assert closed == [True, True] and sip.writer is None and sip._udp_sock is None
     assert notified == [], "the hub being unloaded is not called back"
     assert sip.in_call is False and sip._state_change_callback is None
+
+
+def test_an_auto_call_that_connects_after_its_viewer_left_is_hung_up(hub, monkeypatch):
+    """The viewer leaves before do_call raises `calling`: stream_closed sees no
+    call and schedules nothing, so the auto-call itself must hang up."""
+    monkeypatch.setattr(hub_mod, "STREAM_HANGUP_DELAY", 0)
+    hung_up = []
+
+    async def do_call(target=None):
+        await asyncio.sleep(0.05)
+        monkeypatch.setattr(sip, "in_call", True)
+        return True, "200"
+
+    async def do_hangup():
+        hung_up.append(True)
+        monkeypatch.setattr(sip, "in_call", False)
+
+    monkeypatch.setattr(sip, "do_call", do_call)
+    monkeypatch.setattr(sip, "do_hangup", do_hangup)
+
+    async def main():
+        assert await hub.stream_opened() is True
+        await hub.stream_closed()          # gone before the call is placed
+        assert hub._hangup_task is None
+        await asyncio.sleep(0.2)
+
+    asyncio.run(main())
+    assert hung_up == [True]
+    assert hub._auto_called is False
+
+
+def test_an_auto_call_with_a_viewer_still_there_is_not_hung_up(hub, monkeypatch):
+    monkeypatch.setattr(hub_mod, "STREAM_HANGUP_DELAY", 0)
+    hung_up = []
+
+    async def do_call(target=None):
+        monkeypatch.setattr(sip, "in_call", True)
+        return True, "200"
+
+    async def do_hangup():
+        hung_up.append(True)
+
+    monkeypatch.setattr(sip, "do_call", do_call)
+    monkeypatch.setattr(sip, "do_hangup", do_hangup)
+
+    async def main():
+        await hub.stream_opened()
+        await asyncio.sleep(0.05)
+
+    asyncio.run(main())
+    assert hung_up == [] and hub._hangup_task is None

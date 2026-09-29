@@ -560,6 +560,15 @@ class VimarIntercomHub:
                     self._learn_camera_target(alt)
         except Exception as e:  # noqa: BLE001
             ok, msg = False, str(e)
+        current = gen is None or gen == self._auto_gen
+        if (ok and current and self._stream_viewers == 0 and self._auto_called
+                and self._busy_now and not self._hanging_up
+                and (self._hangup_task is None or self._hangup_task.done())):
+            # The viewer left between stream_opened and do_call raising
+            # `calling`: stream_closed saw no call and scheduled nothing, so
+            # the call would stay up with nobody watching until the 5 minute cap.
+            _LOGGER.info("Auto-call connected with no viewers left: hanging up")
+            self._hangup_task = asyncio.create_task(self._delayed_hangup())
         if not ok:
             # Anche un fallito che non è mai arrivato a `calling` (es. squillo in
             # corso): i retry di go2rtc non devono richiamare subito.
