@@ -193,3 +193,34 @@ def test_options_sip_test_uses_the_local_domain(cf, monkeypatch, extra, expected
         "local_proxy": "192.0.2.9", "use_local_udp": True}))
     assert result["type"] == "create_entry"
     assert seen["sip_domain"] == expected
+
+
+
+@pytest.mark.parametrize("test_ok, registered", [(True, 1), (False, 0)])
+def test_the_options_sip_test_registers_the_live_binding_again(cf, monkeypatch, test_ok, registered):
+    """The test's unregister (Expires: 0, same +sip.instance) can remove the live
+    binding: the running hub registers again at once, even if the form is not
+    saved (review of #31)."""
+    async def _test(**kw):
+        return test_ok, "ok" if test_ok else "503"
+
+    monkeypatch.setattr(cf, "_test_sip_registration", _test)
+    calls, tasks = [], []
+
+    class Hub:
+        async def async_register_now(self):
+            calls.append(True)
+            return True
+
+    flow = _flow(cf, _base_entry_data())
+    flow._entry.entry_id = "e1"
+    flow.hass.data = {cf.DOMAIN: {"e1": {"hub": Hub()}}}
+    flow.hass.async_create_background_task = lambda coro, name: tasks.append(coro)
+
+    async def main():
+        await flow.async_step_settings({"local_proxy": "192.0.2.9", "use_local_udp": True})
+        for coro in tasks:
+            await coro
+
+    asyncio.run(main())
+    assert len(calls) == registered

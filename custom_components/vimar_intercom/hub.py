@@ -1825,6 +1825,18 @@ class VimarIntercomHub:
             last_tick = time.monotonic()
             await self._keepalive_tick()
 
+    async def async_register_now(self) -> bool:
+        """Register again at once, instead of at the next keepalive tick.
+
+        The options flow's SIP test registers with our identity and then
+        removes its binding (Expires: 0): where the registrar matches bindings
+        by +sip.instance, that removes the live one too, and incoming calls
+        would be missed until the next renewal.
+        """
+        ok = await sip.do_register()
+        _LOGGER.info("SIP re-registration after the options test: %s", "OK" if ok else "FAILED")
+        return ok
+
     async def _keepalive_tick(self):
         """Un giro di keepalive. Separato dal loop per poterlo testare."""
         try:

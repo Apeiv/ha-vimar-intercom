@@ -935,6 +935,16 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 )
                 if not ok:
                     errors["local_proxy"] = "sip_registration_failed"
+                else:
+                    # The test's unregister may have taken the live binding
+                    # with it: register again now, whether or not the form is
+                    # saved (saving reloads and registers anyway).
+                    entry_data = getattr(self.hass, "data", {}).get(DOMAIN, {}).get(
+                        getattr(self._entry, "entry_id", None), {})
+                    hub = entry_data.get("hub") if isinstance(entry_data, dict) else None
+                    if hub is not None:
+                        self.hass.async_create_background_task(
+                            hub.async_register_now(), "vimar_intercom re-register")
 
             if not errors:
                 return self.async_create_entry(
