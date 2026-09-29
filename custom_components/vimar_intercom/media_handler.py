@@ -15,6 +15,7 @@ import time
 
 from .const import RTP_AUDIO_PORT, RTP_VIDEO_PORT
 from . import av_stream
+from . import runtime as R
 from . import frame_grabber
 from . import rtcp
 from .srtp import SRTPContext
@@ -117,12 +118,20 @@ def _from_the_call(proto, addr) -> bool:
     remote = proto.remote_addr
     if bool(remote) and addr[0] == remote[0]:
         return True
+    # In local UDP mode the intercom's own address is trusted too: on a 2-wire
+    # plant the SIP gateway can act as a B2BUA and send the media from its
+    # own address rather than the one in the SDP.
+    if bool(remote) and R.USE_LOCAL_UDP and R.LOCAL_PROXY and addr[0] == R.LOCAL_PROXY:
+        return True
     # Once per call (setup_media assigns a new remote_addr tuple): enough to
-    # explain a silent stream without flooding the log.
+    # explain a silent stream without flooding the log. A WARNING, since the
+    # symptom is a call with no audio or video.
     if remote and getattr(proto, "_foreign_logged", None) is not remote:
         proto._foreign_logged = remote
-        _LOGGER.info("Plain RTP from %s dropped: the call's media is at %s",
-                     addr[0], remote[0])
+        _LOGGER.warning(
+            "Plain RTP from %s dropped: the call's media is at %s. If this "
+            "address is your intercom or its gateway, please report it.",
+            addr[0], remote[0])
     return False
 
 

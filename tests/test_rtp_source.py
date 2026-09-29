@@ -44,14 +44,42 @@ def test_no_call_no_video():
 
 
 def test_a_dropped_source_is_logged_once_per_call(caplog):
-    """At INFO: a silent stream from a relay on another address must be
+    """At WARNING: a silent stream from a relay on another address must be
     explainable from a default log."""
     proto = media.RTPAudioProtocol()
     proto.remote_addr = ("198.51.100.7", 40000)
-    with caplog.at_level("INFO", logger=media.__name__):
+    def drops():
+        # Distinct records: log_buffer, once installed by another test, sends a
+        # WARNING again through the root logger as a copy of the same record.
+        return {(r.created, r.getMessage()) for r in caplog.records
+                if r.name == media.__name__ and "192.0.2.66" in r.getMessage()}
+
+    with caplog.at_level("WARNING", logger=media.__name__):
         for seq in range(1, 4):
             proto.datagram_received(pcmu(seq), ("192.0.2.66", 40000))
-        assert caplog.text.count("192.0.2.66") == 1
+        assert len(drops()) == 1
         proto.remote_addr = tuple(["198.51.100.7", 40000])  # the next call (new tuple)
         proto.datagram_received(pcmu(5), ("192.0.2.66", 40000))
-    assert caplog.text.count("192.0.2.66") == 2
+    assert len(drops()) == 2
+
+
+
+@pytest.mark.parametrize("local_udp, taken", [(True, 1), (False, 0)])
+def test_in_local_udp_the_intercom_address_is_trusted(monkeypatch, local_udp, taken):
+    """A 2-wire gateway acting as a B2BUA can send the media from its own
+    address rather than the one in the SDP (review of #31)."""
+    monkeypatch.setattr(media.R, "USE_LOCAL_UDP", local_udp)
+    monkeypatch.setattr(media.R, "LOCAL_PROXY", "192.0.2.10")
+    proto = media.RTPAudioProtocol()
+    proto.remote_addr = ("192.0.2.20", 40000)
+    proto.datagram_received(pcmu(1), ("192.0.2.10", 40000))   # the intercom itself
+    proto.datagram_received(pcmu(2), ("192.0.2.66", 40000))   # someone else
+    assert proto.pkt_count == taken
+
+
+def test_the_intercom_address_is_not_trusted_without_a_call(monkeypatch):
+    monkeypatch.setattr(media.R, "USE_LOCAL_UDP", True)
+    monkeypatch.setattr(media.R, "LOCAL_PROXY", "192.0.2.10")
+    proto = media.RTPAudioProtocol()
+    proto.datagram_received(pcmu(1), ("192.0.2.10", 40000))
+    assert proto.pkt_count == 0
