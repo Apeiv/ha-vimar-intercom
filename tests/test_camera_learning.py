@@ -28,7 +28,7 @@ def hub(monkeypatch):
 def fake_panels(monkeypatch, existing, failure="404 Not Found"):
     calls = []
 
-    async def do_call(target=None):
+    async def do_call(target=None, **_kw):
         target = target or R.INTERCOM
         calls.append(target)
         return (True, "Connesso!") if target in existing else (False, failure)

@@ -128,10 +128,10 @@ def test_testo_del_messaggio_oltre_255_rifiutato(cf):
     assert result["errors"]["away_message_text"] == "text_too_long"
 
 
-def test_view_keepalive_predefinito_segue_il_cambio_di_modalita(cf):
+def test_view_keepalive_predefinito_segue_il_cambio_di_modalita(cf, monkeypatch):
     flow = _flow(cf, {**_base_entry_data(), "use_local_udp": False})
     async def _ok(**kw): return True, ""
-    cf._test_sip_registration = _ok
+    monkeypatch.setattr(cf, "_test_sip_registration", _ok)
     # cloud -> locale con il 120 della vecchia modalità: diventa il 0 della nuova
     r = asyncio.run(flow.async_step_settings({
         "local_proxy": "192.0.2.1", "use_local_udp": True, "view_keepalive": 120}))

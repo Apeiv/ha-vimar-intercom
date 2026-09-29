@@ -81,7 +81,7 @@ def test_a_view_opening_during_the_hang_up_does_not_cut_the_bye(hub, monkeypatch
         monkeypatch.setattr(sip, "in_call", False)
         events.append("bye done")
 
-    async def do_call(target=None):
+    async def do_call(target=None, **_kw):
         events.append("new call")
         return True, "200"
 
@@ -105,7 +105,7 @@ def _auto_hangup_scenario(hub, monkeypatch, hangup):
     hub._auto_called = True
     calls = []
 
-    async def do_call(target=None):
+    async def do_call(target=None, **_kw):
         calls.append(target)
         return True, "200"
 
@@ -185,7 +185,7 @@ def test_a_failing_hang_up_clears_the_flag_and_is_logged(hub, monkeypatch, caplo
 def test_an_open_audio_websocket_does_not_stop_a_view_from_calling(hub, monkeypatch):
     calls = []
 
-    async def do_call(target=None):
+    async def do_call(target=None, **_kw):
         calls.append(target)
         return True, "200"
 
@@ -466,7 +466,7 @@ def test_a_view_opening_right_after_async_hangup_waits_for_the_local_end(hub, mo
     events = []
     monkeypatch.setattr(sip, "do_hangup", _hangup_without_answer(hub, monkeypatch, events, before_end=0.2))
 
-    async def do_call(target=None):
+    async def do_call(target=None, **_kw):
         events.append("new call")
         return True, "200"
 
@@ -585,7 +585,7 @@ def test_an_auto_call_that_connects_after_its_viewer_left_is_hung_up(hub, monkey
     monkeypatch.setattr(hub_mod, "STREAM_HANGUP_DELAY", 0)
     hung_up = []
 
-    async def do_call(target=None):
+    async def do_call(target=None, **_kw):
         await asyncio.sleep(0.05)
         monkeypatch.setattr(sip, "in_call", True)
         return True, "200"
@@ -612,7 +612,7 @@ def test_an_auto_call_with_a_viewer_still_there_is_not_hung_up(hub, monkeypatch)
     monkeypatch.setattr(hub_mod, "STREAM_HANGUP_DELAY", 0)
     hung_up = []
 
-    async def do_call(target=None):
+    async def do_call(target=None, **_kw):
         monkeypatch.setattr(sip, "in_call", True)
         return True, "200"
 

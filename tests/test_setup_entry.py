@@ -22,7 +22,7 @@ def _hass(init, started_with):
         reloads.append(entry_id)
 
     hass = types.SimpleNamespace(
-        data={init.DOMAIN: {"e1": {"options": started_with}}},
+        data={init.DOMAIN: {"e1": {"applied": started_with}}},
         config_entries=types.SimpleNamespace(async_reload=async_reload))
     return hass, reloads
 
