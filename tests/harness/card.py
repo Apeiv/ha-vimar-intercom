@@ -25,7 +25,7 @@ CARD_JS = Path(__file__).resolve().parents[2] / "custom_components" / "vimar_int
 PAGE = """<!doctype html><html><head><meta name="viewport" content="width=390"></head>
 <body><home-assistant></home-assistant><script>
 window.T = { av: [], avBytes: 0, live: 0, created: [], rx: 0, ws: 0, sent: 0, frames: [],
-             wsClosed: 0, calls: [], errors: [], gumDelay: 0, wcBroken: 0,
+             wsClosed: 0, calls: [], errors: [], gumDelay: 0, wcBroken: 0, gum: 0,
              wsOpenAt: 0, firstNalAt: 0, firstFrameAt: 0 };  // epoca in ms, del player corrente: latenza
 window.onerror = (m) => T.errors.push(String(m));
 window.addEventListener("unhandledrejection", (e) => T.errors.push("REJ " + e.reason));
@@ -56,6 +56,7 @@ if (location.search.includes("flakywc") && window.VideoDecoder) {  // si rompe a
 }
 if (window.AudioContext && navigator.mediaDevices) {  // microfono finto, con il tempo del permesso
   navigator.mediaDevices.getUserMedia = async () => {
+    T.gum++;  // conta le richieste vere di microfono (l'ascolto allo squillo non ne fa)
     await new Promise((r) => setTimeout(r, T.gumDelay));
     const ac = new AudioContext(), osc = ac.createOscillator(), dst = ac.createMediaStreamDestination();
     osc.connect(dst); osc.start();
@@ -135,8 +136,9 @@ document.querySelector("home-assistant").hass = mkHass("unknown");
 await import("/card.js");
 await customElements.whenDefined("vimar-intercom-card");
 const c = document.createElement("vimar-intercom-card");
-const layout = new URLSearchParams(location.search).get("layout");
-c.setConfig({ type: "custom:vimar-intercom-card", ...(layout && { layout }) });
+const qs = new URLSearchParams(location.search), layout = qs.get("layout");
+c.setConfig({ type: "custom:vimar-intercom-card", ...(layout && { layout }),
+              ...(qs.has("listen_on_ring") && { listen_on_ring: true }) });
 document.body.appendChild(c);
 window.card = c;
 window.tap = (id) => c.shadowRoot.getElementById(id).click();
@@ -147,7 +149,8 @@ window.info = () => ({ pill: c.shadowRoot.querySelector(".pill").textContent,
     c.shadowRoot.getElementById("video").firstElementChild),
   player: c._player && { frames: c._player.frames, resets: c._player.resets, wait: c._player._wait || 0,
                          ws: T.wsOpenAt, nal: T.firstNalAt, frame: T.firstFrameAt },
-  audio: !c._audio && !c._ws ? "off" : "on" });
+  audio: !c._audio && !c._ws ? "off" : "on",
+  listen: !!c._listenWs });
 </script></body></html>"""
 
 
@@ -160,11 +163,13 @@ def engine(request):
 class Card:
     """La pagina della card aperta in `engine` sul server di `rig` (Rig(http=True))."""
 
-    def __init__(self, rig, engine: str, insecure=False, webcodecs=True, badwc=False, flakywc=False, layout=None):
+    def __init__(self, rig, engine: str, insecure=False, webcodecs=True, badwc=False, flakywc=False, layout=None,
+                 listen_on_ring=False):
         self.rig, self.engine = rig, engine
         self.query = "?" + "&".join(f for f, on in (("insecure", insecure), ("nowc", not webcodecs),
                                                     ("badwc", badwc), ("flakywc", flakywc),
-                                                    (f"layout={layout}", layout)) if on)
+                                                    (f"layout={layout}", layout),
+                                                    ("listen_on_ring", listen_on_ring)) if on)
 
     async def __aenter__(self):
         from playwright.async_api import async_playwright

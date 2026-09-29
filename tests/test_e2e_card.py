@@ -285,6 +285,59 @@ def test_audio_bloccato_mostra_tasto_audio(monkeypatch, engine):  # noqa: F811
     run(s())
 
 
+def test_ascolta_durante_squillo_spento_di_default(monkeypatch, engine):  # noqa: F811
+    """`listen_on_ring` di default è spento: durante lo squillo (anteprima video/anteprima
+    audio già in early media) la card resta muta, nessun WebSocket audio si apre da sola
+    e il microfono non si accende mai. La cronologia non risponde né chiama."""
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            await rig.register()
+            async with Card(rig, engine, webcodecs=False) as c:  # niente NalPlayer: solo il WS dell'ascolto conterebbe
+                rig.ring()
+                await rig.peer.wait_for(is_(code=183))
+                await c.until("info().pill === 'Suonano alla porta'")
+                for i in range(15):  # la targa: audio in early media, prima di ogni risposta
+                    rig.peer.rtp_audio.sendto(struct.pack("!BBHII", 0x80, 0, i, i * 160, 1234) + b"\x7f" * 160,
+                                              ("127.0.0.1", media.RTP_AUDIO_PORT))
+                    await asyncio.sleep(0.02)
+                await asyncio.sleep(0.3)
+                assert (await c.info())["listen"] is False
+                t = await c.T()
+                assert t["ws"] == 0 and t["gum"] == 0, t
+                rig.peer.request("CANCEL", "ring-1", 1, "pnl")
+                await c.until(IDLE)
+                assert not rig.services and not (await c.T())["errors"]
+    run(s())
+
+
+@pytest.mark.parametrize("engine", ["chromium"], indirect=True)
+def test_ascolta_durante_squillo_acceso(monkeypatch, engine):  # noqa: F811
+    """`listen_on_ring: true`: appena squilla (anche solo in anteprima, prima di "Rispondi")
+    si sente la targa da sola — stesso canale audio del parlato, ma senza microfono né
+    "answer"/"call". Finito lo squillo l'ascolto si stacca da solo."""
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            await rig.register()
+            async with Card(rig, engine, webcodecs=False, listen_on_ring=True) as c:
+                rig.ring()
+                await rig.peer.wait_for(is_(code=183))
+                await c.until("info().pill === 'Suonano alla porta'")
+                await c.until("info().listen", 3)               # l'ascolto si aggancia da solo
+                assert (await c.T())["gum"] == 0, "il microfono non deve accendersi"
+                n0 = (await c.T())["rx"]
+                for i in range(15):  # la targa parla già durante lo squillo (early media)
+                    rig.peer.rtp_audio.sendto(struct.pack("!BBHII", 0x80, 0, i, i * 160, 1234) + b"\x7f" * 160,
+                                              ("127.0.0.1", media.RTP_AUDIO_PORT))
+                    await asyncio.sleep(0.02)
+                await c.until(f"T.rx > {n0}", 3)                 # i pacchetti audio sono arrivati e sono stati suonati
+                assert not rig.services, rig.services            # niente "answer"/"call" da sola
+                rig.peer.request("CANCEL", "ring-1", 1, "pnl")
+                await c.until(IDLE)
+                await c.until("!info().listen")                  # fine squillo: l'ascolto si stacca
+                assert not (await c.T())["errors"]
+    run(s())
+
+
 def test_chiamata_rifiutata_la_card_lo_dice_e_si_chiude(monkeypatch, engine):  # noqa: F811
     """Dal campo: la targa rifiuta (603) "Vedi esterno". La card non resta su
     "Collegamento…" col riquadro video vuoto: si richiude e lo dice."""

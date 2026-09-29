@@ -17,6 +17,8 @@
 //                         dall'automazione — anche l'audio riparte da sola; "" = no)
 //   history: 8            (ultimi squilli con foto e clip, se c'è la cartella foto; 0 = no)
 //   confirm_open: true    (Apri chiede un secondo tocco; false = apre al primo)
+//   listen_on_ring: false (si sente il visitatore già allo squillo, senza rispondere:
+//                         solo ricezione, il microfono resta spento; anche dall'editor)
 //   layout: overlay       (o "sotto"; anche dall'editor visuale)
 //
 //   layout: overlay   (default) "Video a tutta card": da fermo riga da 72 px (foto dell'ultimo
@@ -416,6 +418,7 @@ const DEFAULTS = {
   history: 8,
   layout: "overlay",  // o "sotto"
   confirm_open: true,
+  listen_on_ring: false,
 };
 
 class VimarIntercomCard extends HTMLElement {
@@ -545,7 +548,22 @@ class VimarIntercomCard extends HTMLElement {
       }
     } else {
       this._autoAudioTried = false;
-      this._audioBlocked = false;
+    }
+    // "Audio" (sopra) serve tanto all'aggancio automatico quanto all'ascolto allo squillo
+    // (sotto): si azzera solo lasciando gli stati dal vivo, non ad ogni giro di `_render`
+    // durante ringing/calling — altrimenti un blocco vero (iOS) sparirebbe e riproverebbe
+    // ad ogni aggiornamento di `hass`, anche senza alcun cambio di stato.
+    if (!live) this._audioBlocked = false;
+
+    // `listen_on_ring`: si sente il visitatore già a video (ringing/calling/in_call in
+    // anteprima), senza rispondere né aprire il microfono — smette da sola a fine
+    // squillo/preview o quando parte l'audio vero (_ws, mic compreso: si passa a quello,
+    // niente doppio canale). "Rispondi" resta al suo posto durante lo squillo: un tocco
+    // solo, già pronto, anche se l'ascolto automatico non parte (iOS senza gesto).
+    if (this._cfg.listen_on_ring && live && !this._ws && !this._starting) {
+      if (!this._listenWs && !this._listenStarting) this._startListen();
+    } else {
+      this._stopListen();
     }
   }
 
@@ -808,6 +826,7 @@ class VimarIntercomCard extends HTMLElement {
   // Safari/iOS tiene l'AudioContext sospeso senza un gesto vero, si rinuncia in silenzio
   // prima ancora di chiedere il microfono: resta il tocco su "Microfono".
   async _startTalk(auto = false) {
+    this._stopListen();  // l'ascolto allo squillo lascia il posto all'audio vero (stesso canale)
     this._err.textContent = this._hint;
     if (!window.isSecureContext) {  // solo "Rispondi": video sì, voce no
       if (auto) return;
@@ -851,18 +870,12 @@ class VimarIntercomCard extends HTMLElement {
     }
   }
 
-  async _openAudio(mic, ctx) {
-    // Card tolta dalla pagina mentre iOS chiedeva il permesso del microfono: niente
-    // WebSocket orfano (chi la chiama spegne il microfono).
-    if (!this.isConnected) throw new Error("card chiusa");
-    // WebSocket con percorso firmato: il browser non può mandare il token negli header.
-    const { path } = await this._hass.callWS({ type: "auth/sign_path", path: "/api/vimar_intercom/audio_ws" });
-    const ws = new WebSocket(location.origin.replace(/^http/, "ws") + path);
-    this._ws = ws;  // da qui _stopAudio lo chiude anche se qualcosa sotto fallisce
-    ws.binaryType = "arraybuffer";
-    ctx.resume();
+  // Riproduce la voce del visitatore (0x01 + PCM16LE) su un AudioContext: usato sia dal
+  // parlato vero (_openAudio, col microfono) sia dal solo ascolto allo squillo
+  // (_startListen, senza microfono). Un chiusura sola per chiamata: `playAt` vive qui.
+  _pcmSink(ctx) {
     let playAt = 0;
-    ws.onmessage = (ev) => {  // voce del visitatore
+    return (ev) => {
       if (typeof ev.data === "string" || new Uint8Array(ev.data, 0, 1)[0] !== 0x01) return;
       const pcm = new Int16Array(ev.data.slice(1));
       const buf = ctx.createBuffer(1, pcm.length, RATE);
@@ -875,6 +888,58 @@ class VimarIntercomCard extends HTMLElement {
       src.start(playAt);
       playAt += buf.duration;
     };
+  }
+
+  // Ascolto senza rispondere (`listen_on_ring`): solo ricezione, niente microfono né
+  // "answer"/"call" — un WebSocket audio a sé, separato da quello video (NalPlayer scarta
+  // i pacchetti 0x01) e da quello del parlato vero (_openAudio, che lo scavalca: vedi
+  // _startTalk). Stesso limite iOS del parlato: senza un gesto vero l'AudioContext resta
+  // sospeso, si rinuncia in silenzio e il tasto (se non è "Rispondi") diventa "Audio".
+  async _startListen() {
+    if (!window.isSecureContext) return;
+    this._listenStarting = true;
+    try {
+      const ctx = new AudioContext();
+      await ctx.resume().catch(() => {});
+      if (ctx.state !== "running") {
+        ctx.close();
+        this._audioBlocked = true;
+        this._render();
+        return;
+      }
+      const { path } = await this._hass.callWS({ type: "auth/sign_path", path: "/api/vimar_intercom/audio_ws" });
+      if (!this.isConnected || !this._cfg.listen_on_ring) return ctx.close();  // stato cambiato nell'attesa
+      const ws = new WebSocket(location.origin.replace(/^http/, "ws") + path);
+      ws.binaryType = "arraybuffer";
+      ws.onmessage = this._pcmSink(ctx);
+      ws.onclose = () => { if (this._listenWs === ws) this._stopListen(); };
+      this._listenCtx = ctx;
+      this._listenWs = ws;
+      this._audioBlocked = false;
+      this._render();
+    } finally {
+      this._listenStarting = false;
+    }
+  }
+
+  _stopListen() {
+    this._listenWs?.close();
+    this._listenWs = null;
+    this._listenCtx?.close();
+    this._listenCtx = null;
+  }
+
+  async _openAudio(mic, ctx) {
+    // Card tolta dalla pagina mentre iOS chiedeva il permesso del microfono: niente
+    // WebSocket orfano (chi la chiama spegne il microfono).
+    if (!this.isConnected) throw new Error("card chiusa");
+    // WebSocket con percorso firmato: il browser non può mandare il token negli header.
+    const { path } = await this._hass.callWS({ type: "auth/sign_path", path: "/api/vimar_intercom/audio_ws" });
+    const ws = new WebSocket(location.origin.replace(/^http/, "ws") + path);
+    this._ws = ws;  // da qui _stopAudio lo chiude anche se qualcosa sotto fallisce
+    ws.binaryType = "arraybuffer";
+    ctx.resume();
+    ws.onmessage = this._pcmSink(ctx);  // voce del visitatore
     ws.onclose = () => {
       // Solo la sessione corrente: chiuso da noi, o un WS vecchio (microfono spento
       // e riacceso in fretta) che si chiude in ritardo e spegnerebbe quello nuovo.
@@ -928,6 +993,7 @@ class VimarIntercomCard extends HTMLElement {
   disconnectedCallback() {
     for (const e of ["hashchange", "location-changed"]) window.removeEventListener(e, this._toAnchor);
     this._stopAudio();
+    this._stopListen();
     if (this._player) {  // card tolta dalla pagina: il WS video non resta aperto
       this._player.close();
       this._player = null;
@@ -945,7 +1011,7 @@ class VimarIntercomCard extends HTMLElement {
   }
 }
 
-// Editor visuale: un ha-form di HA con quattro campi. Le altre chiavi (status, lock, last_ring,
+// Editor visuale: un ha-form di HA con cinque campi. Le altre chiavi (status, lock, last_ring,
 // anchor) restano in YAML e passano intatte. Un campo svuotato o lasciato al default non finisce in YAML.
 const EDITOR_TAG = "vimar-intercom-card-editor";
 const SCHEMA = [
@@ -957,9 +1023,10 @@ const SCHEMA = [
   ] } } },
   { name: "history", selector: { number: { min: 0, max: 50, mode: "box" } } },
   { name: "confirm_open", selector: { boolean: {} } },
+  { name: "listen_on_ring", selector: { boolean: {} } },
 ];
 const FIELD = { camera: "Telecamera", name: "Nome", layout: "In diretta", history: "Squilli in cronologia (0 = niente)",
-  confirm_open: "Apri con doppio tocco" };
+  confirm_open: "Apri con doppio tocco", listen_on_ring: "Ascolta il visitatore durante lo squillo" };
 
 class VimarIntercomCardEditor extends HTMLElement {
   setConfig(config) {
