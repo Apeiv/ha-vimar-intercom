@@ -180,9 +180,11 @@ class Card:
         await self.open()
         return self
 
-    async def open(self):
-        """Apre (o riapre: cambio dashboard, ricarica) la pagina."""
-        await self.page.goto(self.rig.base + "/" + self.query)
+    async def open(self, hash=None):
+        """Apre (o riapre: cambio dashboard, ricarica) la pagina. `hash`: come il link
+        .../camera#citofono di una notifica."""
+        url = self.rig.base + "/" + self.query + (f"#{hash}" if hash else "")
+        await self.page.goto(url)
         await self.page.wait_for_function("window.card && card.shadowRoot && window.info")
 
     async def __aexit__(self, *exc):

@@ -223,6 +223,68 @@ def test_apri_doppio_tocco(monkeypatch, engine):  # noqa: F811
     run(s())
 
 
+@pytest.mark.parametrize("engine", ["chromium"], indirect=True)
+def test_rispondi_da_notifica_audio_da_solo(monkeypatch, engine):  # noqa: F811
+    """Notifica "Rispondi": l'automazione ha già risposto (vimar_intercom.answer, quindi
+    "in_call") prima che l'app apra .../camera#citofono. La card deve arrivare già sul
+    vivo, con l'audio agganciato da sola (niente tocco su "Microfono"). Un secondo
+    ricarico da fermo (mai squillato) non deve toccare né audio né video."""
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            await rig.register()
+            rig.answer(media_on=True)  # come se avesse già risposto l'automazione
+            async with Card(rig, engine, webcodecs=False) as c:
+                await c.tap("view")
+                await c.until("info().pill === 'In chiamata'")
+                assert (await c.info())["audio"] == "off"
+                await c.open(hash="citofono")              # ricarica come dalla notifica
+                await c.until("info().video === 'live' && info().audio === 'on'")
+                assert (await c.info())["talk"] == "Microfono"
+                assert not (await c.T())["errors"]
+                await c.tap("hangup")
+                await c.until(IDLE)
+                n = len(rig.services)
+
+                # Da fermo, la stessa ancora non chiama né apre il microfono da sola.
+                await c.open(hash="citofono")
+                await asyncio.sleep(0.5)
+                assert (await c.info())["audio"] == "off" and (await c.info())["video"] == "auto"
+                assert len(rig.services) == n and not (await c.T())["errors"]
+    run(s())
+
+
+@pytest.mark.parametrize("engine", ["chromium"], indirect=True)
+def test_audio_bloccato_mostra_tasto_audio(monkeypatch, engine):  # noqa: F811
+    """iOS senza un gesto vero: l'AudioContext dell'aggancio automatico resta sospeso
+    (qui simulato). L'audio rinuncia in silenzio ma "Microfono" diventa "Audio", ben
+    visibile — un secondo AudioContext (il tocco vero) lo aggancia comunque."""
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            await rig.register()
+            rig.answer(media_on=True)
+            async with Card(rig, engine, webcodecs=False) as c:
+                await c.tap("view")
+                await c.until("info().pill === 'In chiamata'")
+                # Il primo AudioContext (l'aggancio automatico) resta "suspended": il
+                # browser di prova non ha un vero gesto da riprodurre, ma qui lo forziamo
+                # per simulare Safari/iOS senza sblocco. Il secondo (il tocco) è vero.
+                await c.page.evaluate("""(() => {
+                    const RealAC = window.AudioContext; let n = 0;
+                    window.AudioContext = class extends RealAC {
+                        constructor(...a) { super(...a); n++;
+                          if (n === 1) Object.defineProperty(this, 'state', { get: () => 'suspended' }); }
+                    };
+                })()""")
+                await c.open(hash="citofono")
+                await c.until("card.shadowRoot.querySelector('#talk .lbl').textContent === 'Audio'")
+                assert (await c.info())["audio"] == "off" and not (await c.T())["errors"]
+                await c.tap("talk")
+                await c.until("info().audio === 'on'")
+                assert (await c.info())["talk"] == "Microfono"
+                assert not (await c.T())["errors"]
+    run(s())
+
+
 def test_chiamata_rifiutata_la_card_lo_dice_e_si_chiude(monkeypatch, engine):  # noqa: F811
     """Dal campo: la targa rifiuta (603) "Vedi esterno". La card non resta su
     "Collegamento…" col riquadro video vuoto: si richiude e lo dice."""

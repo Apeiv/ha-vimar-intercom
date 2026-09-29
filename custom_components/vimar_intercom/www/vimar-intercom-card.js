@@ -12,7 +12,9 @@
 // rinomina) viene sostituito da quello vero. La camera dell'integrazione si trova nel
 // registro del frontend; stato, ultimo squillo e serratura dall'attributo
 // `card_entities` della camera. Scritte e esistenti, vincono quelle della config.
-//   anchor: citofono      (URL con #citofono: la card si porta in vista; "" = no)
+//   anchor: citofono      (URL con #citofono: la card si porta in vista; se lo stato è già
+//                         "in_call" — es. "Rispondi" premuto sulla notifica, che risponde
+//                         dall'automazione — anche l'audio riparte da sola; "" = no)
 //   history: 8            (ultimi squilli con foto e clip, se c'è la cartella foto; 0 = no)
 //   confirm_open: true    (Apri chiede un secondo tocco; false = apre al primo)
 //   layout: overlay       (o "sotto"; anche dall'editor visuale)
@@ -515,14 +517,36 @@ class VimarIntercomCard extends HTMLElement {
     this._hangup.hidden = !["calling", "in_call"].includes(state);
     this._label(this._hangup, state === "calling" ? "Annulla" : "Riaggancia");
     const ring = state === "ringing", inCall = state === "in_call" || state === "calling";
-    this._talk.className = ring ? "ok answer" : on ? "fill" : "";
+    // L'audio automatico è riuscito (_autoAudioTried) ma il gesto vero mancava (iOS):
+    // "Microfono" diventa "Audio", ben visibile, finché non si tocca — un microfono
+    // spento si legge come "muto", non come invito a toccare.
+    const audioHint = inCall && !on && this._audioBlocked;
+    this._talk.className = ring || audioHint ? "ok answer" : on ? "fill" : "";
     this._talk.setAttribute("aria-pressed", on);
-    this._icon(this._talk, ring ? "mdi:phone" : on || !inCall ? "mdi:microphone" : "mdi:microphone-off");
-    this._label(this._talk, ring ? "Rispondi" : inCall ? "Microfono" : "Parla");
+    this._icon(this._talk, ring ? "mdi:phone" : audioHint ? "mdi:volume-off"
+      : on || !inCall ? "mdi:microphone" : "mdi:microphone-off");
+    this._label(this._talk, ring ? "Rispondi" : audioHint ? "Audio" : inCall ? "Microfono" : "Parla");
     this._talk.disabled = state === "offline" || (!window.isSecureContext && !ring)
       || (state === "calling" && !on);
     this._open.disabled = state === "offline" || hass.states[this._ent("lock")]?.state === "unavailable";
     if ((state === "idle" || state === "offline") && this._ws) this._stopAudio();
+
+    // Arrivo dall'ancora (link della notifica) già "in_call" (l'automazione ha risposto
+    // lei, con vimar_intercom.answer): l'audio si aggancia da sola, un tentativo per
+    // chiamata — se l'utente stacca il microfono a mano non si riattacca da sola, e se
+    // iOS tiene l'audio sospeso senza un tocco vero si rinuncia in silenzio, ma il tasto
+    // diventa "Audio" (sopra): resta un tocco solo, ben visibile. Mai per
+    // "ringing"/"calling": aprire la pagina non risponde né chiama da sola.
+    if (state === "in_call") {
+      if (!this._autoAudioTried && !this._ws && !this._starting && window.isSecureContext
+          && this._cfg.anchor && location.hash === `#${this._cfg.anchor}`) {
+        this._autoAudioTried = true;
+        this._startTalk(true).catch(() => {});
+      }
+    } else {
+      this._autoAudioTried = false;
+      this._audioBlocked = false;
+    }
   }
 
   _label(button, text) {
@@ -584,9 +608,15 @@ class VimarIntercomCard extends HTMLElement {
 
   // Link diretto (es. dalla notifica): con l'URL .../camera#citofono la card si porta in
   // vista. HA non lo fa per le card; "location-changed" è la navigazione interna di HA.
+  // Si ricontrolla anche l'audio automatico (_render, in fondo): l'hash può arrivare
+  // (hashchange, navigazione HA) senza che lo stato sia appena cambiato — se non si
+  // richiama _render qui, un "in_call" già in corso non aggancerebbe mai l'audio da solo.
   _toAnchor = () => requestAnimationFrame(() => {
     const a = this._cfg?.anchor;
-    if (a && this._root && this.isConnected && location.hash === `#${a}`) this.scrollIntoView({ block: "start" });
+    if (a && this._root && this.isConnected && location.hash === `#${a}`) {
+      this.scrollIntoView({ block: "start" });
+      if (this._hass) this._render();
+    }
   });
 
   connectedCallback() {
@@ -773,9 +803,14 @@ class VimarIntercomCard extends HTMLElement {
     }
   }
 
-  async _startTalk() {
+  // `auto`: chiamata da sola all'arrivo sull'ancora già "in_call" (vedi _render), non da
+  // un tocco. Niente "Rispondi" in HTTP (aprire la pagina non risponde da sola) e, se
+  // Safari/iOS tiene l'AudioContext sospeso senza un gesto vero, si rinuncia in silenzio
+  // prima ancora di chiedere il microfono: resta il tocco su "Microfono".
+  async _startTalk(auto = false) {
     this._err.textContent = this._hint;
     if (!window.isSecureContext) {  // solo "Rispondi": video sì, voce no
+      if (auto) return;
       await this._call("answer", this._talk).catch(() => {});
       return;
     }
@@ -786,6 +821,16 @@ class VimarIntercomCard extends HTMLElement {
     // Nel gesto, prima di ogni await: creato dopo, Safari/iOS lo lascia sospeso
     // (niente voce del visitatore e onaudioprocess fermo, quindi niente microfono).
     const ctx = new AudioContext();
+    if (auto) {
+      await ctx.resume().catch(() => {});
+      if (ctx.state !== "running") {  // niente gesto vero: non si chiede nemmeno il microfono
+        ctx.close();
+        this._starting = false;
+        this._audioBlocked = true;  // "Microfono" → "Audio": un tocco resta a vista
+        this._render();
+        return;
+      }
+    }
     let mic;
     try {
       mic = await navigator.mediaDevices.getUserMedia({
@@ -794,9 +839,10 @@ class VimarIntercomCard extends HTMLElement {
       if (this._state === "ringing") await this._call("answer", this._talk);
       else if (answering && this._state !== "in_call") throw new Error("lo squillo è finito");
       else if (this._state !== "in_call") await this._call("call", this._talk);
+      this._audioBlocked = false;
       await this._openAudio(mic, ctx);
     } catch (e) {
-      if (this._err.textContent === this._hint) this._err.textContent = `Audio non disponibile: ${e.message || e}`;
+      if (!auto && this._err.textContent === this._hint) this._err.textContent = `Audio non disponibile: ${e.message || e}`;
       mic?.getTracks().forEach((t) => t.stop());  // il microfono non resta acceso
       if (!this._audio) ctx.close();
       this._stopAudio();
