@@ -39,7 +39,6 @@ from . import webhook
 _LOGGER = logging.getLogger(__name__)
 
 # Buffer interno dei log e inoltro al log di HA: vedi log_buffer.py.
-_debug_log = _log_buffer.debug_log
 _log_buffer.install()
 
 PLATFORMS = ["camera", "lock", "button", "event", "binary_sensor", "sensor", "switch", "select",
@@ -847,7 +846,7 @@ class VimarDebugView(HomeAssistantView):
             n = int(request.query.get("lines", "100"))
         except ValueError:
             n = 100
-        text = "\n".join(_debug_log[-n:])
+        text = "\n".join(_log_buffer.tail(n))
         return web.Response(text=text, content_type="text/plain")
 
 
