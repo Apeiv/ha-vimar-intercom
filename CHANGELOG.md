@@ -24,6 +24,11 @@ Italian and are kept as they were written.
   cloud and local, storing what worked. A fallback is logged at WARNING, shown when the entry is
   created and kept in the entry data (`setup_note`). The plant profile only sets the transport
   default; media encryption keeps following the plant's own declaration (`media_enc` auto).
+- Audio-only entrances: when the pairing QR says `video=0`, our own INVITE offer carries no
+  `m=video`. Entries made before keep video; answers still mirror the panel's offer.
+- Between calls the camera image is the last ring photo, when there is one (the latest, or
+  `ultimo_squillo.jpg` in the snapshot folder after a restart), instead of the error Home
+  Assistant made of an empty image. A thumbnail still never calls the panel.
 
 ### Fixed
 
@@ -79,6 +84,11 @@ Call and media:
 - An RTP/SAVP line refused in our answer (no supported crypto suite) gets no media. Media lines
   we do not handle (`m=text`, `m=application`, a second `m=audio`) are answered with port 0 in
   their place, and their `c=`/`a=` lines no longer change the line before them.
+- An auto-call that connects after its viewer already left is hung up after the usual delay,
+  instead of staying up with nobody watching until the 5 minute cap.
+- μ-law audio is decoded through two byte tables instead of a loop per sample (about 20 times
+  faster per packet, same output), and the debug log buffer is a bounded deque that no longer
+  moves every line when it drops the oldest one.
 
 SIP:
 
@@ -105,6 +115,10 @@ SIP:
 - Unloading closes and forgets the SIP transport, wakes whoever still waits for a response and
   no longer calls back into the hub being unloaded.
 - Three challenges with a rotated nonce are reported as refused credentials.
+- The SIP client reads a Digest challenge whose quoted values hold commas (a realm such as
+  `"plant, north"`) whole, like the setup flow does; the response was signed with a cut realm.
+  A challenge offering only `qop=auth-int` gets the plain RFC 2069 response instead of a claimed
+  `qop=auth`.
 
 Setup and configuration:
 
