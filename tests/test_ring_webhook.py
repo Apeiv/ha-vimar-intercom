@@ -132,3 +132,16 @@ def test_fire_fallita_non_solleva_e_logga_senza_token(fake_hass, monkeypatch, ca
         asyncio.run(webhook.fire(START_URL + "?t=segreto"))  # non deve sollevare
     assert "token123" not in caplog.text and "segreto" not in caplog.text
     assert "scrypted.local" in caplog.text
+
+
+def test_safe_non_mostra_user_password_e_fire_logga_solo_il_tipo(fake_hass, monkeypatch, caplog):
+    url = "http://utente:segreta@scrypted.local:11080/x?t=tok"
+    assert webhook._safe(url) == "http://scrypted.local:11080"
+
+    def _raise(u):
+        raise ValueError(f"URL non valido: {u}")
+    monkeypatch.setattr(fake_hass, "get", _raise)
+    with caplog.at_level(logging.WARNING):
+        asyncio.run(webhook.fire(url))
+    assert "segreta" not in caplog.text and "tok" not in caplog.text
+    assert "ValueError" in caplog.text

@@ -160,6 +160,7 @@
       "rubrica_import_failed": "Importazione fallita. Vedi il dettaglio nella descrizione.",
       "rubrica_no_actuators": "Nessun attuatore trovato per il GID specificato. Vedi la descrizione.",
       "invalid_target": "Valore non valido: usa solo cifre (es. 55001).",
+      "invalid_url": "URL non valido: deve iniziare con http:// o https:// e avere un host.",
       "no_local_proxy": "Manca l'indirizzo del citofono: impostalo in «Impostazioni di rete e attuatori».",
       "rest_auth_failed": "Il citofono ha rifiutato le credenziali SIP, oppure non espone questa API. Nota: risponde 401 in entrambi i casi.",
       "rest_unavailable": "Citofono non raggiungibile in HTTP sulla rete locale. Se l'impianto funziona solo via cloud, usa l'importazione da file.",

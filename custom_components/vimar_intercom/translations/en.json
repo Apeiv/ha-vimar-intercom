@@ -160,6 +160,7 @@
       "rubrica_import_failed": "Import failed. See description above for details.",
       "rubrica_no_actuators": "No actuators found for the specified GID. See description above.",
       "invalid_target": "Invalid value: digits only (e.g. 55001).",
+      "invalid_url": "Invalid URL: it must start with http:// or https:// and have a host.",
       "no_local_proxy": "The intercom address is missing: set it under \"Network settings and actuators\".",
       "rest_auth_failed": "The intercom rejected the SIP credentials, or does not expose this API. Note: it answers 401 in both cases.",
       "rest_unavailable": "The intercom is not reachable over HTTP on the local network. If the system only works through the cloud, use the file import instead.",

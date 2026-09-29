@@ -623,6 +623,10 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             allowed_users = [str(u) for u in user_input.get(KEY_ALLOWED_USERS) or []]
             ring_webhook_url     = str(user_input.get(KEY_RING_WEBHOOK_URL) or "").strip()
             ring_end_webhook_url = str(user_input.get(KEY_RING_END_WEBHOOK_URL) or "").strip()
+            for key, url in ((KEY_RING_WEBHOOK_URL, ring_webhook_url),
+                             (KEY_RING_END_WEBHOOK_URL, ring_end_webhook_url)):
+                if not validate.http_url(url):
+                    errors[key] = "invalid_url"
             if snap_dir and not self.hass.config.is_allowed_path(snap_dir):
                 errors[KEY_SNAP_DIR] = "path_not_allowed"
             elif snap_dir and await self.hass.async_add_executor_job(

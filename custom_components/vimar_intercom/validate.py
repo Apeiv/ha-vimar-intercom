@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import ipaddress
 import re
+from urllib.parse import urlsplit
 
 # Un indirizzo SIP dell'impianto è un numero. Il valore finisce nella request
 # line di un INVITE (`sip:<target>@<dominio>`): senza questo controllo un
@@ -33,6 +34,18 @@ def sip_target(raw: str | None) -> str | None:
         return None
     t = str(raw).strip()
     return t if _SIP_TARGET.match(t) else None
+
+
+def http_url(raw: str | None) -> bool:
+    """URL http(s) con host: vuoto = niente webhook, quindi valido."""
+    t = str(raw or "").strip()
+    if not t:
+        return True
+    try:
+        p = urlsplit(t)
+        return p.scheme in _ALLOWED_SCHEMES and bool(p.hostname)
+    except ValueError:
+        return False
 
 
 def safe_filename(raw: str | None) -> str | None:

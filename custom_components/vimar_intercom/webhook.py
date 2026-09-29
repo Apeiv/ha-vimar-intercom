@@ -30,9 +30,15 @@ def setup(hass) -> None:
 
 
 def _safe(url: str) -> str:
-    """Solo schema+host per i log: l'URL può contenere un token segreto."""
-    p = urlsplit(url)
-    return f"{p.scheme}://{p.netloc}" if p.scheme else "(url non valido)"
+    """Solo schema+host(+porta) per i log: l'URL può contenere un token segreto
+    o user:password@, che netloc si porterebbe dietro."""
+    try:
+        p = urlsplit(url)
+        if not (p.scheme and p.hostname):
+            return "(url non valido)"
+        return f"{p.scheme}://{p.hostname}" + (f":{p.port}" if p.port else "")
+    except ValueError:
+        return "(url non valido)"
 
 
 async def fire(url: str) -> None:
@@ -45,4 +51,5 @@ async def fire(url: str) -> None:
             async with session.get(url):
                 pass  # fire-and-forget: non ci serve la risposta, solo che sia partita
     except Exception as e:
-        _LOGGER.warning("Webhook squillo fallito (%s): %s", _safe(url), e)
+        # Solo il tipo: il testo dell'eccezione (es. URL non valido) stampa l'URL intero.
+        _LOGGER.warning("Webhook squillo fallito (%s): %s", _safe(url), type(e).__name__)
