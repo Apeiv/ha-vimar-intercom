@@ -8,7 +8,7 @@ l'ultimo decodificato dalla targa. Il live arriva dal fan-out MPEG-TS di av_stre
 (come un client passivo qualunque) e lo decodifica un secondo ffmpeg, vivo solo finché
 c'è video. Niente chiamate né spettatori per l'hub: il passivo non tocca la targa.
 L'audio (AAC 48 kHz mono come /av) viaggia nello stesso TS: il PCM della targa durante
-squillo o chiamata (media.pcm_tap, lo stesso PCMU decodificato per la card), silenzio
+squillo o chiamata (media.pcm_taps, lo stesso PCMU decodificato per la card), silenzio
 a riposo, sempre 100 ms per fotogramma dallo stesso orologio: video e audio in passo.
 """
 
@@ -144,17 +144,9 @@ async def _run(enc, standby: bytes, is_live, on_live, port: int) -> None:
     t0, n = loop.time(), 0
     cancelled = False
     _pcm.clear()
-    # Incatenato a un pcm_tap già presente (es. frame_grabber, che tappa il PCM per il
-    # clip dello squillo) invece di sostituirlo: altrimenti chi parte per secondo vince
-    # e l'altro resta muto, in un ordine che dipende solo da quando arriva un client qui.
-    prev_tap = media.pcm_tap
-
-    def tap(pcm: bytes) -> None:
-        if prev_tap:
-            prev_tap(pcm)
-        _tap(pcm)
-
-    media.pcm_tap = tap
+    # Un tap fra tanti (media.pcm_taps): non sostituisce quelli già agganciati, es. il
+    # clip dello squillo in frame_grabber, che resta vivo anche dopo che questo esce.
+    media.add_pcm_tap(_tap)
     try:
         audio = await _audio_in(port)
         while not pump.done():
@@ -175,7 +167,7 @@ async def _run(enc, standby: bytes, is_live, on_live, port: int) -> None:
         cancelled = True
         raise
     finally:
-        media.pcm_tap = prev_tap
+        media.remove_pcm_tap(_tap)
         _pcm.clear()
         if audio:
             audio.close()

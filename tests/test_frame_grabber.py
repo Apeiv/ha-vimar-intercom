@@ -144,12 +144,12 @@ async def _feed(proto, nals, fps=25, skip=0):
 
 async def _feed_pcm(seconds: float):
     """PCM finto ogni 20 ms (come i pacchetti PCMU decodificati dalla targa), passato a
-    media_handler.pcm_tap se e finché frame_grabber lo tiene agganciato."""
+    ogni tap agganciato in media_handler.pcm_taps (es. frame_grabber)."""
     loop = asyncio.get_running_loop()
     end = loop.time() + seconds
     while loop.time() < end:
-        if media_handler.pcm_tap:
-            media_handler.pcm_tap(b"\x00\x01" * 160)  # 320 B = 20 ms a 8 kHz, 16 bit, mono
+        for tap in media_handler.pcm_taps:
+            tap(b"\x00\x01" * 160)  # 320 B = 20 ms a 8 kHz, 16 bit, mono
         await asyncio.sleep(0.02)
 
 
@@ -230,7 +230,7 @@ def test_clip_finisce_da_solo_al_tetto_e_senza_video_niente_file(tmp_path):
 
 def _finto_encoder_passivo(monkeypatch):
     """Il mux di av_passive (video+audio -> MPEG-TS) finto: al bug/fix interessa solo
-    che _run() tappi media.pcm_tap per davvero, non che l'encoder produca un TS vero.
+    che _run() tappi media.pcm_taps per davvero, non che l'encoder produca un TS vero.
     Un solo ffmpeg reale per test su Windows (quello del clip): l'altro, con pipe
     stdout lette in continuo, è il pattern segnalato fragile lì (vedi sopra)."""
     real_exec = asyncio.create_subprocess_exec
@@ -287,6 +287,35 @@ def _tono_ulaw(n: int = 160) -> bytes:
     return media_handler.ulaw_encode(pcm)
 
 
+def test_pcm_taps_uno_si_ferma_altro_continua_a_ricevere():
+    """item 1+5: media.pcm_taps è una lista, non più un solo slot con prev_tap incatenato
+    -- il teardown di un tap (es. il clip dello squillo che finisce) resettava sempre lo
+    slot al valore salvato all'aggancio, così se nel frattempo un altro tap si era agganciato
+    sopra (es. lo stream passivo), quello restava senza audio. Con la lista, sganciare un tap
+    tocca solo la propria voce: gli altri, agganciati con add_pcm_tap, continuano a ricevere
+    il PCM dal punto in cui lo passa RTPAudioProtocol.datagram_received."""
+    audio_proto = media_handler.RTPAudioProtocol()
+    audio_proto.remote_addr = ("127.0.0.1", 4000)
+    ricevuto_a, ricevuto_b = [], []
+    tap_a, tap_b = ricevuto_a.append, ricevuto_b.append
+
+    def invia(seq, ts):
+        rtp = struct.pack("!BBHII", 0x80, 0, seq, ts, 1) + _tono_ulaw()
+        audio_proto.datagram_received(rtp, ("127.0.0.1", 4000))
+
+    media_handler.add_pcm_tap(tap_a)
+    media_handler.add_pcm_tap(tap_b)
+    try:
+        invia(0, 0)
+        assert len(ricevuto_a) == 1 and len(ricevuto_b) == 1
+        media_handler.remove_pcm_tap(tap_a)  # tap_a si ferma, tap_b resta agganciato
+        invia(1, 160)
+        assert len(ricevuto_a) == 1, "fermato: non deve ricevere altro"
+        assert len(ricevuto_b) == 2, "l'altro tap deve continuare a ricevere il PCM"
+    finally:
+        media_handler.remove_pcm_tap(tap_b)
+
+
 @ffmpeg_vero[0]
 def test_clip_audio_non_muto_con_passivo_attivo(tmp_path, monkeypatch):
     """Nota ring-2040: audio rx=918 alla targa ma AAC muto nel clip. Causa: av_passive
@@ -315,7 +344,7 @@ def test_clip_audio_non_muto_con_passivo_attivo(tmp_path, monkeypatch):
         done = asyncio.get_running_loop().create_future()
         frame_grabber.record(path, 60, done.set_result)
         frame_grabber.start(proto)
-        await asyncio.sleep(0.05)  # il clip parte e tappa pcm_tap prima del passivo
+        await asyncio.sleep(0.05)  # il clip parte e si aggancia a pcm_taps prima del passivo
         q = await av_passive.subscribe(lambda: False, lambda: None)
         assert q is not None
         await asyncio.sleep(0.05)  # av_passive tappa a sua volta (qui il bug)

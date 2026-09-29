@@ -155,8 +155,8 @@ class RTPAudioProtocol(asyncio.DatagramProtocol):
             _LOGGER.info("First %s audio from %s (%dB)",
                          "SRTP" if self.srtp_rx else "RTP", addr, len(payload))
         pcm = ulaw_decode(payload)
-        if pcm_tap:
-            pcm_tap(pcm)
+        for tap in pcm_taps:
+            tap(pcm)
         try:
             self.audio_buffer.put_nowait(pcm)
         except asyncio.QueueFull:
@@ -961,9 +961,23 @@ async def _stun_keepalive():
 
 # ws_send_bytes: set by main.py — async fn(data) to send binary to all clients
 ws_send_bytes = None
-# pcm_tap: fn(pcm) con ogni pacchetto PCM della targa (av_passive: audio nello stream
-# continuo), in più rispetto alla coda per il WS.
-pcm_tap = None
+# pcm_taps: lista di fn(pcm), una per ogni pacchetto PCM della targa (av_passive: audio
+# nello stream continuo; frame_grabber: audio del clip dello squillo), in più rispetto
+# alla coda per il WS. Una lista invece di un solo slot: più tap possono essere agganciati
+# insieme (es. squillo e stream passivo continuo in parallelo) senza incatenarsi a vicenda.
+pcm_taps: list = []
+
+
+def add_pcm_tap(fn) -> None:
+    """Aggancia un tap PCM (chiamato ad ogni pacchetto, oltre a quelli già agganciati)."""
+    pcm_taps.append(fn)
+
+
+def remove_pcm_tap(fn) -> None:
+    """Sgancia un tap PCM aggiunto con add_pcm_tap; gli altri restano agganciati."""
+    pcm_taps.remove(fn)
+
+
 # request_keyframe: set by hub — fn() che chiede subito un keyframe alla targa (INFO SIP)
 request_keyframe = None
 
