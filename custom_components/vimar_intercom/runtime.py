@@ -36,6 +36,12 @@ MAC_CITOFONO: str = ""
 USE_LOCAL_UDP:  bool = True   # True = UDP locale; False = TLS/TCP cloud
 LOCAL_UDP_PORT: int  = 5060   # porta UDP locale su HA
 
+# ─── Video ───────────────────────────────────────────────────────────────────
+# Not every entrance has a camera: the pairing QR says "video=0" on those. Our
+# own offers then carry no m=video (answers mirror the offer anyway). Entries
+# made before this field was stored have no value: True, as before.
+VIDEO_ENABLED: bool = True
+
 # ─── Media encryption ────────────────────────────────────────────────────────
 # False (default) = RTP in chiaro (RTP/AVP, nessun a=crypto). Verificato sul
 # campo 20/08/2026: la targa baresip di questo impianto NON accetta SRTP.
@@ -221,7 +227,7 @@ def configure(data: dict) -> None:
     global LOCAL_DOMAIN, CLOUD_DOMAIN
     global SIP_PROXY, LOCAL_PROXY
     global GID, PLANT_TYPE, MAC_CITOFONO
-    global USE_LOCAL_UDP, LOCAL_UDP_PORT, MEDIA_ENC_OPTION, MEDIA_ENC_PLANT
+    global USE_LOCAL_UDP, LOCAL_UDP_PORT, MEDIA_ENC_OPTION, MEDIA_ENC_PLANT, VIDEO_ENABLED
     global INTERCOM, DOOR_ESTERNO, VOICE_ANSWER
     global DETECTED_MODEL, DETECTED_FW, DETECTED_UA, DETECTED_PRIORITY
     global ACTUATORS
@@ -244,6 +250,7 @@ def configure(data: dict) -> None:
 
     USE_LOCAL_UDP  = bool(data.get("use_local_udp", True))
     LOCAL_UDP_PORT = int(data.get("local_udp_port", 5060))
+    VIDEO_ENABLED  = bool(data.get("video_enabled", True))
     MEDIA_ENC_OPTION = media_enc_mode(data.get("media_enc"))
     VOICE_ANSWER = voice_answer_mode(data.get("voice_answer"))
     MEDIA_ENC_PLANT  = None   # lo ridice l'impianto al prossimo GET_INIT_STATUS_REPLY
