@@ -16,6 +16,7 @@ import time
 from .const import RTP_AUDIO_PORT, RTP_VIDEO_PORT
 from . import av_stream
 from . import frame_grabber
+from . import rtcp
 from .srtp import SRTPContext
 
 _LOGGER = logging.getLogger(__name__)
@@ -709,6 +710,26 @@ video_proto: RTPVideoProtocol | None = None
 _stun_task = None
 _audio_task = None
 _tx_task = None
+# RTCP probes of the current call (rtcp.py): only with the logger at DEBUG.
+_rtcp_probes: list[rtcp.RTCPProbe] = []
+
+
+def _close_rtcp_probes() -> None:
+    for probe in _rtcp_probes:
+        probe.close()
+    _rtcp_probes.clear()
+
+
+async def _open_rtcp_probes(lines) -> None:
+    """lines: (label, our RTP port, remote ip, remote RTP port, remote key)."""
+    _close_rtcp_probes()
+    if not rtcp.debug_enabled():
+        return
+    for label, port, ip, remote_port, key in lines:
+        probe = await rtcp.open_probe(label, port + 1, (ip, remote_port),
+                                      encrypted=bool(key), key=key)
+        if probe:
+            _rtcp_probes.append(probe)
 
 
 # ─── Transport setup ────────────────────────────────────────────────
@@ -791,6 +812,7 @@ async def setup_media(remote_sdp, local_crypto_key=None, local_video_crypto_key=
     # directions of a line use it.
     remote_audio_key = audio.get("crypto_key")
     remote_video_key = video.get("crypto_key")
+    rtcp_lines = []
     audio_suite = audio.get("crypto_suite") or "AES_CM_128_HMAC_SHA1_80"
     video_suite = video.get("crypto_suite") or "AES_CM_128_HMAC_SHA1_80"
 
@@ -825,6 +847,7 @@ async def setup_media(remote_sdp, local_crypto_key=None, local_video_crypto_key=
         _LOGGER.info("Audio: dir=%s fmts=%s tx=%s", audio.get("dir", "sendrecv"),
                      fmts, audio_proto.tx_enabled)
         audio_proto.send_stun()
+        rtcp_lines.append(("audio", RTP_AUDIO_PORT, aip, audio["port"], remote_audio_key))
         _mode = "SRTP" if audio_proto.srtp_rx else "RTP"
         await broadcast("log", f"Audio {_mode} → {aip}:{audio['port']}")
 
@@ -854,6 +877,7 @@ async def setup_media(remote_sdp, local_crypto_key=None, local_video_crypto_key=
             _LOGGER.info("SRTP Video RX — direct H.264 depacketization (no ffmpeg)")
         frame_grabber.start(video_proto)
         video_proto.send_stun()
+        rtcp_lines.append(("video", RTP_VIDEO_PORT, vip, video["port"], remote_video_key))
         _vmode = "SRTP" if video_proto.srtp_rx else "RTP"
         await broadcast("log", f"Video {_vmode} → {vip}:{video['port']} (direct)")
     elif video_proto:
@@ -866,6 +890,9 @@ async def setup_media(remote_sdp, local_crypto_key=None, local_video_crypto_key=
         # Nothing of an earlier call's video may be replayed in this one, and
         # the keyframe loop must not see video "flowing".
         _forget_video(video_proto)
+
+    # Debugging only: with the logger at DEBUG, listen on the RTCP ports.
+    await _open_rtcp_probes(rtcp_lines)
 
     if _stun_task:
         _stun_task.cancel()
@@ -939,12 +966,14 @@ async def stop_media():
         video_proto._fua_expected_seq = None
         _forget_video(video_proto)  # video finito: niente replay a chi si collega dopo
     frame_grabber.stop(video_proto)
+    _close_rtcp_probes()
     await av_stream.stop_av_ffmpeg()
 
 
 def close_transports():
     """Close UDP transports — called on integration unload."""
     global audio_proto, video_proto
+    _close_rtcp_probes()
     if audio_proto and audio_proto.transport:
         audio_proto.transport.close()
         audio_proto = None
