@@ -4,6 +4,7 @@ import array
 import asyncio
 import base64
 import logging
+import math
 import os
 import random
 import socket
@@ -77,6 +78,18 @@ def ulaw_encode(pcm_data: bytes) -> bytes:
         mantissa = (sample >> (exp + 3)) & 0x0F
         out[i] = (~(sign | (exp << 4) | mantissa)) & 0xFF
     return bytes(out)
+
+
+# Voce sul WS mentre squilla = «Rispondi»: RMS del PCM16 sopra VOICE_RMS per almeno
+# VOICE_ANSWER_MS di fila (il rumore del microfono sta sotto i 300, la voce a 8 kHz
+# sopra i 2000). Serve a chi risponde parlando da Echo Show o HomeKit via Scrypted.
+VOICE_RMS = 800
+VOICE_ANSWER_MS = 200
+
+
+def rms(pcm: bytes) -> float:
+    a = array.array("h", pcm[:len(pcm) & ~1])
+    return math.sqrt(sum(x * x for x in a) / len(a)) if a else 0.0
 
 
 # ─── RTP Protocols ──────────────────────────────────────────────────
