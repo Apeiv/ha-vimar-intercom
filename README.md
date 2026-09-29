@@ -443,6 +443,8 @@ this component), check that both patches are still in place — see the note und
   option (`voice_answer`): `declared` (default, only with the flag), `off` (never), `any` (any connection
   with a mic: a wall tablet with the mic left open can answer by itself on household noise). In every mode
   a connection that was in a call never answers until it goes back to idle. While idle, mic frames are dropped.
+  External clients using a signed URL (`auth/sign_path`): put `voice_answer=1` in the path *before* signing;
+  appending it afterwards gets a 401, because HA validates the signed query. Or pick the `any` option.
 - Ring history for the card: `GET /api/vimar_intercom/rings` (list, `?limit=` up to 50) and
   `GET /api/vimar_intercom/rings/<name>` (the photo or the clip, with HTTP ranges) require Home
   Assistant authentication (the card loads them through signed paths). The second serves only

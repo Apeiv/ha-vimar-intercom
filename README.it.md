@@ -447,6 +447,8 @@ questo componente), ricontrolla che entrambe le patch siano ancora presenti (ved
   connessione con microfono: un tablet a muro col microfono rimasto aperto può rispondere da solo coi
   rumori di casa). In ogni modo una connessione che era in chiamata non risponde finché non torna a
   riposo. A riposo l'audio si butta.
+  Client esterni con URL firmato (`auth/sign_path`): metti `voice_answer=1` nel path *prima* di firmare;
+  aggiungerlo dopo dà 401, perché HA valida la query firmata. Oppure scegli l'opzione `any`.
 - Ultimi squilli per la card: `GET /api/vimar_intercom/rings` (elenco, `?limit=` fino a 50) e
   `GET /api/vimar_intercom/rings/<nome>` (la foto o il clip, anche a pezzi con Range) richiedono
   l'autenticazione HA (la card li carica con percorsi firmati). Il secondo serve solo file
