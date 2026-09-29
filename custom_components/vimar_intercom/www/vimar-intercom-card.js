@@ -10,7 +10,7 @@
 //
 // Le entità non vanno scritte: un entity_id che non esiste (area del dispositivo,
 // rinomina) viene sostituito da quello vero. La camera dell'integrazione si trova nel
-// registro del frontend; stato, ultimo squillo e serratura dall'attributo
+// registro del frontend; stato, ultimo squillo, serratura e impostazioni dall'attributo
 // `card_entities` della camera. Scritte e esistenti, vincono quelle della config.
 //   anchor: citofono      (URL con #citofono: la card si porta in vista; se lo stato è già
 //                         "in_call" — es. "Rispondi" premuto sulla notifica, che risponde
@@ -63,6 +63,8 @@ const NO_ANSWER = "La targa non risponde, riprova.";
 const REFUSED = "La targa non ha accettato, riprova.";
 const SETUP_TIMEOUT_S = 20;  // oltre, "la targa non risponde" (il cloud a volte ci mette 15 s)
 const HOLD_MS = 1500;        // dopo il riaggancio: video fermo, tasti spenti, poi la card si richiude
+const OPEN_FLASH_MS = 2000;  // "Aperto" / "Errore" sul tasto
+const PENDING_MS = 10000;   // "Collegamento…" subito al tocco, senza aspettare lo stato di HA; oltre, si lascia stare
 const SAY_MS = 4000;         // un avviso resta 4 s al posto della riga di stato
 const LIVE = ["ringing", "calling", "in_call"];
 const OUTCOME = { answered: "Risposto", away: "Messaggio di assenza", missed: "Nessuna risposta" };
@@ -86,6 +88,27 @@ const CT = ':host([layout="popup"][compact="tile"]) ha-card:not(.pop)';
 const STYLE = `
   /* Misure e colori ritoccabili senza toccare il resto: chip sul video, tondi delle scorciatoie e della barra, pannello popup. */
   :host { display: block; scroll-margin-top: calc(var(--header-height, 56px) + 8px);
+          /* Colori: quelli del tema di HA (variabili standard), i valori dopo la virgola sono il ripiego. Tutto il resto usa solo --vi-*. */
+          --vi-primary: var(--primary-color, #0b5cad);
+          --vi-ok: var(--success-color, #30b35f);
+          --vi-bad: var(--error-color, #e5483d);
+          --vi-warn: var(--warning-color, #ffb547);
+          --vi-info: var(--info-color, #6cb2ff);
+          --vi-line: var(--divider-color, rgba(127,127,127,.3));
+          --vi-ink: var(--primary-text-color, #1b1b1f);
+          --vi-icon: var(--state-icon-color, var(--secondary-text-color, #6f6a60));
+          --vi-card: var(--ha-card-background, var(--card-background-color, #fff));
+          --vi-radius: var(--ha-card-border-radius, 12px);
+          /* Tinte derivate: pieno scurito (testo bianco leggibile), chiaro per il vetro scuro, squillo con testo scuro. */
+          --vi-primary-solid: color-mix(in srgb, var(--vi-primary) 72%, #000);
+          --vi-ok-solid: color-mix(in srgb, var(--vi-ok) 72%, #000);
+          --vi-bad-solid: color-mix(in srgb, var(--vi-bad) 78%, #000);
+          --vi-primary-lite: color-mix(in srgb, var(--vi-primary) 45%, #fff);
+          --vi-ok-lite: color-mix(in srgb, var(--vi-ok) 45%, #fff);
+          --vi-bad-lite: color-mix(in srgb, var(--vi-bad) 50%, #fff);
+          --vi-warn-lite: color-mix(in srgb, var(--vi-warn) 55%, #fff);
+          --vi-warn-bg: color-mix(in srgb, var(--vi-warn) 78%, #fff);
+          --vi-on-warn: color-mix(in srgb, var(--vi-warn) 18%, #000);
           --vi-chip: rgba(0,0,0,.45); --vi-sc-size: 40px; --vi-bar-size: 64px; --vi-sc-pop-size: 48px;
           --vi-pop-bg: #111; --vi-pop-radius: 32px; --vi-backdrop: rgba(15,15,20,.5);
           --vi-glass: rgba(20,22,26,.5); --vi-glass-bar: rgba(20,22,26,.55); --vi-glass-btn: rgba(255,255,255,.18); }
@@ -93,18 +116,18 @@ const STYLE = `
   @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
     :host { --vi-glass: rgba(20,22,26,.72); --vi-glass-bar: rgba(20,22,26,.72); }
   }
-  ha-card { position: relative; overflow: hidden; --st: var(--primary-color); --ink: var(--primary-text-color);
-            --dim: var(--secondary-text-color); --fill: color-mix(in srgb, var(--ink) 7%, transparent); }
-  [data-state="ringing"] { --st: var(--warning-color); }
-  [data-state="calling"] { --st: var(--info-color); }
-  [data-state="in_call"] { --st: var(--success-color); }
-  [data-state="ringing"] { --dot: #ffb547; }
-  [data-state="calling"] { --dot: #6cb2ff; }
-  [data-state="in_call"] { --dot: #5fd68a; }
+  ha-card { position: relative; overflow: hidden; --st: var(--vi-primary); --ink: var(--primary-text-color, #1b1b1f);
+            --dim: var(--secondary-text-color, #6f6a60); --fill: color-mix(in srgb, var(--ink) 7%, transparent); }
+  [data-state="ringing"] { --st: var(--vi-warn); }
+  [data-state="calling"] { --st: var(--vi-info); }
+  [data-state="in_call"] { --st: var(--vi-ok); }
+  [data-state="ringing"] { --dot: var(--vi-warn); }
+  [data-state="calling"] { --dot: var(--vi-info); }
+  [data-state="in_call"] { --dot: var(--vi-ok); }
   [data-state="offline"] { --st: var(--disabled-text-color, var(--dim)); }
   button { all: unset; box-sizing: border-box; position: relative; cursor: pointer; -webkit-tap-highlight-color: transparent; }
   button:disabled { cursor: default; }
-  button:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
+  button:focus-visible { outline: 2px solid var(--vi-primary); outline-offset: 2px; }
   [hidden] { display: none !important; }
   @keyframes blink { 50% { opacity: .25; } }
   @keyframes pulse { 50% { transform: scale(1.5); opacity: .5; } }
@@ -124,7 +147,7 @@ const STYLE = `
   [data-state="calling"] .pill::before, [data-state="in_call"] .pill::before { animation: blink 2s infinite; }
   .last:not(:empty)::before { content: "· "; }
   .last:empty, .err:empty { display: none; }
-  .err { color: var(--warning-color); font-weight: 500; }
+  .err { color: var(--vi-warn); font-weight: 500; }
   .sub:has(.err:not(:empty)) > :not(.err) { display: none; }
 
   /* Foto dell'ultimo squillo = tasto cronologia (senza foto: campanello, non cliccabile). */
@@ -139,7 +162,7 @@ const STYLE = `
   #photo .hb { position: absolute; right: 3px; bottom: 3px; width: 18px; height: 18px; border-radius: 50%; display: grid;
                place-items: center; --mdc-icon-size: 13px; color: #fff; background: var(--vi-chip); }
   #photo:disabled .hb { opacity: .5; }
-  [data-drawer="true"] #photo { box-shadow: inset 0 0 0 2px var(--primary-color); }
+  [data-drawer="true"] #photo { box-shadow: inset 0 0 0 2px var(--vi-primary); }
   [data-state="ringing"] #photo { box-shadow: inset 0 0 0 2px var(--st); }
 
   /* Scena: video dal vivo o foto dell'ultimo squillo. Niente animazione di altezza né
@@ -181,9 +204,9 @@ const STYLE = `
   .out { display: flex; align-items: center; gap: 5px; font-size: 12px; line-height: 1.2; color: var(--dim);
          white-space: nowrap; overflow: hidden; }
   .out::before { content: ""; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--oc, var(--dim)); }
-  [data-outcome="answered"] { --oc: var(--success-color); }
-  [data-outcome="away"] { --oc: var(--info-color); }
-  [data-outcome="missed"] { --oc: var(--warning-color); }
+  [data-outcome="answered"] { --oc: var(--vi-ok); }
+  [data-outcome="away"] { --oc: var(--vi-info); }
+  [data-outcome="missed"] { --oc: var(--vi-warn); }
   .empty { display: none; flex: 1; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
            padding: 14px; text-align: center; font-size: 13px; color: var(--dim); }
   .empty ha-icon { --mdc-icon-size: 32px; opacity: .6; }
@@ -210,7 +233,7 @@ const STYLE = `
          place-items: center; color: #fff; background: var(--vi-chip); }
   #log ha-icon { --mdc-icon-size: 22px; }
   .live #log { display: grid; }
-  [data-drawer="true"] #log { background: var(--primary-color); }
+  [data-drawer="true"] #log { background: var(--vi-primary); }
 
   /* Muto locale (audio in arrivo dalla targa): tondo sul video, accanto alla cronologia;
      visibile per tutta la diretta (in JS, hidden segue lo stato "live"), non solo mentre suona. */
@@ -225,23 +248,30 @@ const STYLE = `
   .live #fit { display: grid; }
   ha-card[data-fit="contain"] #video > canvas, ha-card[data-fit="contain"] .still { object-fit: contain; }
 
+  /* Impostazioni: ingranaggio accanto alla cronologia (sul video e nella card compatta). */
+  #cfg { position: absolute; top: 8px; right: 152px; z-index: 3; width: 40px; height: 40px; border-radius: 50%; display: none;
+         place-items: center; color: #fff; background: var(--vi-chip); }
+  #cfgc { display: none; }
+  #cfg ha-icon { --mdc-icon-size: 22px; }
+  .live #cfg { display: grid; }
   .row { display: flex; gap: 6px; min-width: 0; }
   /* Se la riga è stretta (anteprima dell'editor, ~330 px) si accorcia solo la pill più lunga
      ("Vedi es…"): "Parla" e "Apri" restano leggibili per intero. */
   #view, #hangup { order: 1; flex: 0 1 auto; } #talk { order: 2; } #open { order: 3; }
   .row button { display: inline-flex; flex: none; align-items: center; gap: 4px; height: 36px; padding: 0 9px; border-radius: 18px; min-width: 0;
-                font-size: 12px; font-weight: 600; color: var(--primary-color);
-                background: color-mix(in srgb, var(--primary-color) 12%, transparent); transition: transform .1s, background .2s; }
+                font-size: 12px; font-weight: 600; color: var(--vi-primary);
+                background: color-mix(in srgb, var(--vi-primary) 12%, transparent); transition: transform .1s, background .2s; }
   .row button::before { content: ""; position: absolute; inset: -4px 0; }  /* bersaglio 44 px */
   .ic { display: grid; place-items: center; flex: none; width: 18px; height: 18px; }
   .ic ha-icon { --mdc-icon-size: 18px; }
   .row button:active { transform: scale(.96); }
-  button.fill { background: var(--primary-color); color: var(--text-primary-color); }
-  button.ok { background: var(--success-color); color: var(--text-primary-color); }
-  button.warn { background: var(--warning-color); color: var(--text-primary-color); }
-  #hangup { background: var(--error-color); color: var(--text-primary-color); }
+  button.fill { background: var(--vi-primary); color: var(--text-primary-color); }
+  button.ok { background: var(--vi-ok); color: var(--text-primary-color); }
+  button.warn { background: var(--vi-warn); color: var(--text-primary-color); }
+  button.bad { background: var(--vi-bad); color: var(--text-primary-color); }
+  #hangup { background: var(--vi-bad); color: var(--text-primary-color); }
   .row button:disabled { opacity: .45; }
-  button.answer { box-shadow: 0 0 0 0 color-mix(in srgb, var(--success-color) 55%, transparent); animation: halo 1.4s ease-out infinite; }
+  button.answer { box-shadow: 0 0 0 0 color-mix(in srgb, var(--vi-ok) 55%, transparent); animation: halo 1.4s ease-out infinite; }
 
   .head { display: grid; grid-template-columns: 56px minmax(0, 1fr); grid-template-rows: 18px 36px; column-gap: 10px; row-gap: 4px;
           align-items: center; padding: 7px 10px 7px 12px; }
@@ -265,10 +295,11 @@ const STYLE = `
                background: var(--vi-glass); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
   :host([layout="overlay"]) .live .badge::before { width: 8px; height: 8px; }
   :host([layout="overlay"]) .live .badge::before, .pop .badge::before { animation: none; background: var(--dot, var(--st)); }
-  :host([layout="overlay"]) .live :is(#log, #fit) { top: 12px; right: 12px; width: 44px; height: 44px; background: var(--vi-glass);
+  :host([layout="overlay"]) .live :is(#log, #fit, #cfg) { top: 12px; right: 12px; width: 44px; height: 44px; background: var(--vi-glass);
                -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
   :host([layout="overlay"]) .live #fit { right: 64px; }
-  :host([layout="overlay"]) .live[data-drawer="true"] #log { background: var(--primary-color); }
+  :host([layout="overlay"]) .live #cfg { right: 116px; }
+  :host([layout="overlay"]) .live[data-drawer="true"] #log { background: var(--vi-primary); }
   :host([layout="overlay"]) .live .row { position: absolute; left: 12px; right: 12px; bottom: 12px; height: 84px; padding: 0; gap: 0;
                display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: center; pointer-events: none;
                border-radius: 22px; border: 1px solid var(--vi-glass-btn); background: var(--vi-glass-bar);
@@ -280,10 +311,11 @@ const STYLE = `
   :host([layout="overlay"]) .live .row button:active { transform: none; opacity: .7; }
   :host([layout="overlay"]) .live #talk { grid-column: 2; }
   :host([layout="overlay"]) .live #open { grid-column: 3; }
-  :host([layout="overlay"]) .live #hangup { order: 4; grid-column: 4; background: none; color: #ff8a80; }
-  :host([layout="overlay"]) .live button.ok, :host([layout="overlay"]) .live button.answer { background: none; color: #7fe3a3; }
-  :host([layout="overlay"]) .live button.fill { background: none; color: #9fd0ff; }
-  :host([layout="overlay"]) .live button.warn { background: none; color: #ffcf7f; }
+  :host([layout="overlay"]) .live #hangup { order: 4; grid-column: 4; background: none; color: var(--vi-bad-lite); }
+  :host([layout="overlay"]) .live button.ok, :host([layout="overlay"]) .live button.answer { background: none; color: var(--vi-ok-lite); }
+  :host([layout="overlay"]) .live button.fill { background: none; color: var(--vi-primary-lite); }
+  :host([layout="overlay"]) .live button.warn { background: none; color: var(--vi-warn-lite); }
+  :host([layout="overlay"]) .live button.bad { background: none; color: var(--vi-bad-lite); }
   :host([layout="overlay"]) .live button.answer { animation: none; box-shadow: none; }
   :host([layout="overlay"]) .live .ic { width: 24px; height: 24px; background: none; }
   :host([layout="overlay"]) .live .ic ha-icon { --mdc-icon-size: 24px; }
@@ -308,7 +340,7 @@ const STYLE = `
   :host([layout="sotto"]) ha-card:not(.live)[data-drawer="true"] .media { order: 1; aspect-ratio: auto; background: none; color: var(--ink); }
   :host([layout="sotto"]) ha-card:not(.live)[data-drawer="true"] :is(.still, .ph) { display: none; }
   :host([layout="sotto"]) ha-card:not(.live) .drawer { position: static; width: auto; transform: none; visibility: visible; box-shadow: none;
-               background: none; transition: none; border-top: 1px solid var(--divider-color); }
+               background: none; transition: none; border-top: 1px solid var(--vi-line); }
   :host([layout="sotto"]) ha-card:not(.live) .hist { max-height: 176px; }
 
   /* ---- layout="popup": compatta in dashboard (mai .live: niente video). Nel <dialog> la card intera, in un
@@ -324,15 +356,15 @@ const STYLE = `
   ha-card:not(.live):not(.pop):has(.sc button) #open { display: none; }  /* da fermo "Apri" è la scorciatoia */
   .sc button { display: flex; flex-direction: column; align-items: center; gap: 2px; max-width: 60px; font-size: 11px; color: var(--ink); }
   .sc button::before { content: ""; position: absolute; inset: -2px -4px; }
-  .sc .ic { width: var(--vi-sc-size); height: var(--vi-sc-size); border-radius: 50%; background: color-mix(in srgb, var(--primary-color) 14%, transparent); color: var(--primary-color); }
-  .sc button.warn .ic { background: var(--warning-color); color: var(--text-primary-color); }
-  .sc button.ok .ic { background: var(--success-color); color: var(--text-primary-color); }
+  .sc .ic { width: var(--vi-sc-size); height: var(--vi-sc-size); border-radius: 50%; background: color-mix(in srgb, var(--vi-primary) 14%, transparent); color: var(--vi-primary); }
+  .sc button.warn .ic { background: var(--vi-warn); color: var(--text-primary-color); }
+  .sc button.ok .ic { background: var(--vi-ok); color: var(--text-primary-color); }
   .sc button:disabled { opacity: .45; }
 
   /* ---- layout="popup", card compatta in dashboard: due stili (compact_style). Stesso DOM: .head diventa la riga/griglia,
      .row e .sc "spariscono" (display: contents) e i loro tasti si dispongono con order. Il tocco fuori dai tasti apre il popup. */
-  ${CA} { border-radius: var(--ha-card-border-radius, 12px); --fill: color-mix(in srgb, var(--ink) 12%, transparent);
-          background: var(--ha-card-background, var(--card-background-color, #fff));
+  ${CA} { border-radius: var(--vi-radius); --fill: color-mix(in srgb, var(--ink) 12%, transparent);
+          background: var(--vi-card);
           box-shadow: var(--ha-card-box-shadow, 0 1px 3px rgba(0,0,0,.18)); }
   ${CA} .media { display: none; }
   ${CA} :is(.row, .sc) { display: contents; }
@@ -346,12 +378,26 @@ const STYLE = `
   ${CA} :is(#view, #talk, #hangup, #hist, .sc button) .ic { background: none; color: inherit; width: 22px; height: 22px; }
   ${CA} :is(#view, #talk, #hangup, #hist, .sc button) .ic ha-icon { --mdc-icon-size: 22px; }
   ${CA} :is(#open, #view, #talk, #hangup) { display: none; }
-  ${CA}[data-state="ringing"] :is(#hist, .last) { display: none; }
+  ${CA}[data-state="ringing"] :is(#hist, #cfgc, .last) { display: none; }
   ${CA}[data-state="ringing"] #talk { display: flex; }
   ${CT}[data-state="ringing"] #hangup:not([hidden]) { display: flex; }
 
+  /* Feedback al tocco (compatta): "Collegamento…" blu subito, tondi che girano / verde "Aperto" / rosso "Errore", :active visibile. */
+  @keyframes ringpulse { 50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--vi-info) 45%, transparent); } }
+  ${CA}[data-pending="true"] { --ha-card-background: color-mix(in srgb, var(--vi-info) 22%, var(--vi-card));
+                background: color-mix(in srgb, var(--vi-info) 22%, var(--vi-card)); --ring: var(--vi-info); }
+  ${CA}[data-pending="true"] #photo { animation: ringpulse 1.2s ease-in-out infinite; }
+  ${CT}[data-pending="true"] .bell { color: color-mix(in srgb, var(--vi-info) 25%, #000); background: var(--vi-info); }
+  ${CA} :is(#hist, #cfgc, .sc button) { transition: transform .1s, filter .1s; }
+  ${CA} :is(#hist, #cfgc, .sc button, #view, #talk, #hangup):active { transform: scale(.94); filter: brightness(1.25) saturate(1.1); }
+  ${CA}:active:not(:has(button:active)) { filter: brightness(.94); }
+  ${CA} .sc button.busy { opacity: .85; }
+  ${CA} .sc button.warn { animation: ringpulse 1s ease-in-out infinite; }
+  ${CP} .sc button:first-child.bad { background: var(--vi-bad-solid); color: #fff; }
+  ${CT} :is(#open, .sc button).bad { color: #fff; background: var(--vi-bad-solid); }
+
   /* Pillola: 64 px, raggio 32, foto tonda con anello di stato; a destra tondi 44 px. */
-  ${CP} { --ha-card-border-radius: 32px; --ring: var(--success-color); }
+  ${CP} { --ha-card-border-radius: 32px; --ring: var(--vi-ok); }
   ${CP}[data-state="offline"] { --ring: var(--st); }
   ${CP} .head { display: flex; align-items: center; gap: 12px; height: 64px; padding: 0 8px; }
   ${CP} .bell { display: none; }
@@ -361,25 +407,29 @@ const STYLE = `
   ${CP} .name { font-size: 15px; font-weight: 700; line-height: 20px; }
   ${CP} .sub { font-size: 12px; }
   ${CP} :is(#hist, #talk, .sc button:first-child) { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border-radius: 50%; }
-  ${CP} #hist { order: 3; background: var(--fill); color: var(--ink); }
+  ${CP} :is(#hist, #cfgc) { order: 3; background: var(--fill); color: var(--vi-icon); }
+  ${CP} #cfgc:not([hidden]), ${CP} #hist { flex: none; display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border-radius: 50%; }
+  ${CP} #cfgc ha-icon { --mdc-icon-size: 22px; }
+  ${CP}[data-state="ringing"] #cfgc { display: none; }
+  ${CT}[data-state="ringing"] #cfgc:not([hidden]) { display: none; }
   ${CP} .sc button:not(:first-child) { display: none; }
-  ${CP} #talk { display: none; order: 4; background: #1f7a45; color: #fff; }
+  ${CP} #talk { display: none; order: 4; background: var(--vi-ok-solid); color: #fff; }
   ${CP}[data-state="ringing"] #talk { display: grid; }
-  ${CP} .sc button:first-child { order: 5; background: #0b5cad; color: #fff; }
-  ${CP} .sc button:first-child.warn { background: var(--warning-color); color: #2a1a00; }
-  ${CP} .sc button:first-child.ok { background: var(--success-color); color: #fff; }
+  ${CP} .sc button:first-child { order: 5; background: var(--vi-primary-solid); color: #fff; }
+  ${CP} .sc button:first-child.warn { background: var(--vi-warn); color: var(--vi-on-warn); }
+  ${CP} .sc button:first-child.ok { background: var(--vi-ok-solid); color: #fff; }
   ${CP} .lbl { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }  /* solo per i lettori di schermo */
   ${CP} :is(#hist, #talk, .sc button):disabled { opacity: .45; }
-  ${CP}[data-state="ringing"] { --ha-card-background: #ffb547; background: #ffb547; --ink: #2a1a00; --dim: #2a1a00; --ring: #fff; }
+  ${CP}[data-state="ringing"] { --ha-card-background: var(--vi-warn-bg); background: var(--vi-warn-bg); --ink: var(--vi-on-warn); --dim: var(--vi-on-warn); --ring: #fff; }
 
   /* Tile: card 16, riga campanello + nome + miniatura, sotto griglia di tasti da 44. */
   ${CT} { --ha-card-border-radius: 16px; }
   ${CT} .head { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 8px; padding: 12px; }
   ${CT} .head::before { content: ""; order: 4; flex: 0 0 100%; height: 0; margin-top: -4px; }
   ${CT} .bell { order: 1; display: grid; place-items: center; flex: none; width: 40px; height: 40px; margin-right: 4px; border-radius: 50%;
-                color: var(--success-color); background: color-mix(in srgb, var(--success-color) 18%, transparent); }
+                color: var(--vi-ok); background: color-mix(in srgb, var(--vi-ok) 18%, transparent); }
   ${CT} .bell ha-icon { --mdc-icon-size: 22px; }
-  ${CT}[data-state="ringing"] .bell { color: #3a2500; background: #ffb547; }
+  ${CT}[data-state="ringing"] .bell { color: var(--vi-on-warn); background: var(--vi-warn); }
   ${CT} .ttl { order: 2; flex: 1 1 0; }
   ${CT} .name { font-size: 15px; font-weight: 600; line-height: 20px; }
   ${CT}[data-state="ringing"] .name { font-weight: 700; }
@@ -392,26 +442,56 @@ const STYLE = `
   ${CT} #view .lbl { font-size: 0; }  /* nel tile solo "Vedi": il nome accessibile resta "Vedi esterno" (aria-label) */
   ${CT} #view .lbl::after { content: "Vedi"; font-size: 14px; }
   ${CT}[data-state="ringing"] #view { display: none; }
-  ${CT} :is(#open, .sc button) { order: 6; color: color-mix(in srgb, #0b5cad 45%, var(--ink)); background: color-mix(in srgb, #0b5cad 16%, transparent); }
-  ${CT} :is(#open, .sc button).warn { color: #2a1a00; background: var(--warning-color); }
-  ${CT} :is(#open, .sc button).ok { color: #fff; background: var(--success-color); }
+  ${CT} :is(#open, .sc button) { order: 6; color: color-mix(in srgb, var(--vi-primary) 60%, var(--ink)); background: color-mix(in srgb, var(--vi-primary) 16%, transparent); }
+  ${CT} :is(#open, .sc button).warn { color: var(--vi-on-warn); background: var(--vi-warn); }
+  ${CT} :is(#open, .sc button).ok { color: #fff; background: var(--vi-ok-solid); }
   ${CT} #hist { order: 7; }
-  ${CT} #talk { order: 5; color: #fff; background: #2e7d4f; font-weight: 700; }
+  ${CT} #cfgc:not([hidden]) { order: 2; display: grid; place-items: center; flex: none; width: 40px; height: 40px; border-radius: 50%; color: var(--vi-icon); background: var(--fill); }
+  ${CT} #cfgc ha-icon { --mdc-icon-size: 22px; }
+  ${CT} #talk { order: 5; color: #fff; background: var(--vi-ok-solid); font-weight: 700; }
   ${CT}:not([data-state="ringing"]) #talk { display: none; }
-  ${CT} #hangup { order: 7; font-weight: 700; color: color-mix(in srgb, #a3231a 45%, var(--ink)); background: color-mix(in srgb, #d93025 14%, transparent); }
-  ${CT}[data-state="ringing"] { --ha-card-background: color-mix(in srgb, #ffb547 14%, var(--card-background-color, #fff));
-                background: color-mix(in srgb, #ffb547 14%, var(--card-background-color, #fff)); }
+  ${CT} #hangup { order: 7; font-weight: 700; color: color-mix(in srgb, var(--vi-bad) 60%, var(--ink)); background: color-mix(in srgb, var(--vi-bad) 14%, transparent); }
+  ${CT}[data-state="ringing"] { --ha-card-background: color-mix(in srgb, var(--vi-warn) 14%, var(--vi-card));
+                background: color-mix(in srgb, var(--vi-warn) 14%, var(--vi-card)); }
   ${CT} :is(#view, #hist, #talk, #hangup, .sc button):disabled { opacity: .45; }
 
+  /* Popup delle impostazioni: <dialog> nativo, nei colori del tema. */
+  dialog.set { width: min(92vw, 420px); max-height: 90vh; margin: auto; padding: 0; border: 0; border-radius: 20px; overflow: auto; box-sizing: border-box;
+               color: var(--vi-ink); background: var(--card-background-color, #fff); box-shadow: 0 20px 60px rgba(0,0,0,.35); }
+  dialog.set::backdrop { background: rgba(15,15,20,.5); -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); }
+  .set-c { padding: 16px; }  /* il padding sta qui: cliccarlo non deve chiudere il dialog */
+  .set-h { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .set-h h2 { flex: 1; margin: 0; font-size: 18px; font-weight: 600; }
+  .set-x { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; color: var(--vi-ink);
+           background: color-mix(in srgb, var(--vi-ink) 10%, transparent); }
+  .set-r { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 6px 0; border-top: 1px solid var(--vi-line); }
+  .set-r:first-of-type { border-top: 0; }
+  .set-r.col { flex-direction: column; align-items: stretch; gap: 6px; }
+  .set-l { flex: 1; min-width: 0; display: flex; flex-direction: column; font-size: 15px; font-weight: 500; }
+  .set-l small { font-size: 12px; font-weight: 400; color: var(--secondary-text-color, #6f6a60); }
+  .set-tg { flex: none; width: 52px; height: 32px; border-radius: 16px; background: color-mix(in srgb, var(--vi-ink) 25%, transparent); transition: background .15s; }
+  .set-tg::before { content: ""; position: absolute; inset: -6px -4px; }
+  .set-tg::after { content: ""; position: absolute; top: 4px; left: 4px; width: 24px; height: 24px; border-radius: 50%; background: #fff; transition: transform .15s; box-shadow: 0 1px 3px rgba(0,0,0,.3); }
+  .set-tg[aria-checked="true"] { background: var(--vi-ok-solid); }
+  .set-tg[aria-checked="true"]::after { transform: translateX(20px); }
+  .set-tg:disabled { opacity: .45; }
+  .set-in { box-sizing: border-box; width: 100%; min-height: 44px; padding: 8px 12px; font: inherit; font-size: 15px; border-radius: 10px;
+            color: var(--vi-ink); background: color-mix(in srgb, var(--vi-ink) 8%, transparent); border: 1px solid var(--vi-line); }
+  select.set-in { width: auto; max-width: 55%; }
+  .set-r.col select.set-in { width: 100%; max-width: none; }
+  .set-in:focus-visible { outline: 2px solid var(--vi-primary); outline-offset: 1px; }
+  .set-e { min-height: 0; margin: 4px 0 0; font-size: 13px; color: var(--vi-bad); }
+  .set-e:empty { display: none; }
   .pop .media { display: block; position: absolute; inset: 0; aspect-ratio: auto; background: #000; }
-  .pop :is(#x, #log, #fit) { display: grid; top: 14px; width: 44px; height: 44px; border-radius: 50%; background: var(--vi-glass);
+  .pop :is(#x, #log, #fit, #cfg) { display: grid; top: 14px; width: 44px; height: 44px; border-radius: 50%; background: var(--vi-glass);
                        -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
-  .pop :is(#x, #log, #fit, #mute) ha-icon { --mdc-icon-size: 22px; }
-  .pop #x { right: 14px; } .pop #log { right: 66px; } .pop #fit { right: 118px; }
-  .pop[data-drawer="true"] #log { background: var(--primary-color); }
-  .pop .badge { display: inline-flex; top: 14px; left: 14px; right: 172px; height: 44px; padding: 0 14px; gap: 8px; font-size: 15px;
-                font-weight: 700; background: var(--vi-glass); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
-  .pop .badge::before { flex: none; width: 8px; height: 8px; }
+  .pop :is(#x, #log, #fit, #cfg, #mute) ha-icon { --mdc-icon-size: 22px; }
+  .pop #x { right: 14px; } .pop #log { right: 66px; } .pop #fit { right: 118px; } .pop #cfg { right: 170px; }
+  .pop[data-drawer="true"] #log { background: var(--vi-primary); }
+  /* Pill di stato larga nella riga in alto (poi: ingranaggio, adatta/riempi, cronologia, X); se non ci sta si accorcia con i puntini, i tondi restano da 44. */
+  .pop .badge { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; top: 14px; left: 14px; right: 224px; height: 44px; padding: 0 14px;
+                font-size: 15px; font-weight: 700; line-height: 44px; background: var(--vi-glass); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
+  .pop .badge::before { content: ""; display: inline-block; vertical-align: middle; margin: -2px 8px 0 0; width: 8px; height: 8px; border-radius: 50%; }
   .pop .ttl, .pop #photo, .pop #view { display: none; }
   /* Pannello di vetro in basso: riga dei tondi + chip delle scorciatoie (le altre: la prima è "Apri"). */
   .pop .head { position: absolute; left: 14px; right: 14px; bottom: 14px; z-index: 3; display: flex; flex-direction: column; align-items: stretch; gap: 12px;
@@ -425,12 +505,13 @@ const STYLE = `
   .pop .row .lbl { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }  /* solo per i lettori di schermo */
   .pop .ic { width: 56px; height: 56px; border-radius: 50%; background: var(--vi-glass-btn); color: #fff; }
   .pop .ic ha-icon { --mdc-icon-size: 24px; }
-  .pop #talk .ic, .pop button.ok .ic { background: #30b35f; }
-  .pop #talk.fill .ic { background: var(--primary-color); }
-  .pop button.warn .ic { background: var(--warning-color); }
-  .pop #hangup .ic { background: #e5483d; }
+  .pop #talk .ic, .pop button.ok .ic { background: var(--vi-ok); }
+  .pop #talk.fill .ic { background: var(--vi-primary); }
+  .pop button.warn .ic { background: var(--vi-warn); }
+  .pop button.bad .ic { background: var(--vi-bad); }
+  .pop #hangup .ic { background: var(--vi-bad); }
   .pop button.answer { animation: none; box-shadow: none; }
-  .pop button.answer .ic { box-shadow: 0 0 0 0 color-mix(in srgb, var(--success-color) 55%, transparent); animation: halo 1.4s ease-out infinite; }
+  .pop button.answer .ic { box-shadow: 0 0 0 0 color-mix(in srgb, var(--vi-ok) 55%, transparent); animation: halo 1.4s ease-out infinite; }
   .pop button.busy .ic::after { width: 24px; height: 24px; border-width: 3px; }
   /* Audio (#mute) nel primo posto dei tondi: allineato alla griglia a 4 colonne del pannello. */
   .pop #mute { top: auto; right: auto; bottom: 29px; left: calc((100% - 58px) / 8 + 1px); z-index: 4; width: 56px; height: 56px; border-radius: 50%;
@@ -457,8 +538,11 @@ const STYLE = `
   dialog.pop, .hist { overscroll-behavior: contain; }
   dialog.pop::backdrop { background: var(--vi-backdrop); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
   dialog.pop ha-card { height: 100%; background: none; --ha-card-border-radius: 0; --ha-card-box-shadow: none; --ha-card-border-width: 0; }
-  @media (min-width: 640px) {
-    dialog.pop, dialog.pop ha-card { height: auto; }
+  /* Schermo largo (PC, tablet, telefono in orizzontale): il pannello è il video 4:3, a tutta larghezza (al massimo 900 px e 90% dell'altezza),
+     con riga in alto e barra dei tasti di vetro SUL video: niente vuoto sotto. Il telefono in verticale resta il pannello alto. */
+  @media (min-width: 700px), (min-aspect-ratio: 1 / 1) {
+    dialog.pop { width: min(900px, calc(100% - 24px), calc((100vh - 24px) * 4 / 3)); max-width: none; height: fit-content; }  /* non auto: un <dialog> modale si allungherebbe a tutta altezza */
+    dialog.pop ha-card { height: auto; }
     .pop .media { position: relative; inset: auto; aspect-ratio: 4 / 3; }
   }
 `;
@@ -486,6 +570,11 @@ const FIT = `<button id="fit" aria-label="Riempi schermo" title="Riempi schermo"
   <ha-icon icon="mdi:arrow-expand-all" aria-hidden="true"></ha-icon></button>`;
 const HIST = `<button id="hist" aria-label="Cronologia squilli" title="Cronologia squilli" disabled><span class="ic"><ha-icon icon="mdi:history" aria-hidden="true"></ha-icon></span><span class="lbl">Storico</span></button>`;
 const BELL = `<span class="bell" aria-hidden="true"><ha-icon icon="mdi:bell"></ha-icon></span>`;
+// Impostazioni del citofono (Non disturbare, Segreteria…): tondo con l'ingranaggio, uno sul video e uno nella card compatta.
+// Due copie dello stesso tasto (id diversi) perché vivono in contenitori diversi: .media (video) e .head (card compatta).
+const cfgBtn = (id) => `<button id="${id}" class="cfg" aria-label="Impostazioni citofono" title="Impostazioni citofono" hidden>
+  <ha-icon icon="mdi:cog" aria-hidden="true"></ha-icon></button>`;
+const CFG = cfgBtn("cfg"), CFGC = cfgBtn("cfgc");
 const SUB = `<span class="sub"><span class="pill" role="status" aria-live="polite"></span><span class="last"></span><span class="err" role="alert"></span></span>`;
 const ROW = `<div class="row">${btn("view", "mdi:cctv", "Vedi esterno")}${btn("talk", "mdi:microphone", "Parla")}` +
   `${btn("hangup", "mdi:phone-hangup", "Riaggancia")}${btn("open", "mdi:door-open", "Apri")}</div>`;
@@ -494,9 +583,10 @@ const PHOTO_DLG = `<dialog class="photo" aria-label="Squillo"><img alt="Foto del
   `<video controls playsinline preload="metadata" hidden></video><p class="cap"></p></dialog>`;
 
 const TEMPLATE = `<ha-card>
-  <div class="media">${SCENE}<span class="badge dyn" aria-hidden="true"></span>${MUTE}${FIT}${LOG}${X}${DRAWER}</div>
-  <div class="head">${BELL}${PHOTO}<div class="ttl"><span class="name"></span>${SUB}</div>${ROW}<div class="sc"></div>${HIST}</div>
-  ${PHOTO_DLG}</ha-card><dialog class="pop" aria-label="Citofono"></dialog>`;
+  <div class="media">${SCENE}<span class="badge dyn" aria-hidden="true"></span>${MUTE}${FIT}${LOG}${CFG}${X}${DRAWER}</div>
+  <div class="head">${BELL}${PHOTO}<div class="ttl"><span class="name"></span>${SUB}</div>${ROW}<div class="sc"></div>${HIST}${CFGC}</div>
+  ${PHOTO_DLG}</ha-card><dialog class="pop" aria-label="Citofono"></dialog>
+  <dialog class="set" aria-label="Impostazioni citofono"></dialog>`;
 
 const concat = (...parts) => {
   const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
@@ -783,6 +873,7 @@ class VimarIntercomCard extends HTMLElement {
     this._talk.disabled = state === "offline" || (!window.isSecureContext && !ring)
       || (state === "calling" && !on);
     this._shortcuts();
+    this._syncSettings();
     this._histBtn.disabled = this._photo.disabled;
     this._open.disabled = state === "offline" || hass.states[this._ent("lock")]?.state === "unavailable";
     if ((state === "idle" || state === "offline") && this._ws) this._stopAudio();
@@ -876,6 +967,8 @@ class VimarIntercomCard extends HTMLElement {
     this._pic = $("#photo img");
     this._still = $(".still");
     this._hist = $(".hist");
+    this._set = $("dialog.set");
+    this._cfgs = [$("#cfg"), $("#cfgc")];
     this._empty = $(".empty span");
     this._dlg = $("dialog.photo");
     this._pop = $("dialog.pop");
@@ -910,6 +1003,8 @@ class VimarIntercomCard extends HTMLElement {
     this._view.className = "fill";
     this._open.setAttribute("aria-label", "Apri portone, tocca due volte");
     this._sc = $(".sc");
+    for (const b of this._cfgs) b.onclick = (e) => { e.stopPropagation(); this._openSettings(); };
+    this._set.onclick = (e) => e.target === this._set && this._set.close();
     this._histBtn = $("#hist");
     if (!window.isSecureContext) this._talk.title = "Per parlare serve Home Assistant in HTTPS.";
     for (const b of [this._log, this._photo, this._histBtn]) b.onclick = (e) => {
@@ -958,6 +1053,101 @@ class VimarIntercomCard extends HTMLElement {
       const t = this._err.textContent;
       if (t && t !== NO_ANSWER) this._sayT = setTimeout(() => { if (this._err.textContent === t) this._err.textContent = ""; }, SAY_MS);
     }).observe(this._err, { childList: true, characterData: true, subtree: true });
+  }
+
+  // Le entità delle impostazioni, dall'attributo `card_entities` della camera (chiavi dnd, segreteria, delay, file, text);
+  // se una manca, la sua riga non compare.
+  _setIds() {
+    const ids = {};
+    for (const [k, key] of [["dnd", "dnd"], ["vm", "segreteria"], ["delay", "delay"], ["file", "file"], ["text", "text"]]) {
+      const id = this._ent(key);
+      if (id && this._hass.states[id]) ids[k] = id;
+    }
+    if (!this._hass.user?.is_admin) delete ids.file, delete ids.text;  // testo e file audio: solo admin
+    return ids;
+  }
+
+  _syncSettings() {
+    const ids = this._setIds(), any = Object.keys(ids).length > 0;
+    for (const b of this._cfgs) b.hidden = !any;
+    if (this._set.open) this._fillSettings(ids);
+  }
+
+  _openSettings() {
+    const ids = this._setIds();
+    if (!Object.keys(ids).length || this._set.open) return;
+    const h = document.createElement("template");
+    h.innerHTML = `<div class="set-c"><div class="set-h"><h2>Impostazioni citofono</h2><button class="set-x" aria-label="Chiudi"><ha-icon icon="mdi:close" aria-hidden="true"></ha-icon></button></div>
+      <div class="set-body"></div><p class="set-e" role="alert"></p></div>`;
+    this._set.replaceChildren(h.content);
+    this._set.querySelector(".set-x").onclick = () => this._set.close();
+    this._setBuilt = null;
+    this._fillSettings(ids);
+    this._set.showModal();
+  }
+
+  // Le righe si costruiscono una volta per elenco di entità; poi si aggiornano soltanto i valori (mai sotto le dita di chi scrive).
+  _fillSettings(ids) {
+    const st = (id) => this._hass.states[id], body = this._set.querySelector(".set-body");
+    const key = Object.values(ids).join();
+    const call = (dom, sv, data) => this._hass.callService(dom, sv, data).then(() => { this._set.querySelector(".set-e").textContent = ""; },
+      (e) => { this._set.querySelector(".set-e").textContent = `Non riuscito: ${e.message || e}`; });
+    const row = (k, label, control, col) => {
+      const r = document.createElement("div");
+      r.className = "set-r" + (col ? " col" : "");
+      r.dataset.k = k;
+      const l = document.createElement("span");
+      l.className = "set-l";
+      l.append(label);
+      r.append(l, control);
+      return r;
+    };
+    if (this._setBuilt !== key) {
+      this._setBuilt = key;
+      const rows = [];
+      const toggle = (k, label) => {
+        const b = document.createElement("button");
+        b.className = "set-tg";
+        b.setAttribute("role", "switch");
+        b.setAttribute("aria-label", label);
+        b.onclick = () => call("switch", b.getAttribute("aria-checked") === "true" ? "turn_off" : "turn_on", { entity_id: ids[k] });
+        rows.push(row(k, label, b));
+      };
+      const select = (k, label, col) => {
+        const el = document.createElement("select");
+        el.className = "set-in";
+        el.setAttribute("aria-label", label);
+        el.onchange = () => call("select", "select_option", { entity_id: ids[k], option: el.value });
+        rows.push(row(k, label, el, col));
+      };
+      if (ids.dnd) toggle("dnd", "Non disturbare");
+      if (ids.vm) toggle("vm", "Segreteria");
+      if (ids.delay) select("delay", "Ritardo segreteria");
+      if (ids.text) {
+        const el = document.createElement("input");
+        el.className = "set-in";
+        el.type = "text";
+        el.setAttribute("aria-label", "Testo del messaggio");
+        el.onchange = () => call("text", "set_value", { entity_id: ids.text, value: el.value });
+        rows.push(row("text", "Testo del messaggio", el, true));
+      }
+      if (ids.file) select("file", "File audio del messaggio", true);
+      body.replaceChildren(...rows);
+    }
+    for (const r of body.children) {
+      const k = r.dataset.k, s = st(ids[k]), ctl = r.querySelector("button, select, input"), off = !s || s.state === "unavailable";
+      ctl.disabled = off;
+      if (ctl.matches("button")) ctl.setAttribute("aria-checked", s?.state === "on");
+      else if (ctl.matches("select")) {
+        const opts = s?.attributes?.options || [];
+        if (ctl.options.length !== opts.length || opts.some((o, i) => ctl.options[i].value !== o)) ctl.replaceChildren(...opts.map((o) => new Option(o, o)));
+        if (this._root.activeElement !== ctl) ctl.value = s?.state;
+      } else if (this._root.activeElement !== ctl) ctl.value = s && s.state !== "unknown" ? s.state : "";
+      if (k === "vm") {  // da dove viene il messaggio: dall'attributo `modo` dello switch, se c'è
+        const modo = s?.attributes?.modo, small = r.querySelector("small") || r.querySelector(".set-l").appendChild(document.createElement("small"));
+        small.textContent = modo === "Home Assistant" ? "Messaggio di Home Assistant" : modo === "Tab" ? "Segreteria del Tab" : "";
+      }
+    }
   }
 
   _applyFit() {
@@ -1084,6 +1274,9 @@ class VimarIntercomCard extends HTMLElement {
     }
     const s = this._setupAt ? Math.round((Date.now() - this._setupAt) / 1000) : 0;
     // Card compatta che suona: "Suonano alla porta" nel nome e "Tocca per vedere · mm:ss" nello stato.
+    if (this._state !== "idle") this._pendingAt = 0;
+    const pending = this._state === "idle" && Date.now() - (this._pendingAt || 0) < PENDING_MS;
+    this._card.dataset.pending = pending;
     const ring = this._state === "ringing", compactRing = ring && this._popup && !this._pop.open;
     if (ring && !this._ringAt) {
       this._ringAt = Date.now();
@@ -1095,6 +1288,7 @@ class VimarIntercomCard extends HTMLElement {
     const r = Math.floor((Date.now() - (this._ringAt || Date.now())) / 1000), two = (n) => String(n).padStart(2, "0");
     this._root.querySelector(".name").textContent = compactRing ? LABEL.ringing : this._cfg.name;
     this._pill.textContent = calling ? `${LABEL.calling} ${s} s`
+      : pending ? LABEL.calling
       : compactRing ? `Tocca per vedere · ${two(Math.floor(r / 60))}:${two(r % 60)}` : LABEL[this._state];
     this._badge.textContent = this._pill.textContent;
     if (s >= SETUP_TIMEOUT_S && this._err.textContent === this._hint) this._err.textContent = NO_ANSWER;
@@ -1167,21 +1361,25 @@ class VimarIntercomCard extends HTMLElement {
       this._armed = this._flash = b;
       this._openTimer = setTimeout(() => this._resetOpen(), 3000);
       b.className = "warn";
-      this._label(b, "Conferma");
+      this._label(b, "Tocca ancora");
       return;
     }
     this._resetOpen();
     this._err.textContent = this._hint;
+    this._flash = b;
+    b.className = "busy";  // subito: il tondo gira mentre il servizio lavora
     try {
       await this._hass.callService(entity.split(".")[0], SC[entity.split(".")[0]][0], { entity_id: entity });
-      this._flash = b;
       b.className = "ok";
       this._icon(b, "mdi:check");
       this._label(b, "Aperto");
-      this._openTimer = setTimeout(() => this._resetOpen(), 3000);
     } catch (e) {
       this._err.textContent = `Apertura non riuscita: ${e.message || e}`;
+      b.className = "bad";
+      this._icon(b, "mdi:alert-circle-outline");
+      this._label(b, "Errore");
     }
+    this._openTimer = setTimeout(() => this._resetOpen(), OPEN_FLASH_MS);
   }
 
   _resetOpen() {
@@ -1203,11 +1401,18 @@ class VimarIntercomCard extends HTMLElement {
     this._err.textContent = this._hint;
     button.classList.add("busy");
     button.disabled = true;
+    if (service === "call") {  // feedback al tocco: "Collegamento…" finché lo stato non cambia (o fallisce)
+      this._pendingAt = Date.now();
+      this._tickSetup();
+      setTimeout(() => this._tickSetup(), PENDING_MS + 50);
+    }
     try {
       const r = await this._hass.callService("vimar_intercom", service, {}, undefined, true, true);
       if (r?.response?.ok === false) throw new Error(r.response.result);
     } catch (e) {
       this._err.textContent = `Non riuscito: ${e.message || e}`;
+      this._pendingAt = 0;
+      this._tickSetup();
       throw e;
     } finally {
       button.classList.remove("busy");
@@ -1420,6 +1625,7 @@ class VimarIntercomCard extends HTMLElement {
   disconnectedCallback() {
     for (const e of ["hashchange", "location-changed"]) window.removeEventListener(e, this._toAnchor);
     if (this._pop.open) this._pop.close();
+    if (this._set.open) this._set.close();
     this._stopAudio();
     this._stopListen();
     if (this._player) {  // card tolta dalla pagina: il WS video non resta aperto

@@ -795,7 +795,7 @@ def test_layout_popup_scorciatoie_sulla_card_compatta(monkeypatch, engine):  # n
                 assert labels == ["Apri", "Garage"], labels
                 for i in (0, 1):
                     await c.page.evaluate(f"({tap})({i})")
-                    await c.until(f"card.shadowRoot.querySelectorAll('.sc button .lbl')[{i}].textContent === 'Conferma'")
+                    await c.until(f"card.shadowRoot.querySelectorAll('.sc button .lbl')[{i}].textContent === 'Tocca ancora'")
                     assert len(rig.services) == i  # il primo tocco arma soltanto
                     await c.page.evaluate(f"({tap})({i})")
                     await c.until(f"card.shadowRoot.querySelectorAll('.sc button .lbl')[{i}].textContent === 'Aperto'")
@@ -915,6 +915,108 @@ def test_layout_popup_card_compatta_stili(monkeypatch, engine, style):  # noqa: 
                     await rig.peer.wait_for(is_(code=603, cid="ring-compatta"))
                     assert rig.services == ["lock.unlock", "vimar_intercom.decline"] and not (await c.info())["pop"], rig.services
                 assert not (await c.T())["errors"]
+    run(s())
+
+
+@pytest.mark.parametrize("style", ["pillola", "tile"])
+@pytest.mark.parametrize("engine", ["chromium"], indirect=True)
+def test_layout_popup_feedback_immediato_al_tocco(monkeypatch, engine, style):  # noqa: F811
+    """Feedback senza aspettare HA: il primo tocco su Apri è "Tocca ancora" (warn), il secondo mette
+    subito il tondo in "busy" e poi "ok" (Aperto), che dopo ~2 s torna normale; il tocco sulla card
+    mette subito "Collegamento…" (data-pending)."""
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            await rig.register()
+            async with Card(rig, engine, layout="popup", compact=style) as c:
+                await c.until(IDLE)
+                got = await c.page.evaluate("""(() => { const b = card.shadowRoot.querySelector('.sc button'), out = [];
+                  b.click(); out.push([b.className, b.querySelector('.lbl').textContent]);
+                  b.click(); out.push(b.className); return out; })()""")
+                assert got == [["warn", "Tocca ancora"], "busy"], got
+                await c.until("card.shadowRoot.querySelector('.sc button').className === 'ok'")
+                await c.until("card.shadowRoot.querySelector('.sc button').className === ''", 4)
+                assert rig.services == ["lock.unlock"], rig.services
+                got = await c.page.evaluate("""(() => { card.shadowRoot.querySelector('.name').click();
+                  return [info().pill, card._card.dataset.pending]; })()""")
+                assert got == ["Collegamento…", "true"], got
+                assert not (await c.T())["errors"]
+    run(s())
+
+
+@pytest.mark.parametrize("engine", ["chromium"], indirect=True)
+def test_impostazioni_citofono_righe_e_servizi(monkeypatch, engine):  # noqa: F811
+    """L'ingranaggio apre "Impostazioni citofono": le righe delle entità presenti (stesso dispositivo della camera),
+    l'interruttore chiama switch.turn_on/off, il ritardo select.select_option, il testo text.set_value;
+    non-admin: solo Non disturbare, Segreteria e ritardo; entità mancante: riga assente."""
+    rows = "[...card.shadowRoot.querySelectorAll('dialog.set .set-r')].map((r) => r.dataset.k)"
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            await rig.register()
+            async with Card(rig, engine, layout="popup") as c:
+                await c.until(IDLE)
+                await c.until("!card.shadowRoot.querySelector('#cfgc').hidden")
+                await c.page.evaluate("card.shadowRoot.querySelector('#cfgc').click()")
+                assert await c.page.evaluate("card.shadowRoot.querySelector('dialog.set').open") and not (await c.info())["pop"]
+                assert await c.page.evaluate(rows) == ["dnd", "vm", "delay", "text", "file"]
+                await c.page.evaluate("card.shadowRoot.querySelector('dialog.set .set-c').click()")  # il padding non chiude
+                assert await c.page.evaluate("card.shadowRoot.querySelector('dialog.set').open")
+                assert await c.page.evaluate("card.shadowRoot.querySelector('[data-k=vm] small').textContent") == "Messaggio di Home Assistant"
+                await c.page.evaluate("card.shadowRoot.querySelector('[data-k=dnd] button').click()")
+                await c.page.evaluate("card.shadowRoot.querySelector('[data-k=vm] button').click()")
+                await c.page.select_option("dialog.set [data-k=delay] select", "15")
+                await c.page.fill("dialog.set [data-k=text] input", "Torniamo presto")
+                await c.page.evaluate("card.shadowRoot.querySelector('[data-k=text] input').dispatchEvent(new Event('change'))")
+                got = await c.page.evaluate("T.settings")
+                assert got == [["switch", "turn_on", {"entity_id": "switch.vimar_intercom_non_disturbare"}],
+                               ["switch", "turn_off", {"entity_id": "switch.vimar_intercom_segreteria"}],
+                               ["select", "select_option", {"entity_id": "select.vimar_intercom_segreteria_ritardo", "option": "15"}],
+                               ["text", "set_value", {"entity_id": "text.vimar_intercom_segreteria_testo_del_messaggio", "value": "Torniamo presto"}]], got
+                assert not (await c.T())["errors"]
+    run(s())
+
+
+@pytest.mark.parametrize("engine", ["chromium"], indirect=True)
+def test_impostazioni_citofono_non_admin_e_righe_mancanti(monkeypatch, engine):  # noqa: F811
+    rows = "[...card.shadowRoot.querySelectorAll('dialog.set .set-r')].map((r) => r.dataset.k)"
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            await rig.register()
+            async with Card(rig, engine, layout="overlay", query="&noadmin&ents=dnd,delay,file,text") as c:
+                await c.until(IDLE)
+                await c.page.evaluate("card._openSettings()")
+                assert await c.page.evaluate(rows) == ["dnd", "delay"], "senza admin: né testo né file; senza Segreteria: niente riga"
+    run(s())
+
+
+@pytest.mark.parametrize("engine", ["chromium"], indirect=True)
+def test_layout_popup_proporzioni_pc_e_telefono(monkeypatch, engine):  # noqa: F811
+    """PC (1280x800): il pannello è il video 4:3 (al massimo 900 px, mai vuoto sotto); telefono (390x844): pannello alto, come prima.
+    Riga in alto: pill di stato larga, ingranaggio, adatta/riempi, cronologia, X (da sinistra a destra, tondi da 44)."""
+    js = """(() => { const r = card.shadowRoot, q = (s) => r.querySelector(s).getBoundingClientRect();
+      const d = q('dialog.pop'), m = q('.media'), top = ['.badge', '#cfg', '#fit', '#log', '#x'].map((s) => q(s));
+      return { dlg: [d.width, d.height], ratio: m.width / m.height, gap: d.bottom - m.bottom, fill: [m.width - d.width, m.height - d.height],
+               order: top.every((b, i) => i === 0 || b.left >= top[i - 1].right - 0.5), sizes: top.slice(1).map((b) => [b.width, b.height]),
+               inside: top.every((b) => b.top >= d.top && b.bottom <= d.bottom && b.right <= d.right) }; })()"""
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            await rig.register()
+            async with Card(rig, engine, layout="popup") as c:
+                await c.until(IDLE)
+                for w, h in ((1280, 800), (390, 844)):
+                    await c.page.set_viewport_size({"width": w, "height": h})
+                    rig.ring(f"ring-{w}")
+                    await c.until("info().pop && info().video !== 'auto'")
+                    await asyncio.sleep(0.3)
+                    st = await c.page.evaluate(js)
+                    assert st["order"] and st["inside"] and st["sizes"] == [[44, 44]] * 4, st
+                    if w == 1280:
+                        assert abs(st["ratio"] - 4 / 3) < 0.02 and st["gap"] <= 8 and 700 < st["dlg"][0] <= 900 and st["dlg"][1] < 760, st
+                    else:
+                        assert st["dlg"] == [366, 620] and st["fill"] == [0, 0], st
+                    await c.tap("x")
+                    await c.until("!info().pop")
+                    rig.peer.request("CANCEL", f"ring-{w}", 1, "pnl")
+                    await c.until(IDLE)
     run(s())
 
 

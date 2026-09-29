@@ -27,6 +27,13 @@ LIGHT = """:root, body { --primary-color:#03a9f4; --primary-text-color:#212121; 
   --ha-card-border-radius:12px; color-scheme: light; }
 body { background:#f0efeb; color:#212121 }"""
 
+# The user's own HA theme (CasaAL, light): teal success, terracotta warning, warm background. The card takes its colors from these.
+CASAAL = """:root, body { --primary-color:#2A9D8F; --success-color:#2A9D8F; --warning-color:#C8623A; --error-color:#D24A3F; --info-color:#3D8FC4;
+  --primary-text-color:#1B1812; --secondary-text-color:#6B6557; --state-icon-color:#6B6557; --text-primary-color:#fff;
+  --card-background-color:#fff; --ha-card-background:#fff; --secondary-background-color:#F5F2EA; --divider-color:rgba(40,30,16,.07);
+  --ha-card-border-radius:16px; --ha-card-box-shadow:none; color-scheme: light; }
+body { background:#F5F2EA; color:#1B1812 }"""
+
 DARK = """:root, body { --primary-color:#03a9f4; --primary-text-color:#e1e1e1; --secondary-text-color:#9b9b9b;
   --text-primary-color:#fff; --success-color:#43a047; --error-color:#db4437; --warning-color:#ffa726; --info-color:#4285f4; --card-background-color:#1c1c1c; --divider-color:#3a3a3a; --primary-background-color:#111;
   --ha-card-border-radius:12px; color-scheme: dark; }
@@ -49,6 +56,7 @@ ICONS = {
  "phone-hangup": "M12,9C10.4,9 8.85,9.25 7.4,9.72V12.82C7.4,13.22 7.17,13.56 6.84,13.72C5.86,14.21 4.97,14.84 4.17,15.57C4,15.75 3.75,15.86 3.5,15.86C3.2,15.86 2.95,15.74 2.77,15.56L0.29,13.08C0.11,12.9 0,12.65 0,12.38C0,12.1 0.11,11.85 0.29,11.67C3.34,8.77 7.46,7 12,7C16.54,7 20.66,8.77 23.71,11.67C23.89,11.85 24,12.1 24,12.38C24,12.65 23.89,12.9 23.71,13.08L21.23,15.56C21.05,15.74 20.8,15.86 20.5,15.86C20.25,15.86 20,15.75 19.82,15.57C19.03,14.84 18.14,14.21 17.16,13.72C16.83,13.56 16.6,13.22 16.6,12.82V9.72C15.15,9.25 13.6,9 12,9Z",
  "volume-high": "M14,3.23V5.29C16.89,6.15 19,8.83 19,12C19,15.17 16.89,17.84 14,18.7V20.77C18,19.86 21,16.28 21,12C21,7.72 18,4.14 14,3.23M16.5,12C16.5,10.23 15.5,8.71 14,7.97V16C15.5,15.29 16.5,13.76 16.5,12M3,9V15H7L12,20V4L7,9H3Z",
  "volume-off": "M12,4L9.91,6.09L12,8.18M4.27,3L3,4.27L7.73,9H3V15H7L12,20V13.27L16.25,17.53C15.58,18.04 14.83,18.46 14,18.7V20.77C15.38,20.45 16.63,19.82 17.68,18.96L19.73,21L21,19.73L12,10.73M19,12C19,12.94 18.8,13.82 18.46,14.64L19.97,16.15C20.62,14.91 21,13.5 21,12C21,7.72 18,4.14 14,3.23V5.29C16.89,6.15 19,8.83 19,12M16.5,12C16.5,10.23 15.5,8.71 14,7.97V10.18L16.45,12.63C16.5,12.43 16.5,12.21 16.5,12Z",
+ "cog": "M12,15.5A3.5,3.5 0 0,1 8.5,12A3.5,3.5 0 0,1 12,8.5A3.5,3.5 0 0,1 15.5,12A3.5,3.5 0 0,1 12,15.5M19.43,12.97C19.47,12.65 19.5,12.33 19.5,12C19.5,11.67 19.47,11.34 19.43,11L21.54,9.37C21.73,9.22 21.78,8.95 21.66,8.73L19.66,5.27C19.54,5.05 19.27,4.96 19.05,5.05L16.56,6.05C16.04,5.66 15.5,5.32 14.87,5.07L14.5,2.42C14.46,2.18 14.25,2 14,2H10C9.75,2 9.54,2.18 9.5,2.42L9.13,5.07C8.5,5.32 7.96,5.66 7.44,6.05L4.95,5.05C4.73,4.96 4.46,5.05 4.34,5.27L2.34,8.73C2.21,8.95 2.27,9.22 2.46,9.37L4.57,11C4.53,11.34 4.5,11.67 4.5,12C4.5,12.33 4.53,12.65 4.57,12.97L2.46,14.63C2.27,14.78 2.21,15.05 2.34,15.27L4.34,18.73C4.46,18.95 4.73,19.03 4.95,18.95L7.44,17.94C7.96,18.34 8.5,18.68 9.13,18.93L9.5,21.58C9.54,21.82 9.75,22 10,22H14C14.25,22 14.46,21.82 14.5,21.58L14.87,18.93C15.5,18.67 16.04,18.34 16.56,17.94L19.05,18.95C19.27,19.03 19.54,18.95 19.66,18.73L21.66,15.27C21.78,15.05 21.73,14.78 21.54,14.63L19.43,12.97Z",
  "bell": "M21,19V20H3V19L5,17V11C5,7.9 7.03,5.17 10,4.29C10,4.19 10,4.1 10,4A2,2 0 0,1 12,2A2,2 0 0,1 14,4C14,4.1 14,4.19 14,4.29C16.97,5.17 19,7.9 19,11V17L21,19M14,21A2,2 0 0,1 12,23A2,2 0 0,1 10,21",
  "bell-off-outline": "M22.11,21.46L2.39,1.73L1.11,3L5.83,7.72C5.29,8.73 5,9.86 5,11V17L3,19V20H18.11L20.84,22.73L22.11,21.46M7,18V11C7,10.39 7.11,9.79 7.34,9.23L16.11,18H7M10,21H14A2,2 0 0,1 12,23A2,2 0 0,1 10,21M8.29,5.09C8.82,4.75 9.4,4.5 10,4.29C10,4.19 10,4.1 10,4A2,2 0 0,1 12,2A2,2 0 0,1 14,4C14,4.1 14,4.19 14,4.29C16.97,5.17 19,7.9 19,11V15.8L17,13.8V11A5,5 0 0,0 12,6C11.22,6 10.45,6.2 9.76,6.56L8.29,5.09Z",
  "arrow-expand-all": "M10,21V19H6.41L10.91,14.5L9.5,13.09L5,17.59V14H3V21H10M14.5,10.91L19,6.41V10H21V3H14V5H17.59L13.09,9.5L14.5,10.91Z",
@@ -158,6 +166,27 @@ def test_readme_shots(monkeypatch, engine, tmp_path):
         await c.until("info().pill === 'Pronto'")
         await shot("light-rest")
 
+    async def popup_desktop(rig, c, name):
+        await c.until("info().pill === 'Pronto'")
+        rig.ring(f"shot-{name}")
+        await c.until("info().pop && info().video !== 'auto'")
+        await c.page.evaluate(SCENE)
+
+    async def pillola(rig, c, name):
+        async def shot(tag):
+            await asyncio.sleep(0.5)
+            h = await c.page.evaluate("card.getBoundingClientRect().bottom + 12")
+            await c.page.screenshot(path=str(tmp_path / f"pillola-{tag}.png"), clip={"x": 0, "y": 0, "width": 390, "height": h})
+        await c.page.add_style_tag(content=CASAAL)
+        await c.page.emulate_media(reduced_motion="reduce", color_scheme="light")
+        await c.until("info().pill === 'Pronto' && !card.shadowRoot.querySelector('#hist').disabled")
+        await shot("rest")
+        rig.ring(f"shot-{name}")
+        await c.until("info().pop")
+        await c.tap("x")
+        await c.until("!info().pop && info().pill.startsWith('Tocca per vedere')")
+        await shot("ring")
+
     async def drawer(rig, c, name):
         await c.until("card.shadowRoot.querySelectorAll('.hist button').length === 3"
                       " && !card.shadowRoot.querySelector('#photo').disabled")
@@ -172,7 +201,9 @@ def test_readme_shots(monkeypatch, engine, tmp_path):
                                               ("card-overlay", 500, 500, "overlay", ringing),
                                               ("card-below", 500, 470, "sotto", ringing),
                                               ("card-popup", 390, 844, "popup", popup),
-                                              ("card-compact-tile", 390, 300, "popup", tile)):
+                                              ("card-compact-tile", 390, 300, "popup", tile),
+                                              ("card-compact-pillola", 390, 200, "popup", pillola),
+                                              ("card-popup-desktop", 1280, 800, "popup", popup_desktop)):
                 async with Card(rig, engine, layout=layout, compact="tile" if name == "card-compact-tile" else None) as c:
                     await c.page.set_viewport_size({"width": w, "height": h})
                     await c.page.add_style_tag(content=DARK)
@@ -181,7 +212,14 @@ def test_readme_shots(monkeypatch, engine, tmp_path):
                     await prep(rig, c, name)
                     await asyncio.sleep(0.6)
                     png = tmp_path / f"{name}.png"
-                    if name == "card-compact-tile":  # dark | light columns, idle above, ringing below
+                    if name == "card-compact-pillola":  # CasaAL light theme: idle above, ringing below
+                        from PIL import Image
+                        a, b = Image.open(tmp_path / "pillola-rest.png"), Image.open(tmp_path / "pillola-ring.png")
+                        m = Image.new("RGB", (390, a.height + b.height), (245, 242, 234))
+                        m.paste(a, (0, 0))
+                        m.paste(b, (0, a.height))
+                        m.save(png)
+                    elif name == "card-compact-tile":  # dark | light columns, idle above, ringing below
                         from PIL import Image
                         ims = {t: Image.open(tmp_path / f"tile-{t}.png") for t in ("dark-rest", "dark-ring", "light-rest", "light-ring")}
                         m = Image.new("RGB", (390 * 2, ims["dark-rest"].height + ims["dark-ring"].height), (17, 17, 17))
