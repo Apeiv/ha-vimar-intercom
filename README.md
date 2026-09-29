@@ -122,6 +122,8 @@ Settings → Vimar Intercom → **Configure**:
 | **Voice answer** (`voice_answer`) | Who can answer a ringing call by talking on `/audio_ws`: **Declared** (default, only with `?voice_answer=1`), **Off** (never), **Any** (any connection with a mic; a wall tablet with its mic left open can answer by itself on household noise) |
 | **Ring webhooks** (`ring_webhook_url`, `ring_end_webhook_url`) | Optional GET (fire-and-forget, 5 s timeout) fired when a ring starts and when it ends (answered, cancelled or missed) — e.g. the `turnOn`/`turnOff` URLs of a Scrypted Dummy Switch (see [docs/EXTERNAL.md](docs/EXTERNAL.md)). A failure only logs a warning, never blocks the ring. Empty = off |
 
+The camera image between calls (the last ring photo) is visible to every Home Assistant user who can see the camera entity; `allowed_users` limits the ring history and live media, not the camera entity.
+
 **Voicemail.** There is one *Voicemail* switch (Configuration, device page). Turned on, it uses Home
 Assistant's away message if a text or an audio file is set (and turns the Tab's own voicemail off);
 otherwise it turns the Tab's voicemail on. Turned off, both are off. If the Tab switches its voicemail

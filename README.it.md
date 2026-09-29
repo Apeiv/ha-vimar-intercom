@@ -123,6 +123,8 @@ Impostazioni → Vimar Intercom → **Configura**:
 | **Risposta a voce** (`voice_answer`) | Chi può rispondere a uno squillo parlando su `/audio_ws`: **Solo dichiarato** (default, solo con `?voice_answer=1`), **Mai**, **Chiunque** (qualsiasi connessione con microfono; un tablet a muro col microfono rimasto aperto può rispondere da solo coi rumori di casa) |
 | **Webhook squillo** (`ring_webhook_url`, `ring_end_webhook_url`) | GET opzionale (fire-and-forget, timeout 5 s) inviata quando inizia uno squillo e quando finisce (risposto, annullato o non risposto) — es. gli URL `turnOn`/`turnOff` di un Dummy Switch Scrypted (vedi [docs/EXTERNAL.md](docs/EXTERNAL.md)). Un fallimento logga solo un warning, mai blocca lo squillo. Vuoto = disattivato |
 
+L'immagine della camera fra una chiamata e l'altra (l'ultima foto dello squillo) è visibile a ogni utente di Home Assistant che vede l'entità camera; `allowed_users` limita la cronologia degli squilli e i media dal vivo, non l'entità camera.
+
 **Segreteria.** C'è un solo switch *Segreteria* (Configurazione, pagina del dispositivo). Acceso, usa il
 messaggio di assenza di Home Assistant se c'è un testo o un file audio (e spegne la segreteria del Tab);
 altrimenti accende quella del Tab. Spento, sono spente entrambe. Se il Tab accende da solo la propria

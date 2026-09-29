@@ -6,6 +6,15 @@ Italian and are kept as they were written.
 
 ## [Unreleased]
 
+### Breaking
+
+- **Only one config entry is allowed** (`single_config_entry` in the manifest). The SIP and
+  media state are module-wide, so a second entry never worked reliably: both entries shared one
+  registration and one call. After the update Home Assistant refuses to add a second entry; an
+  existing second entry still loads, with the same shared state as before. **Migration:** if you
+  have two entries, keep the one you use and delete the other (Settings → Devices & services →
+  Vimar Intercom → ⋮ → Delete). Two intercoms on one Home Assistant are not supported.
+
 ### Added
 
 - New "Intercom Dispositivi" sensor: the devices seen on the plant (phones sharing the SIP
@@ -29,6 +38,8 @@ Italian and are kept as they were written.
 - Between calls the camera image is the last ring photo, when there is one (the latest, or
   `ultimo_squillo.jpg` in the snapshot folder after a restart), instead of the error Home
   Assistant made of an empty image. A thumbnail still never calls the panel.
+  Note: Home Assistant shows the camera image to every user who can see the camera entity;
+  `allowed_users` does not cover it.
 - An RTCP probe for debugging (`rtcp.py`): with the integration's logger set to DEBUG, the RTCP
   ports (RTP + 1) listen during a call, the path to the panel's RTCP port is opened, and what
   arrives is logged (type and SSRC; every record for plain RTCP). Off by default: nothing is
