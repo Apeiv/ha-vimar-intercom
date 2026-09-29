@@ -558,9 +558,11 @@ class VimarAudioWSView(HomeAssistantView):
         }))
 
         loud_ms = 0.0  # voce di fila sopra soglia mentre squilla
-        # Risposta a voce solo se il client l'ha dichiarata (?voice_answer=1): un microfono
-        # lasciato aperto non deve rispondere allo squillo dopo.
-        voice_answer = request.query.get("voice_answer") == "1"
+        # Risposta a voce secondo l'opzione voice_answer: "declared" solo chi manda
+        # ?voice_answer=1 (un microfono lasciato aperto non risponde allo squillo dopo),
+        # "off" mai, "any" chiunque.
+        mode = runtime.VOICE_ANSWER
+        voice_answer = mode == "any" or (mode == "declared" and request.query.get("voice_answer") == "1")
         was_in_call = False  # questa connessione era in chiamata: niente voce finché non torna idle
         try:
             async for msg in ws:

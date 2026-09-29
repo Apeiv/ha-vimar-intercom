@@ -80,6 +80,8 @@
           "local_proxy": "IP del citofono",
           "use_local_udp": "Usa SIP UDP locale",
           "local_udp_port": "Porta UDP locale",
+          "voice_answer": "Risposta a voce (microfono su /audio_ws)",
+          "voice_answer": "Chi può rispondere alla chiamata parlando mentre squilla. Solo dichiarato: risponde solo chi si collega con /audio_ws?voice_answer=1 (Echo Show, HomeKit via Scrypted). Mai: la voce non risponde. Chiunque: risponde qualsiasi connessione con microfono; attenzione, un tablet a muro con il microfono rimasto aperto può rispondere da solo con i rumori di casa.",
           "media_enc": "Cifratura del media (SRTP)",
           "actuators": "Attuatori (JSON)",
           "sga_target": "SGA (id SIP segreteria/DND)",
@@ -356,6 +358,13 @@
     }
   },
   "selector": {
+    "voice_answer": {
+      "options": {
+        "declared": "Solo dichiarato (?voice_answer=1)",
+        "off": "Mai",
+        "any": "Chiunque abbia il microfono"
+      }
+    },
     "media_enc": {
       "options": {
         "auto": "Automatico (dall'impianto)",

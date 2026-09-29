@@ -34,7 +34,7 @@ from . import qr_decoder
 from . import rest_client
 from . import rubrica_import
 from . import validate
-from .runtime import MEDIA_ENC_MODES, media_enc_mode
+from .runtime import MEDIA_ENC_MODES, VOICE_ANSWER_MODES, media_enc_mode
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -54,6 +54,7 @@ KEY_USE_LOCAL_UDP  = "use_local_udp"
 KEY_LOCAL_UDP_PORT = "local_udp_port"
 KEY_ACTUATORS      = "actuators"
 KEY_MEDIA_ENC      = "media_enc"
+KEY_VOICE_ANSWER   = "voice_answer"
 KEY_SGA_TARGET     = "sga_target"
 KEY_PICG_TARGET    = "picg_target"
 KEY_CAMERA_TARGET  = "camera_target"
@@ -594,6 +595,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             use_local_udp  = user_input.get("use_local_udp", True)
             local_udp_port = int(user_input.get("local_udp_port", DEFAULT_LOCAL_UDP_PORT))
             media_enc      = media_enc_mode(user_input.get(KEY_MEDIA_ENC))
+            voice_answer   = user_input.get(KEY_VOICE_ANSWER, "declared")
             actuators_raw  = user_input.get(KEY_ACTUATORS, "")
             actuators_default = actuators_raw  # rimostra ciò che l'utente ha scritto
 
@@ -672,6 +674,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                         KEY_USE_LOCAL_UDP:  use_local_udp,
                         KEY_LOCAL_UDP_PORT: local_udp_port,
                         KEY_MEDIA_ENC:      media_enc,
+                        KEY_VOICE_ANSWER:   voice_answer,
                         KEY_ACTUATORS:      actuators,
                         **targets,
                         KEY_AWAY_FILE:      away_file,
@@ -719,6 +722,15 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 ): selector.SelectSelector(selector.SelectSelectorConfig(
                     options=list(MEDIA_ENC_MODES),
                     translation_key="media_enc",
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )),
+                # Chi può rispondere a voce su /audio_ws: dichiarato / mai / chiunque.
+                vol.Optional(
+                    KEY_VOICE_ANSWER,
+                    default=form.get(KEY_VOICE_ANSWER, "declared"),
+                ): selector.SelectSelector(selector.SelectSelectorConfig(
+                    options=list(VOICE_ANSWER_MODES),
+                    translation_key="voice_answer",
                     mode=selector.SelectSelectorMode.DROPDOWN,
                 )),
                 vol.Optional(

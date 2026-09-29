@@ -5,12 +5,14 @@ import types
 from harness.web import Request, load_views, make_hass
 
 from custom_components.vimar_intercom import media_handler as media
+from custom_components.vimar_intercom import runtime
 
 SILENCE = b"\x02" + b"\x00\x00" * 341                # 42,6 ms a 8 kHz, RMS 0
 VOICE = b"\x02" + (10000).to_bytes(2, "little") * 341  # RMS 10000
 
 
-def _run(monkeypatch, hub, frames, ringing, declared=True):
+def _run(monkeypatch, hub, frames, ringing, declared=True, mode="declared"):
+    monkeypatch.setattr(runtime, "VOICE_ANSWER", mode)
     views = load_views(monkeypatch)
     sip = views.sip
     monkeypatch.setattr(sip, "ringing", lambda: ringing)
@@ -49,3 +51,11 @@ def test_la_voce_a_riposo_si_butta(monkeypatch, hub):
 
 def test_senza_dichiarazione_la_voce_non_risponde(monkeypatch, hub):
     assert _run(monkeypatch, hub, [VOICE] * 8, ringing=True, declared=False) == (0, 0)
+
+
+def test_off_la_voce_non_risponde_nemmeno_se_dichiarata(monkeypatch, hub):
+    assert _run(monkeypatch, hub, [VOICE] * 8, ringing=True, mode="off") == (0, 0)
+
+
+def test_any_risponde_anche_senza_dichiarazione(monkeypatch, hub):
+    assert _run(monkeypatch, hub, [VOICE] * 8, ringing=True, declared=False, mode="any") == (1, 3)

@@ -122,6 +122,7 @@ Impostazioni → Vimar Intercom → **Configura**:
 | **Messaggio di assenza** (`away_message_file`, `away_message_delay`) | file audio (mp3, wav…) fatto sentire al visitatore se nessuno risponde entro N secondi (0 = mai, max 60); poi l'integrazione riaggancia |
 | **Messaggio di assenza da testo** (`away_message_text`, `away_message_tts`) | se il campo file è vuoto, questo testo lo legge la sintesi vocale di Home Assistant (`away_message_tts` = un'entità `tts.*`; vuoto = il motore predefinito di HA) nella lingua di HA, max 30 s. L'audio si genera all'avvio e resta in cache; se il TTS fallisce il citofono squilla come sempre |
 | **Cifratura del media (SRTP)** (`media_enc`) | **Automatico** (default dalla 1.0.11): segue il `media_enc` che l'impianto dichiara nella risposta a `GET_INIT_STATUS` (`"srtp"` su un 40515 in cloud); gli impianti con la risposta corta (il 40507) restano in RTP chiaro. **Attivo** / **Disattivo** lo forzano. Chi aveva salvato «attivo» con la 1.0.10 o prima resta attivo; «spento» diventa automatico. Prova **Attivo** se la camera resta nera o la chiamata fallisce con `488` |
+| **Risposta a voce** (`voice_answer`) | Chi può rispondere a uno squillo parlando su `/audio_ws`: **Solo dichiarato** (default, solo con `?voice_answer=1`), **Mai**, **Chiunque** (qualsiasi connessione con microfono; un tablet a muro col microfono rimasto aperto può rispondere da solo coi rumori di casa) |
 | **Webhook squillo** (`ring_webhook_url`, `ring_end_webhook_url`) | GET opzionale (fire-and-forget, timeout 5 s) inviata quando inizia uno squillo e quando finisce (risposto, annullato o non risposto) — es. gli URL `turnOn`/`turnOff` di un Dummy Switch Scrypted (vedi [docs/EXTERNAL.md](docs/EXTERNAL.md)). Un fallimento logga solo un warning, mai blocca lo squillo. Vuoto = disattivato |
 
 Esempio, Tab 5S Up 40515 (Due Fili Plus, cloud): SGA `61000`, PICG `60001`, targa video e apri‑porta
@@ -441,8 +442,11 @@ questo componente), ricontrolla che entrambe le patch siano ancora presenti (ved
   `register`, `reconnect`) sono riservate agli amministratori. Il payload del QR non viene loggato
   a livello INFO.
 - Parlare su `/audio_ws?voice_answer=1` mentre squilla risponde alla chiamata (RMS del microfono sopra soglia
-  per 200 ms): così rispondono Echo Show e HomeKit via Scrypted. Senza il flag, o su una connessione
-  che era in chiamata finché non torna a riposo, la voce non risponde mai. A riposo l'audio si butta.
+  per 200 ms): così rispondono Echo Show e HomeKit via Scrypted. Chi può rispondere lo decide l'opzione
+  **Risposta a voce** (`voice_answer`): `declared` (default, solo col flag), `off` (mai), `any` (qualsiasi
+  connessione con microfono: un tablet a muro col microfono rimasto aperto può rispondere da solo coi
+  rumori di casa). In ogni modo una connessione che era in chiamata non risponde finché non torna a
+  riposo. A riposo l'audio si butta.
 - Ultimi squilli per la card: `GET /api/vimar_intercom/rings` (elenco, `?limit=` fino a 50) e
   `GET /api/vimar_intercom/rings/<nome>` (la foto o il clip, anche a pezzi con Range) richiedono
   l'autenticazione HA (la card li carica con percorsi firmati). Il secondo serve solo file

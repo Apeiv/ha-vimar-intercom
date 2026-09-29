@@ -80,6 +80,8 @@
           "local_proxy": "Intercom IP address",
           "use_local_udp": "Use local SIP UDP",
           "local_udp_port": "Local UDP port",
+          "voice_answer": "Voice answer (mic on /audio_ws)",
+          "voice_answer": "Who can answer the call by talking while it rings. Declared only: only connections using /audio_ws?voice_answer=1 (Echo Show, HomeKit via Scrypted). Never: talking never answers. Anyone: any connection with a microphone can answer; beware, a wall tablet whose microphone was left open can answer by itself with household noise.",
           "media_enc": "Media encryption (SRTP)",
           "actuators": "Actuators (JSON)",
           "sga_target": "SGA (voicemail/DND SIP id)",
@@ -356,6 +358,13 @@
     }
   },
   "selector": {
+    "voice_answer": {
+      "options": {
+        "declared": "Declared only (?voice_answer=1)",
+        "off": "Never",
+        "any": "Anyone with a microphone"
+      }
+    },
     "media_enc": {
       "options": {
         "auto": "Automatic (from the system)",

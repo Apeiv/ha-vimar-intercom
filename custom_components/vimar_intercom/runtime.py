@@ -49,6 +49,11 @@ MEDIA_ENC_OPTION: str = "auto"
 MEDIA_ENC_PLANT: bool | None = None   # None = l'impianto non l'ha dichiarato
 MEDIA_ENC: bool = False
 
+# Risposta a voce su /audio_ws: "declared" (default) solo chi manda ?voice_answer=1,
+# "off" mai, "any" qualsiasi connessione con microfono.
+VOICE_ANSWER_MODES = ("declared", "off", "any")
+VOICE_ANSWER: str = "declared"
+
 
 def media_enc_mode(value) -> str:
     """Valore salvato nelle options → "auto" | "on" | "off".
@@ -184,7 +189,7 @@ def configure(data: dict) -> None:
     global SIP_PROXY, LOCAL_PROXY
     global GID, PLANT_TYPE, MAC_CITOFONO
     global USE_LOCAL_UDP, LOCAL_UDP_PORT, MEDIA_ENC_OPTION, MEDIA_ENC_PLANT
-    global INTERCOM, DOOR_ESTERNO
+    global INTERCOM, DOOR_ESTERNO, VOICE_ANSWER
     global DETECTED_MODEL, DETECTED_FW, DETECTED_UA, DETECTED_PRIORITY
     global ACTUATORS
     global SGA_TARGET, PICG_TARGET
@@ -207,6 +212,7 @@ def configure(data: dict) -> None:
     USE_LOCAL_UDP  = bool(data.get("use_local_udp", True))
     LOCAL_UDP_PORT = int(data.get("local_udp_port", 5060))
     MEDIA_ENC_OPTION = media_enc_mode(data.get("media_enc"))
+    VOICE_ANSWER = data.get("voice_answer") if data.get("voice_answer") in VOICE_ANSWER_MODES else "declared"
     MEDIA_ENC_PLANT  = None   # lo ridice l'impianto al prossimo GET_INIT_STATUS_REPLY
     _recompute_media_enc()
 
