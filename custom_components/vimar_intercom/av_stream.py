@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import collections
+import contextlib
 import logging
 import os
 import struct
@@ -199,15 +200,24 @@ async def _av_pump_run(proc) -> None:
     except (OSError, ValueError) as e:
         _LOGGER.debug("AV pump ended: %s", e)
     finally:
-        for q in list(_av_clients):
-            end_client(q, _av_clients)
+        # _stop_av_ffmpeg_locked() stacca già i client per conto suo (vedi lì): non
+        # aspetta questo pump, che può restare bloccato in read1() per secondi dopo il
+        # kill. Se nel frattempo è ripartito un ffmpeg nuovo (_av_pump punta già a
+        # un'altra pump) questa è quella vecchia: non deve toccare i client della nuova.
+        if asyncio.current_task() is _av_pump:
+            for q in list(_av_clients):
+                end_client(q, _av_clients)
 
 
 async def av_subscribe() -> asyncio.Queue | None:
     """Aggancia un client allo stream MPEG-TS; None se ffmpeg non parte."""
     global _av_pump
     async with _av_lock:
-        if _av_pump is None or _av_pump.done():
+        # av_ffmpeg_proc is None: lo stop precedente ha già ucciso il processo, anche se
+        # la pump vecchia non se n'è ancora accorta (bloccata in read1(), vedi sopra) —
+        # non aspettarla per ripartire, o una chiamata veloce dopo l'altra resterebbe
+        # agganciata a una pump morente invece che a un ffmpeg nuovo.
+        if av_ffmpeg_proc is None or _av_pump is None or _av_pump.done():
             await _start_av_ffmpeg_locked()
             proc = av_ffmpeg_proc
             if not proc or proc.poll() is not None:
@@ -223,13 +233,21 @@ async def av_unsubscribe(q: asyncio.Queue) -> None:
         _av_clients.discard(q)
         if not _av_clients:
             await _stop_av_ffmpeg_locked()
-            if _av_pump:
-                await asyncio.wait([_av_pump])
 
 
 async def stop_av_ffmpeg():
     async with _av_lock:
         await _stop_av_ffmpeg_locked()
+
+
+def _close_av_pipes(proc) -> None:
+    """proc.stdout/stderr.close(), fuori dal loop. Se il thread che le legge (la pump,
+    lo stderr reader) è ancora bloccato in una read1()/readline(), close() qui aspetta
+    la stessa lock del BufferedReader e può restare ferma per secondi — misurato fino a
+    ~11 s a testa. Farlo sul thread del loop bloccava tutto asyncio; qui no."""
+    for pipe in (proc.stdout, proc.stderr):
+        with contextlib.suppress(Exception):
+            pipe.close()
 
 
 async def _stop_av_ffmpeg_locked():
@@ -250,7 +268,13 @@ async def _stop_av_ffmpeg_locked():
             await asyncio.get_running_loop().run_in_executor(None, proc.wait, 2)
         except Exception:  # noqa: BLE001 — già uscito
             pass
+        # I client non aspettano che la pump se ne accorga da sola (può restare bloccata
+        # in read1() per secondi dopo il kill, vedi _close_av_pipes): staccati subito.
+        for q in list(_av_clients):
+            end_client(q, _av_clients)
         _LOGGER.info("AV ffmpeg stopped")
+        # In background: può bloccare per secondi (vedi sopra), mai sul thread del loop.
+        asyncio.get_running_loop().run_in_executor(None, _close_av_pipes, proc)
 
 
 async def _read_av_ffmpeg_stderr(proc, tail: collections.deque[str]):
