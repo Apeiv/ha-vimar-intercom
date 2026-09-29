@@ -526,6 +526,7 @@ def reset_state() -> None:
     """
     global _local_crypto_key, _local_video_crypto_key, _last_sweep
     global _state_change_callback, reader, writer, _udp_sock
+    global granted_expiry, registered_at
     cancel_reconnect()
     _state_change_callback = None
     _set_in_call(False)
@@ -550,6 +551,7 @@ def reset_state() -> None:
     _seen_requests.clear()
     _last_sweep = 0.0
     _local_crypto_key = _local_video_crypto_key = None
+    granted_expiry, registered_at = None, 0.0
     DEVICES.forget_bindings()
 
 
@@ -1440,9 +1442,44 @@ def _record_bindings(hdrs) -> None:
         _LOGGER.debug("Device inventory (bindings) skipped: %s", e)
 
 
-# The hub renews the registration every 120 s: a binding shorter than this can
-# lapse between two renewals, and calls stop reaching us until the next one.
+# The hub renews the registration every REGISTER_INTERVAL seconds, sooner when
+# the registrar grants a shorter lifetime (renew_delay). A grant under
+# MIN_GRANTED_EXPIRES is still worth a WARNING: the renewals then run more often
+# than upstream's 120 s, and one lost answer leaves little time before it lapses.
+REGISTER_INTERVAL = 120
 MIN_GRANTED_EXPIRES = 150
+# Renew this long before the grant lapses; on short grants the margin shrinks
+# to a fifth of the grant, and a renewal is never scheduled closer than this.
+REGISTER_MARGIN = 60
+MIN_REGISTER_INTERVAL = 5
+
+# The lifetime the registrar granted at the last successful REGISTER (None: it
+# did not say), and when that was (time.monotonic(), 0.0: never).
+granted_expiry: int | None = None
+registered_at = 0.0
+
+
+def _remember_granted_expiry(hdrs) -> int | None:
+    """Record the lifetime the registrar granted and when (a 200 to REGISTER)."""
+    global granted_expiry, registered_at
+    granted_expiry = _granted_expires(hdrs)
+    registered_at = time.monotonic()
+    return granted_expiry
+
+
+def renew_delay() -> float:
+    """Seconds between one successful REGISTER and the next renewal.
+
+    REGISTER_INTERVAL (upstream's 120 s) is the upper bound, so nothing changes
+    on a registrar that grants 120 s or more. On a shorter grant a fixed margin
+    would put the renewal right on the expiry (60 - 60 = 0), so the margin is
+    min(REGISTER_MARGIN, 20% of the grant), with a floor of MIN_REGISTER_INTERVAL.
+    """
+    granted = granted_expiry
+    if not granted:
+        return float(REGISTER_INTERVAL)
+    margin = min(REGISTER_MARGIN, granted * 0.2)
+    return float(min(REGISTER_INTERVAL, max(MIN_REGISTER_INTERVAL, granted - margin)))
 
 
 def _granted_expires(hdrs) -> int | None:
@@ -1522,10 +1559,11 @@ async def do_register():
         code, hdrs = final
         last_code = code
         if code == 200:
-            granted = _granted_expires(hdrs)
+            granted = _remember_granted_expiry(hdrs)
             if granted is not None and granted < MIN_GRANTED_EXPIRES:
-                _LOGGER.warning("The registrar granted only %d s (Expires): the binding can "
-                                "lapse between two renewals (every 120 s)", granted)
+                _LOGGER.warning("The registrar granted only %d s (Expires): renewing every "
+                                "%.0f s instead of every %d s", granted, renew_delay(),
+                                REGISTER_INTERVAL)
             _record_bindings(hdrs)
             _set_registered(True)
             _LOGGER.info("SIP registered successfully")

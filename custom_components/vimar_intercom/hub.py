@@ -1800,9 +1800,29 @@ class VimarIntercomHub:
         except Exception as e:
             _LOGGER.error("Auto startup error: %s", e, exc_info=True)
 
+    def _keepalive_due(self, last_tick: float) -> float:
+        """When the next keepalive tick is due (time.monotonic()).
+
+        REGISTER_INTERVAL after the last tick, or renew_delay() after the last
+        successful REGISTER when that comes first: a registrar that grants 60 s
+        would otherwise see the binding lapse 60 s into every 120 s cycle.
+        """
+        due = last_tick + sip.REGISTER_INTERVAL
+        if sip.registered and sip.registered_at:
+            due = min(due, max(last_tick, sip.registered_at) + sip.renew_delay())
+        return due
+
     async def _keepalive_loop(self):
+        # Wakes at least every MIN_REGISTER_INTERVAL to notice a REGISTER done
+        # elsewhere (startup, reconnect) and the lifetime it was granted: the
+        # first one lands while this loop is already waiting.
+        last_tick = time.monotonic()
         while self._running:
-            await asyncio.sleep(120)
+            remaining = self._keepalive_due(last_tick) - time.monotonic()
+            if remaining > 0:
+                await asyncio.sleep(min(remaining, sip.MIN_REGISTER_INTERVAL))
+                continue
+            last_tick = time.monotonic()
             await self._keepalive_tick()
 
     async def _keepalive_tick(self):

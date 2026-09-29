@@ -217,3 +217,137 @@ def test_a_short_granted_expiry_is_a_warning(monkeypatch, caplog, expires, warne
     with caplog.at_level("WARNING"):
         assert asyncio.run(sip.do_register())
     assert ("granted only" in caplog.text) is warned
+
+
+# ─── renewing at the lifetime the registrar grants ───────────────────────────
+
+@pytest.mark.parametrize("granted, delay", [
+    (None, 120),   # the registrar did not say: upstream's cadence
+    (3600, 120),   # a long grant never slows the renewal down
+    (300, 120),    # 300 - 60 = 240, capped at 120
+    (150, 120),    # 150 - min(60, 30) = 120
+    (120, 96),     # 120 - min(60, 24): a fixed 60 s margin would renew at 60
+    (60, 48),      # 60 - 12; a fixed margin would put it on the expiry (60 - 60 = 0)
+    (10, 8),
+    (5, 5),        # 5 - 1 = 4, raised to the 5 s floor
+    (1, 5),
+])
+def test_the_renewal_delay_follows_the_grant(monkeypatch, granted, delay):
+    monkeypatch.setattr(sip, "granted_expiry", granted)
+    assert sip.renew_delay() == delay
+
+
+def test_a_successful_register_remembers_the_grant(monkeypatch):
+    async def _send_request(_msg, _cid):
+        return [_ok200("Expires: 60\r\n")]
+
+    monkeypatch.setattr(sip.R, "USE_LOCAL_UDP", True)
+    monkeypatch.setattr(sip, "_udp_sock", object())
+    monkeypatch.setattr(sip, "_my_port", lambda: 5070)
+    monkeypatch.setattr(sip, "_send_request", _send_request)
+    monkeypatch.setattr(sip, "_record_bindings", lambda hdrs: None)
+    monkeypatch.setattr(sip, "_set_registered", lambda v: None)
+    monkeypatch.setattr(sip, "granted_expiry", None)
+    monkeypatch.setattr(sip, "registered_at", 0.0)
+
+    assert asyncio.run(sip.do_register())
+    assert sip.granted_expiry == 60
+    assert sip.registered_at > 0
+
+
+class _Clock:
+    def __init__(self):
+        self.now = 1000.0
+
+    def monotonic(self):
+        return self.now
+
+
+def _run_loop(hub, monkeypatch, *, grant, until, register_at=None):
+    """Run the keepalive loop on a fake clock; return when each REGISTER went out
+    (seconds from the start). `register_at`: a REGISTER done elsewhere (startup)
+    while the loop is already waiting."""
+    clock = _Clock()
+    start = clock.now
+    sent = []
+    monkeypatch.setattr(hub_mod, "time", clock)
+
+    def _granted():
+        monkeypatch.setattr(sip, "registered", True, raising=False)
+        monkeypatch.setattr(sip, "registered_at", clock.now)
+        monkeypatch.setattr(sip, "granted_expiry", grant)
+
+    async def _register():
+        sent.append(round(clock.now - start, 3))
+        _granted()
+        return True
+
+    async def _sleep(seconds):
+        assert seconds > 0, "the loop must never spin"
+        # A real sleep does not end early: the REGISTER happens during it.
+        end = clock.now + seconds
+        if register_at is not None and clock.now < start + register_at <= end:
+            clock.now = start + register_at
+            _granted()
+        clock.now = end
+        if clock.now - start >= until:
+            hub._running = False
+
+    async def _init():
+        hub._init_status_sent = True
+
+    monkeypatch.setattr(sip, "do_register", _register)
+    monkeypatch.setattr(hub_mod.asyncio, "sleep", _sleep)
+    monkeypatch.setattr(hub, "_request_init_status", _init)
+    hub._init_status_sent = True
+    hub._running = True
+    if register_at is None:
+        _granted()
+    else:
+        monkeypatch.setattr(sip, "registered", False, raising=False)
+        monkeypatch.setattr(sip, "registered_at", 0.0)
+        monkeypatch.setattr(sip, "granted_expiry", None)
+    asyncio.run(hub._keepalive_loop())
+    return sent
+
+
+def test_a_60_s_grant_is_renewed_before_it_lapses(hub, monkeypatch):
+    sent = _run_loop(hub, monkeypatch, grant=60, until=300)
+    assert sent[0] == 48
+    gaps = [b - a for a, b in zip([0, *sent], sent, strict=False)]
+    assert all(g < 60 for g in gaps), sent
+
+
+def test_a_60_s_grant_at_startup_is_honoured_by_the_waiting_loop(hub, monkeypatch):
+    """The first REGISTER (the hub's startup) lands while the loop already waits:
+    it must not keep its 120 s plan and let the 60 s binding lapse."""
+    sent = _run_loop(hub, monkeypatch, grant=60, until=200, register_at=1)
+    assert sent[0] == 49, sent
+
+
+def test_a_3600_s_grant_keeps_the_120_s_cadence(hub, monkeypatch):
+    sent = _run_loop(hub, monkeypatch, grant=3600, until=500)
+    assert sent == [120, 240, 360, 480]
+
+
+def test_without_a_registration_the_loop_retries_every_120_s(hub, chiamate, monkeypatch):
+    clock = _Clock()
+    start = clock.now
+    ticks = []
+    monkeypatch.setattr(hub_mod, "time", clock)
+    monkeypatch.setattr(sip, "registered", False, raising=False)
+    monkeypatch.setattr(sip, "registered_at", 0.0)
+
+    async def _tick():
+        ticks.append(clock.now - start)
+
+    async def _sleep(seconds):
+        clock.now += seconds
+        if clock.now - start >= 250:
+            hub._running = False
+
+    monkeypatch.setattr(hub, "_keepalive_tick", _tick)
+    monkeypatch.setattr(hub_mod.asyncio, "sleep", _sleep)
+    hub._running = True
+    asyncio.run(hub._keepalive_loop())
+    assert ticks == [120, 240]
