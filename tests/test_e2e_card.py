@@ -123,17 +123,19 @@ def test_squillo_rispondi_parla_riaggancia(monkeypatch, engine):  # noqa: F811
 
 @pytest.mark.parametrize("engine", ["chromium"], indirect=True)
 def test_muto_audio_targa(monkeypatch, engine):  # noqa: F811
-    """Tondo "Audio" sul video: compare solo mentre arriva davvero audio dalla targa (qui
-    durante una chiamata vera, col microfono), muta/smuta solo la riproduzione locale
-    (GainNode a 0/1) — la chiamata, il microfono e il WebSocket non se ne accorgono, e il
-    muto scelto vale una sessione dal vivo sola (sparisce col riaggancio)."""
+    """Tondo "Audio" sul video: visibile per tutta la diretta (ringing/calling/in_call),
+    non solo quando l'audio è già partito. Durante una chiamata vera (col microfono) il
+    tocco muta/smuta solo la riproduzione locale (GainNode a 0/1) — la chiamata, il
+    microfono e il WebSocket non se ne accorgono — e il muto scelto vale una sessione dal
+    vivo sola (sparisce col riaggancio)."""
     async def s():
         async with Rig(monkeypatch, http=True) as rig:
             await rig.register()
             async with Card(rig, engine, webcodecs=False) as c:
                 rig.ring("ring-mute")
                 await c.until("info().pill === 'Suonano alla porta' && T.av.includes(200) && T.avBytes > 0")
-                assert (await c.info())["mute"] is None, "niente audio ancora: il tasto non c'è"
+                m = (await c.info())["mute"]
+                assert not m["hidden"] and not m["audible"], m  # già visibile, ma niente ancora da mutare
                 await c.tap("talk")
                 await c.until("info().pill === 'In chiamata' && T.ws === 1")
                 ok200 = await rig.peer.wait_for(is_(code=200, cid="ring-mute"))
@@ -143,10 +145,12 @@ def test_muto_audio_targa(monkeypatch, engine):  # noqa: F811
                                               ("127.0.0.1", media.RTP_AUDIO_PORT))
                     await asyncio.sleep(0.02)
                 await c.until("T.rx > 5")
-                assert (await c.info())["mute"] == {"muted": False, "gain": 1}
+                m = (await c.info())["mute"]
+                assert m["audible"] and m["gain"] == 1, m
                 await c.tap("mute")
                 await c.until("info().mute.muted")
-                assert (await c.info())["mute"]["gain"] == 0
+                m = (await c.info())["mute"]
+                assert m["gain"] == 0 and not m["audible"], m
                 rx0 = (await c.T())["rx"]
                 for i in range(20, 40):                   # la targa continua: la ricezione non si ferma da muti
                     rig.peer.rtp_audio.sendto(struct.pack("!BBHII", 0x80, 0, i, i * 160, 1234) + b"\x7f" * 160,
@@ -159,12 +163,40 @@ def test_muto_audio_targa(monkeypatch, engine):  # noqa: F811
                 assert (await c.info())["pill"] == "In chiamata" and rig.services == ["vimar_intercom.answer"]
                 await c.tap("mute")
                 await c.until("!info().mute.muted")
-                assert (await c.info())["mute"]["gain"] == 1
+                assert (await c.info())["mute"]["audible"]
                 await c.tap("hangup")
                 await rig.peer.wait_for(is_("BYE", cid="ring-mute"))
                 await c.until(IDLE + " && info().audio === 'off'")
-                assert (await c.info())["mute"] is None                # a riposo il tasto sparisce
-                assert await c.page.evaluate("card._muted") is False   # il muto vale una sessione dal vivo sola
+                assert (await c.info())["mute"]["hidden"]               # a riposo il tasto sparisce
+                assert await c.page.evaluate("card._muted") is False    # il muto vale una sessione dal vivo sola
+                assert not (await c.T())["errors"]
+    run(s())
+
+
+@pytest.mark.parametrize("engine", ["chromium"], indirect=True)
+def test_ascolta_durante_vedi_esterno_in_chiamata(monkeypatch, engine):  # noqa: F811
+    """`listen_on_ring: true` fa sentire la targa anche durante "Vedi esterno" in corso
+    (calling → in_call), non solo allo squillo in arrivo: l'RTP della targa, una volta
+    stabilita la chiamata, arriva comunque — senza microfono né "answer"/"call"."""
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            await rig.register()
+            rig.peer.on_invite = answer_200
+            async with Card(rig, engine, webcodecs=False, listen_on_ring=True) as c:
+                await c.tap("view")
+                await c.until("info().pill === 'In chiamata'")
+                await c.until("info().listen", 3)               # l'ascolto si aggancia da solo anche qui
+                assert (await c.T())["gum"] == 0, "il microfono non deve accendersi"
+                n0 = (await c.T())["rx"]
+                for i in range(15):                              # la targa parla durante la visione
+                    rig.peer.rtp_audio.sendto(struct.pack("!BBHII", 0x80, 0, i, i * 160, 1234) + b"\x7f" * 160,
+                                              ("127.0.0.1", media.RTP_AUDIO_PORT))
+                    await asyncio.sleep(0.02)
+                await c.until(f"T.rx > {n0}", 3)                 # arriva davvero, non solo allo squillo
+                assert (await c.info())["mute"]["audible"]       # tasto "Audio" acceso, sempre visibile in diretta
+                await c.tap("hangup")
+                await c.until(IDLE)
+                assert rig.services == ["vimar_intercom.call", "vimar_intercom.hangup"]
                 assert not (await c.T())["errors"]
     run(s())
 

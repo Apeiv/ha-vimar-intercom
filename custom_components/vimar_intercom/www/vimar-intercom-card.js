@@ -182,7 +182,7 @@ const STYLE = `
   [data-drawer="true"] #log { background: var(--primary-color); }
 
   /* Muto locale (audio in arrivo dalla targa): tondo sul video, accanto alla cronologia;
-     visibilità decisa in JS (solo mentre arriva davvero audio), non dallo stato "live". */
+     visibile per tutta la diretta (in JS, hidden segue lo stato "live"), non solo mentre suona. */
   #mute { position: absolute; top: 8px; right: 56px; z-index: 3; width: 40px; height: 40px; border-radius: 50%;
           display: grid; place-items: center; color: #fff; background: rgba(0,0,0,.45); }
   #mute ha-icon { --mdc-icon-size: 22px; }
@@ -264,10 +264,12 @@ const PHOTO = `<button id="photo" aria-label="Cronologia squilli" aria-expanded=
   <img alt=""><ha-icon icon="mdi:doorbell-video" aria-hidden="true"></ha-icon></button>`;
 const LOG = `<button id="log" aria-label="Cronologia squilli" aria-expanded="false" aria-controls="drawer">
   <ha-icon icon="mdi:menu-open" aria-hidden="true"></ha-icon></button>`;
-// Muta solo l'audio in arrivo dalla targa (ascolto allo squillo o parlato): niente
-// riaggancio, niente microfono, niente WebSocket chiuso. Icona sola, senza etichetta.
-const MUTE = `<button id="mute" aria-label="Audio" aria-pressed="false">
-  <ha-icon icon="mdi:volume-high" aria-hidden="true"></ha-icon></button>`;
+// Sempre in vista per tutta la diretta: se l'audio non sta ancora suonando (bloccato su
+// iOS o mai partito) il tocco avvia l'ascolto — è il gesto vero che sblocca l'AudioContext;
+// se sta suonando (ascolto allo squillo o parlato) lo muta/smuta soltanto. Mai la chiamata,
+// mai il microfono, mai il WebSocket. Icona sola, senza etichetta.
+const MUTE = `<button id="mute" aria-label="Audio" aria-pressed="true">
+  <ha-icon icon="mdi:volume-off" aria-hidden="true"></ha-icon></button>`;
 const SUB = `<span class="sub"><span class="pill" role="status" aria-live="polite"></span><span class="last"></span><span class="err" role="alert"></span></span>`;
 const ROW = `<div class="row">${btn("view", "mdi:cctv", "Vedi esterno")}${btn("talk", "mdi:microphone", "Parla")}` +
   `${btn("hangup", "mdi:phone-hangup", "Riaggancia")}${btn("open", "mdi:door-open", "Apri")}</div>`;
@@ -544,12 +546,14 @@ class VimarIntercomCard extends HTMLElement {
     this._open.disabled = state === "offline" || hass.states[this._ent("lock")]?.state === "unavailable";
     if ((state === "idle" || state === "offline") && this._ws) this._stopAudio();
 
-    // Muto (tondo sul video): visibile solo mentre arriva davvero audio dalla targa
-    // (parlato vero o solo ascolto allo squillo), non tutta la diretta.
-    const playingAudio = !!this._ws || !!this._listenWs;
-    this._mute.hidden = !playingAudio;
-    this._icon(this._mute, this._muted ? "mdi:volume-off" : "mdi:volume-high");
-    this._mute.setAttribute("aria-pressed", !!this._muted);
+    // Muto (tondo sul video): sempre visibile per tutta la diretta (ringing/calling/
+    // in_call), non solo quando l'audio è già partito — su iOS l'ascolto automatico può
+    // restare bloccato senza un tocco vero, e il tasto è anche il modo per darglielo
+    // (vedi onclick, sotto: se non sta ancora suonando avvia l'ascolto invece di mutare).
+    const audible = (!!this._ws || !!this._listenWs) && !this._muted;
+    this._mute.hidden = !live;
+    this._icon(this._mute, audible ? "mdi:volume-high" : "mdi:volume-off");
+    this._mute.setAttribute("aria-pressed", !audible);
 
     // Arrivo dall'ancora (link della notifica) già "in_call" (l'automazione ha risposto
     // lei, con vimar_intercom.answer): l'audio si aggancia da sola, un tentativo per
@@ -577,11 +581,10 @@ class VimarIntercomCard extends HTMLElement {
     // squillo/preview o quando parte l'audio vero (_ws, mic compreso: si passa a quello,
     // niente doppio canale). "Rispondi" resta al suo posto durante lo squillo: un tocco
     // solo, già pronto, anche se l'ascolto automatico non parte (iOS senza gesto).
-    if (this._cfg.listen_on_ring && live && !this._ws && !this._starting) {
-      if (!this._listenWs && !this._listenStarting) this._startListen();
-    } else {
-      this._stopListen();
-    }
+    // Chiusura solo per fine diretta o audio vero: un ascolto avviato a mano dal tasto
+    // Audio (anche a `listen_on_ring` spento) resta finché dura la diretta.
+    if (!live || this._ws || this._starting) this._stopListen();
+    else if (this._cfg.listen_on_ring && !this._listenWs && !this._listenStarting) this._startListen(true);
   }
 
   _label(button, text) {
@@ -628,7 +631,13 @@ class VimarIntercomCard extends HTMLElement {
     this._talk.onclick = () => (this._ws ? this._stopAudio() : this._starting || this._startTalk());
     this._hangup.onclick = () => this._call("hangup", this._hangup).catch(() => {});
     this._open.onclick = () => this._openDoor();
-    this._mute.onclick = () => this._toggleMute();
+    // Non ancora in ascolto (bloccato su iOS o mai partito): il tocco stesso è il gesto
+    // vero che sblocca l'AudioContext, quindi avvia l'ascolto invece di mutare un canale
+    // che non c'è ancora. Se il parlato vero è già in corso, non lo tocca: solo il muto.
+    this._mute.onclick = () => {
+      if (this._ws || this._listenWs) this._toggleMute();
+      else if (!this._listenStarting) this._startListen();
+    };
     // Un avviso vive SAY_MS al posto della riga di stato, poi sparisce (NO_ANSWER resta finché si collega).
     new MutationObserver(() => {
       clearTimeout(this._sayT);
@@ -936,19 +945,24 @@ class VimarIntercomCard extends HTMLElement {
     this._render();
   }
 
-  // Ascolto senza rispondere (`listen_on_ring`): solo ricezione, niente microfono né
-  // "answer"/"call" — un WebSocket audio a sé, separato da quello video (NalPlayer scarta
-  // i pacchetti 0x01) e da quello del parlato vero (_openAudio, che lo scavalca: vedi
-  // _startTalk). Stesso limite iOS del parlato: senza un gesto vero l'AudioContext resta
-  // sospeso, si rinuncia in silenzio e il tasto (se non è "Rispondi") diventa "Audio".
-  async _startListen() {
+  // Ascolto senza rispondere: solo ricezione, niente microfono né "answer"/"call" — un
+  // WebSocket audio a sé, separato da quello video (NalPlayer scarta i pacchetti 0x01) e
+  // da quello del parlato vero (_openAudio, che lo scavalca: vedi _startTalk). `auto`:
+  // richiamato da solo da `_render` quando `listen_on_ring` è acceso (stesso limite iOS
+  // del parlato: senza un gesto vero l'AudioContext resta sospeso, si rinuncia in
+  // silenzio e il tasto "Audio" spento resta lì pronto al tocco). Senza `auto`: il tasto
+  // "Audio" stesso, tocco vero — parte comunque, anche a `listen_on_ring` spento: è
+  // l'utente a chiederlo, non l'anteprima automatica.
+  async _startListen(auto = false) {
     if (!window.isSecureContext) return;
     this._listenStarting = true;
     try {
       const ctx = await this._unlockedContext();
       if (!ctx) return;
       const { path } = await this._hass.callWS({ type: "auth/sign_path", path: "/api/vimar_intercom/audio_ws" });
-      if (!this.isConnected || !this._cfg.listen_on_ring) return ctx.close();  // stato cambiato nell'attesa
+      // Stato cambiato nell'attesa: uscito dalla card, o (solo per l'automatico) l'anteprima
+      // non serve più (config spenta dall'editor, oppure il parlato vero l'ha scavalcata).
+      if (!this.isConnected || this._ws || (auto && !this._cfg.listen_on_ring)) return ctx.close();
       const ws = new WebSocket(location.origin.replace(/^http/, "ws") + path);
       ws.binaryType = "arraybuffer";
       ws.onmessage = this._pcmSink(ctx, this._gain(ctx));
