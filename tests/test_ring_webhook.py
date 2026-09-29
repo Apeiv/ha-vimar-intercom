@@ -55,6 +55,22 @@ def test_fine_squillo_chiama_lurl_di_end(hub, calls, monkeypatch, msg_type, msg)
     assert hub._was_ringing is False  # non riscatta al prossimo evento
 
 
+def test_ring_ripetuto_durante_lo_squillo_non_riarma_lurl_di_start(hub, calls, monkeypatch):
+    """item 9: un secondo "ring" (es. re-INVITE) mentre si squilla ancora non deve
+    rifirmare il webhook di partenza -- prima, a una fine sola corrispondevano due inizi."""
+    monkeypatch.setitem(sip.pending_incoming, "caller_uri", "sip:55001@dom")
+    monkeypatch.setitem(sip.pending_incoming, "active", True)
+    monkeypatch.setitem(sip.pending_incoming, "early", True)
+
+    async def _noop():
+        pass
+
+    monkeypatch.setattr(sip, "send_keyframe_request", _noop)  # niente SIP vero qui
+    asyncio.run(hub._handle_broadcast("ring", "Chiamata da: 55001"))
+    asyncio.run(hub._handle_broadcast("ring", "Chiamata da: 55001"))  # re-INVITE, si squilla ancora
+    assert calls == [START_URL]
+
+
 def test_call_started_in_uscita_non_e_fine_squillo(hub, calls):
     """Auto-call/"Vedi esterno": call_started senza uno squillo prima, niente webhook."""
     asyncio.run(hub._handle_broadcast("call_started", "Connesso!"))

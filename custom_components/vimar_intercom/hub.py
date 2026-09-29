@@ -775,8 +775,11 @@ class VimarIntercomHub:
             # servizio simulate_ring (test, senza SIP), che non ha un ring_ended o un
             # call_started dietro a chiudere lo squillo — il webhook di fine resterebbe
             # armato per sempre e scatterebbe al prossimo evento qualsiasi.
+            # Un altro "ring" mentre si squilla già (re-INVITE) non riarma il webhook di
+            # partenza: ne uscirebbero due per una fine sola (self._was_ringing sotto).
+            if not self._was_ringing:
+                self.fire_ring_callbacks()
             self._was_ringing = True
-            self.fire_ring_callbacks()
             # IDR subito (INFO nel dialogo early del 183), non al giro della targa (~3 s):
             # foto, clip e card partono prima.
             self._request_keyframe()
