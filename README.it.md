@@ -125,6 +125,10 @@ Impostazioni → Vimar Intercom → **Configura**:
 | **Risposta a voce** (`voice_answer`) | Chi può rispondere a uno squillo parlando su `/audio_ws`: **Solo dichiarato** (default, solo con `?voice_answer=1`), **Mai**, **Chiunque** (qualsiasi connessione con microfono; un tablet a muro col microfono rimasto aperto può rispondere da solo coi rumori di casa) |
 | **Webhook squillo** (`ring_webhook_url`, `ring_end_webhook_url`) | GET opzionale (fire-and-forget, timeout 5 s) inviata quando inizia uno squillo e quando finisce (risposto, annullato o non risposto) — es. gli URL `turnOn`/`turnOff` di un Dummy Switch Scrypted (vedi [docs/EXTERNAL.md](docs/EXTERNAL.md)). Un fallimento logga solo un warning, mai blocca lo squillo. Vuoto = disattivato |
 
+**Segreteria del Tab e messaggio di assenza di HA: uno o l'altro.** Gli switch *Messaggio di assenza*
+e *Segreteria* si escludono a vicenda: accendere uno spegne l'altro (anche se la segreteria del Tab
+viene accesa dal Tab stesso). Lo switch del messaggio di assenza è disponibile solo se il messaggio è configurato.
+
 Esempio, Tab 5S Up 40515 (Due Fili Plus, cloud): SGA `61000`, PICG `60001`, targa video e apri‑porta
 `55001`. Sono i valori della rubrica dell'app VIEW, non i default.
 
@@ -147,6 +151,7 @@ tuo impianto o vuoi modificare la lista attuatori prodotta dall'import).
 | Chiama | `button` | Chiamata SIP verso la targa di default |
 | Chiama Video (esterno) / Chiama Casa (interno) | `button` | Chiamata verso `camera_target` / `internal_panel_target` |
 | Rispondi / Riaggancia | `button` | Rispondi (200 OK) / termina (BYE) |
+| Rifiuta | `button` | Solo mentre suona: rifiuta con `603 Decline`, così smette di suonare tutta la casa, come nell'app. Anche il servizio `vimar_intercom.decline` |
 | Apri Porta | `button` | `OPEN_2F` verso `door_target` |
 | *Attuatori dinamici* | `button` | Uno per voce in `options["actuators"]` (F1/F2, luci scala, relè…); invia `MSG` con `Panda: command` |
 | Segreteria | `switch` | `VOICEMAIL;ON/OFF` (Panda: blue) verso l'SGA; stato letto dagli annunci del Tab e da `GET_INIT_STATUS`, chiesto dopo ogni comando. Il valore comandato si vede per 10 s al massimo: senza conferma lo stato diventa *sconosciuto* ([#9](../../issues/9)) |
@@ -174,6 +179,16 @@ tuo impianto o vuoi modificare la lista attuatori prodotta dall'import).
 
 *La card a riposo con la cronologia degli squilli, durante uno squillo (anteprima video prima di rispondere) e in chiamata. L'immagine della telecamera è una scena dimostrativa.*
 
+**Layout** (immagini dimostrative): `overlay`, `sotto` e `popup` durante lo squillo, la cronologia degli squilli e l'editor visuale.
+
+| `overlay` | `sotto` |
+|---|---|
+| ![layout overlay](docs/images/card-overlay.png) | ![layout sotto](docs/images/card-below.png) |
+
+| `popup`: card compatta sopra, popup in diretta aperto | Cronologia | `compact_style: tile` |
+|---|---|---|
+| ![layout popup](docs/images/card-popup.png) | ![cronologia squilli](docs/images/card-history.png) | ![tile compatto](docs/images/card-compact-tile.png) |
+
 L'integrazione include una card per le dashboard e la carica da sola: non va aggiunta tra le
 Risorse. Si sceglie **Citofono Vimar** dall'elenco delle card (telecamera, nome, layout e
 cronologia hanno l'editor visuale; il resto resta in YAML) oppure si scrive a mano:
@@ -188,7 +203,8 @@ lock: lock.vimar_intercom_serratura
 last_ring: sensor.vimar_intercom_intercom_ultimo_squillo
 anchor: citofono   # "" = disattivato
 history: 8         # 0 = disattivato
-layout: overlay    # oppure "sotto"
+layout: overlay    # oppure "sotto" o "popup"
+compact_style: pillola   # solo layout "popup": la card compatta è una "pillola" o un "tile"
 ```
 
 Aprire la card non chiama mai la targa. Il video dal vivo parte solo durante lo squillo o una

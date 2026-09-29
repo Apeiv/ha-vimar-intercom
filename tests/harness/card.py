@@ -10,7 +10,7 @@ VideoDecoder (browser senza WebCodecs), `?badwc` ne mette uno che fallisce la
 configurazione (codec non supportato): in entrambi i casi la card deve tornare a /av.
 `?flakywc` ne mette uno che si rompe al 10° chunk (dati corrotti): la card resta sul
 canvas e riparte dal prossimo IDR.
-`?layout=sotto` passa `layout` in setConfig. `ha-form` è un finto minimo (label +
+`?layout=sotto` (o popup) passa `layout` in setConfig. `ha-form` è un finto minimo (label +
 input/select nativi, `value-changed` come quello vero) per provare l'editor visuale.
 """
 from __future__ import annotations
@@ -114,6 +114,7 @@ const mkHass = (status, lastRing = {}) => ({
     "sensor.vimar_intercom_intercom_stato": { state: status },
     "sensor.vimar_intercom_intercom_ultimo_squillo": { state: "unknown", attributes: lastRing },
     "lock.vimar_intercom_serratura": { state: "locked" },
+    "button.garage": { state: "unknown", attributes: { friendly_name: "Garage" } },
   },
   callService: async (d, sv) => {
     T.calls.push(d + "." + sv);
@@ -137,8 +138,9 @@ await import("/card.js");
 await customElements.whenDefined("vimar-intercom-card");
 const c = document.createElement("vimar-intercom-card");
 const qs = new URLSearchParams(location.search), layout = qs.get("layout");
-c.setConfig({ type: "custom:vimar-intercom-card", ...(layout && { layout }),
-              ...(qs.has("listen_on_ring") && { listen_on_ring: true }) });
+c.setConfig({ type: "custom:vimar-intercom-card", ...(layout && { layout }), ...(qs.get("compact") && { compact_style: qs.get("compact") }),
+              ...(qs.has("listen_on_ring") && { listen_on_ring: true }),
+              ...(qs.get("shortcuts") && { shortcuts: qs.get("shortcuts").split(",") }) });
 document.body.appendChild(c);
 window.card = c;
 window.tap = (id) => c.shadowRoot.getElementById(id).click();
@@ -151,8 +153,9 @@ window.info = () => ({ pill: c.shadowRoot.querySelector(".pill").textContent,
                          ws: T.wsOpenAt, nal: T.firstNalAt, frame: T.firstFrameAt },
   audio: !c._audio && !c._ws ? "off" : "on",
   listen: !!c._listenWs,
+  pop: !!c._pop.open,
   mute: { hidden: c.shadowRoot.getElementById("mute").hidden, muted: !!c._muted,
-          audible: (!!c._ws || !!c._listenWs) && !c._muted, gain: c._playGain?.gain.value } });
+          audible: (!!c._ws || !!c._listenWs) && !c._muted, gain: (c._talkGain || c._listenGain)?.gain.value } });
 </script></body></html>"""
 
 
@@ -166,12 +169,14 @@ class Card:
     """La pagina della card aperta in `engine` sul server di `rig` (Rig(http=True))."""
 
     def __init__(self, rig, engine: str, insecure=False, webcodecs=True, badwc=False, flakywc=False, layout=None,
-                 listen_on_ring=False):
+                 listen_on_ring=False, shortcuts=None, compact=None):
         self.rig, self.engine = rig, engine
         self.query = "?" + "&".join(f for f, on in (("insecure", insecure), ("nowc", not webcodecs),
                                                     ("badwc", badwc), ("flakywc", flakywc),
                                                     (f"layout={layout}", layout),
-                                                    ("listen_on_ring", listen_on_ring)) if on)
+                                                    ("listen_on_ring", listen_on_ring),
+                                                    (f"shortcuts={shortcuts}", shortcuts),
+                                                    (f"compact={compact}", compact)) if on)
 
     async def __aenter__(self):
         from playwright.async_api import async_playwright

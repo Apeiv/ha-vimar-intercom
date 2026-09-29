@@ -710,6 +710,314 @@ def test_layout_sotto_video_sopra_tasti_sotto(monkeypatch, engine, tmp_path):  #
     run(s())
 
 
+# Bottoni visibili nella riga, nell'ordine in cui stanno sullo schermo.
+POP_BUTTONS = """(() => { const r = card.shadowRoot;
+  return [...r.querySelectorAll('.row button')].filter((b) => b.getClientRects().length)
+    .sort((a, b) => a.getBoundingClientRect().x - b.getBoundingClientRect().x)
+    .map((b) => [b.id, Math.round(b.getBoundingClientRect().height)]); })()"""
+
+
+@pytest.mark.parametrize("engine", ["chromium"], indirect=True)
+def test_layout_popup_tocco_apre_e_chiama_tre_tasti(monkeypatch, engine):  # noqa: F811
+    """`layout: popup`: compatta finché non si tocca; il tocco apre il popup a tutto schermo
+    (iPhone) e fa "Vedi esterno"; tasti Parla / Apri / Riaggancia da 44 px, senza "Vedi esterno";
+    "Riaggancia" chiude anche il popup."""
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            await rig.register()
+            rig.peer.on_invite = answer_200
+            async with Card(rig, engine, layout="popup") as c:
+                await c.until(IDLE)
+                assert not (await c.info())["pop"]
+                assert await c.page.evaluate("card.shadowRoot.querySelector('.media').getClientRects().length") == 0
+                await c.page.evaluate("card.shadowRoot.querySelector('.name').click()")
+                await c.until("info().pill === 'In chiamata' && info().video !== 'auto' && info().pop")
+                dlg = await c.page.evaluate("(() => { const r = card._pop.getBoundingClientRect(); return [r.width, r.height]; })()")
+                assert dlg[0] == 366 and dlg[1] < 844, dlg  # pannello con margini, non a tutto schermo
+                btns = await c.page.evaluate(POP_BUTTONS)
+                assert [i for i, _ in btns] == ["talk", "open", "hangup"] and all(h >= 56 for _, h in btns), btns
+                over = await c.page.evaluate("""(() => { const r = card.shadowRoot, q = (s) => r.querySelector(s).getBoundingClientRect();
+                  const m = q('.media'), t = q('#talk'); return t.y + t.height <= m.y + m.height && Math.abs(m.width - 366) < 1; })()""")
+                assert over, "vetro sul video: tasti dentro il video, video a tutta larghezza"
+                await c.tap("hangup")
+                await c.until(IDLE + " && !info().pop")
+                assert rig.services == ["vimar_intercom.call", "vimar_intercom.hangup"], rig.services
+                assert not (await c.T())["errors"]
+    run(s())
+
+
+@pytest.mark.parametrize("size", [(640, 480), (1280, 720)])
+@pytest.mark.parametrize("engine", ["chromium"], indirect=True)
+def test_layout_popup_tema_chiaro_pannello_scuro_tasti_sotto(monkeypatch, engine, size):  # noqa: F811
+    """Tema chiaro di HA e video di risoluzione vera: il popup resta un pannello scuro tondo centrato su fondo semitrasparente, il
+    video 4:3 sta a tutta larghezza del pannello, i tasti (bianchi) in una barra SOTTO
+    il video, mai sopra."""
+    js = """(() => { const r = card.shadowRoot, q = (s) => r.querySelector(s).getBoundingClientRect();
+      const m = q('.media'), row = q('.row'), d = q('dialog.pop'), lab = r.querySelector('#hangup .lbl');
+      return { bg: getComputedStyle(r.querySelector('dialog.pop')).backgroundColor,
+               backdrop: getComputedStyle(r.querySelector('dialog.pop'), '::backdrop').backgroundColor, label: getComputedStyle(lab).color,
+               dlg: [d.width, d.height], media: [m.width, m.height], full: Math.abs(m.width / m.height - 4 / 3) < 0.02,
+               tall: Math.abs(m.width - d.width) < 1, below: [...r.querySelectorAll('.row button')].filter((b) => b.getClientRects().length)
+                 .every((b) => b.getBoundingClientRect().bottom <= m.y + m.height + 0.5),
+               centered: Math.abs(d.y + d.height / 2 - innerHeight / 2) < 2 }; })()"""
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            await rig.register()
+            async with Card(rig, engine, layout="popup") as c:
+                await c.page.add_style_tag(content=":root, body { --card-background-color:#fdfbf7; --primary-background-color:#fdfbf7;"
+                                                    " --primary-text-color:#212121; --secondary-text-color:#727272; background:#fdfbf7 }")
+                await c.until(IDLE)
+                rig.ring("ring-light")
+                await c.until("info().pop && info().video !== 'auto'")
+                await c.page.evaluate(f"(() => {{ const cv = card.shadowRoot.querySelector('#video canvas');"
+                                      f" cv.width = {size[0]}; cv.height = {size[1]}; }})()")
+                await asyncio.sleep(0.3)
+                st = await c.page.evaluate(js)
+                assert st["bg"] == "rgb(17, 17, 17)" and st["label"] == "rgb(255, 255, 255)", st
+                assert st["backdrop"] == "rgba(15, 15, 20, 0.5)", st  # semitrasparente: si intravede la dashboard
+                assert st["dlg"][0] == 366 and st["tall"] and st["below"] and st["centered"], st
+    run(s())
+
+
+
+@pytest.mark.parametrize("engine", ["chromium"], indirect=True)
+def test_layout_popup_scorciatoie_sulla_card_compatta(monkeypatch, engine):  # noqa: F811
+    """Le scorciatoie (lock → unlock, button → press) stanno sulla card compatta, chiedono il
+    secondo tocco (confirm_open) e non aprono il popup né chiamano la targa. Nel popup la prima è
+    "Apri": restano visibili solo le altre, in fila sotto la barra."""
+    tap = "(i) => card.shadowRoot.querySelectorAll('.sc button')[i].click()"
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            await rig.register()
+            async with Card(rig, engine, layout="popup", shortcuts="lock.vimar_intercom_serratura,button.garage") as c:
+                await c.until(IDLE)
+                labels = await c.page.evaluate("[...card.shadowRoot.querySelectorAll('.sc button .lbl')].map((b) => b.textContent)")
+                assert labels == ["Apri", "Garage"], labels
+                for i in (0, 1):
+                    await c.page.evaluate(f"({tap})({i})")
+                    await c.until(f"card.shadowRoot.querySelectorAll('.sc button .lbl')[{i}].textContent === 'Conferma'")
+                    assert len(rig.services) == i  # il primo tocco arma soltanto
+                    await c.page.evaluate(f"({tap})({i})")
+                    await c.until(f"card.shadowRoot.querySelectorAll('.sc button .lbl')[{i}].textContent === 'Aperto'")
+                assert rig.services == ["lock.unlock", "button.press"], rig.services
+                assert not (await c.info())["pop"] and not rig.peer.got(is_("INVITE"))
+                await c.page.evaluate("card.shadowRoot.querySelector('.name').click()")
+                await c.until("info().pop")
+                shown = await c.page.evaluate("[...card.shadowRoot.querySelectorAll('.sc button')].map((b) => b.getClientRects().length > 0)")
+                assert shown == [False, True], shown
+                assert not (await c.T())["errors"]
+    run(s())
+
+
+
+@pytest.mark.parametrize("engine", ["chromium"], indirect=True)
+def test_layout_popup_squillo_rifiuta_e_ascolto_chiuso(monkeypatch, engine):  # noqa: F811
+    """Allo squillo il tasto rosso del popup è "Rifiuta" e manda `decline` (603: smette di
+    suonare tutta la casa) e chiude il popup. Chiuso il popup con la X, `listen_on_ring` non
+    riapre l'ascolto finché suona."""
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            await rig.register()
+            async with Card(rig, engine, layout="popup", listen_on_ring=True) as c:
+                await c.until(IDLE)
+                rig.ring("ring-ascolto")
+                await c.until("info().pop && info().listen")
+                await c.tap("x")
+                await c.until("!info().pop && !info().listen")
+                await asyncio.sleep(1)
+                assert not (await c.info())["listen"] and not rig.services
+                await c.page.evaluate("card._openPop()")
+                await c.until("info().pop && card.shadowRoot.querySelector('#hangup .lbl').textContent === 'Rifiuta'")
+                await c.tap("hangup")
+                await c.until("!info().pop")
+                await rig.peer.wait_for(is_(code=603, cid="ring-ascolto"))
+                assert rig.services == ["vimar_intercom.decline"], rig.services
+                assert not (await c.T())["errors"]
+    run(s())
+
+
+@pytest.mark.parametrize("engine", ["chromium"], indirect=True)
+def test_layout_overlay_squillo_rifiuta(monkeypatch, engine):  # noqa: F811
+    """Overlay allo squillo: la 4ª cella è "Rifiuta" e manda `decline` (la targa riceve 603)."""
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            await rig.register()
+            async with Card(rig, engine, layout="overlay") as c:
+                await c.until(IDLE)
+                rig.ring("ring-overlay")
+                await c.until("info().pill === 'Suonano alla porta' && card.shadowRoot.querySelector('#hangup .lbl').textContent === 'Rifiuta'")
+                assert await c.page.evaluate("!card.shadowRoot.querySelector('#hangup').hidden")
+                await c.tap("hangup")
+                await rig.peer.wait_for(is_(code=603, cid="ring-overlay"))
+                assert rig.services == ["vimar_intercom.decline"], rig.services
+                assert not (await c.T())["errors"]
+    run(s())
+
+
+@pytest.mark.parametrize("engine", ["chromium"], indirect=True)
+def test_layout_overlay_adatta_riempi_si_ricorda(monkeypatch, engine):  # noqa: F811
+    """Adatta (contain, predefinito) / Riempi (cover): il tondo alterna object-fit di video e foto,
+    la scelta sta in localStorage e sopravvive a un rerender."""
+    fit = "getComputedStyle(card.shadowRoot.querySelector('#video canvas')).objectFit"
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            await rig.register()
+            async with Card(rig, engine, layout="overlay") as c:
+                await c.until(IDLE)
+                rig.ring("ring-fit")
+                await c.until("info().pill === 'Suonano alla porta' && info().video !== 'auto'")
+                assert await c.page.evaluate(fit) == "contain"
+                assert await c.page.evaluate("getComputedStyle(card.shadowRoot.querySelector('.still')).objectFit") == "contain"
+                await c.tap("fit")
+                assert await c.page.evaluate(fit) == "cover"
+                assert await c.page.evaluate("card.shadowRoot.querySelector('#fit').getAttribute('aria-pressed')") == "true"
+                assert await c.page.evaluate("card.shadowRoot.querySelector('#fit').title") == "Adatta video"
+                await c.page.evaluate("card.hass = card._hass")  # rerender
+                assert await c.page.evaluate(fit) == "cover"
+                assert await c.page.evaluate("localStorage.getItem('vimar_intercom_card_fit')") == "cover"
+                await c.tap("fit")
+                assert await c.page.evaluate(fit) == "contain"
+                assert not (await c.T())["errors"]
+    run(s())
+
+
+@pytest.mark.parametrize("style", ["pillola", "tile"])
+@pytest.mark.parametrize("engine", ["chromium"], indirect=True)
+def test_layout_popup_card_compatta_stili(monkeypatch, engine, style):  # noqa: F811
+    """`compact_style` pillola/tile: la card compatta si disegna, i tasti chiamano i servizi giusti
+    (Apri: due tocchi → unlock; a riposo Vedi = popup + "Vedi esterno" solo nel tile) e il tocco su un tasto non apre il popup.
+    Mentre suona: nome "Suonano alla porta", "Tocca per vedere · mm:ss", Rispondi; solo il tile ha Rifiuta (decline)."""
+    vis = "(id) => card.shadowRoot.querySelector(id)?.getClientRects().length > 0"
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            await rig.register()
+            async with Card(rig, engine, layout="popup", compact=style) as c:
+                await c.until(IDLE)
+                assert await c.page.evaluate("card.getAttribute('compact')") == style
+                h = await c.page.evaluate("card._card.getBoundingClientRect().height")
+                assert (h == 64) if style == "pillola" else (h > 90), h
+                assert await c.page.evaluate(f"({vis})('.sc button')") and not await c.page.evaluate(f"({vis})('#talk')")
+                await c.page.evaluate("card.shadowRoot.querySelector('.sc button').click()")  # arma
+                await c.page.evaluate("card.shadowRoot.querySelector('.sc button').click()")  # conferma
+                await c.until("card._card.querySelector('.sc button.ok')")
+                assert rig.services == ["lock.unlock"] and not (await c.info())["pop"], rig.services
+                if style == "tile":
+                    assert await c.page.evaluate(f"({vis})('#view')") and await c.page.evaluate(f"({vis})('#hist')")
+                rig.ring("ring-compatta")
+                await c.until("info().pop")
+                await c.tap("x")
+                await c.until("!info().pop && info().pill.startsWith('Tocca per vedere · 00:')")
+                assert await c.page.evaluate("card.shadowRoot.querySelector('.name').textContent") == "Suonano alla porta"
+                assert await c.page.evaluate(f"({vis})('#talk')") and not await c.page.evaluate(f"({vis})('#view')")
+                assert await c.page.evaluate(f"({vis})('#hangup')") == (style == "tile")
+                if style == "tile":
+                    await c.tap("hangup")
+                    await rig.peer.wait_for(is_(code=603, cid="ring-compatta"))
+                    assert rig.services == ["lock.unlock", "vimar_intercom.decline"] and not (await c.info())["pop"], rig.services
+                assert not (await c.T())["errors"]
+    run(s())
+
+
+@pytest.mark.parametrize("engine", ["chromium"], indirect=True)
+def test_layout_popup_tastiera_e_anteprima_dell_editor(monkeypatch, engine):  # noqa: F811
+    """La card compatta è un tasto (Invio la apre e fa "Vedi esterno"); nell'anteprima
+    dell'editor apre il popup ma non chiama la targa."""
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            await rig.register()
+            rig.peer.on_invite = answer_200
+            async with Card(rig, engine, layout="popup") as c:
+                await c.until(IDLE)
+                assert await c.page.evaluate("card._card.getAttribute('role')") == "button"
+                await c.page.evaluate("card._card.focus()")
+                await c.page.keyboard.press("Enter")
+                await c.until("info().pop && info().pill === 'In chiamata'")
+                await c.tap("x")
+                await c.until(IDLE + " && !info().pop")
+                assert rig.services == ["vimar_intercom.call", "vimar_intercom.hangup"], rig.services
+                await c.page.evaluate("document.body.append(document.createElement('hui-card-preview').appendChild(card).parentNode)")
+                await c.page.evaluate("card.shadowRoot.querySelector('.name').click()")
+                await c.until("info().pop")
+                await asyncio.sleep(1)
+                assert rig.services == ["vimar_intercom.call", "vimar_intercom.hangup"], rig.services
+                assert (await c.info())["pill"] == "Pronto"
+    run(s())
+
+
+
+@pytest.mark.parametrize("layout", ["overlay", "sotto"])
+@pytest.mark.parametrize("engine", ["chromium"], indirect=True)
+def test_scorciatoia_apri_e_cronologia_visibili_da_fermo(monkeypatch, engine, layout):  # noqa: F811
+    """Anche negli altri layout, da fermo: la scorciatoia (la serratura) sta nella testata e apre
+    con due tocchi senza chiamare la targa; il tasto cronologia è visibile, con nome."""
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            await rig.register()
+            async with Card(rig, engine, layout=layout) as c:
+                await c.until(IDLE)
+                st = await c.page.evaluate("""(() => { const r = card.shadowRoot, vis = (s) => r.querySelector(s).getClientRects().length > 0;
+                  return { sc: vis('.sc button'), open_row: vis('#open'), hist: vis('#photo'), title: r.querySelector('#photo').title }; })()""")
+                assert st == {"sc": True, "open_row": False, "hist": True, "title": "Cronologia squilli"}, st
+                for _ in range(2):
+                    await c.page.evaluate("card.shadowRoot.querySelector('.sc button').click()")
+                await c.until("card.shadowRoot.querySelector('.sc button .lbl').textContent === 'Aperto'")
+                assert rig.services == ["lock.unlock"] and not rig.peer.got(is_("INVITE"))
+    run(s())
+
+
+@pytest.mark.parametrize("engine", ["chromium"], indirect=True)
+def test_layout_popup_cronologia_non_chiama_e_chiusura_riaggancia(monkeypatch, engine, tmp_path):  # noqa: F811
+    """Il tasto cronologia apre il popup con il cassetto, senza mai chiamare la targa; una
+    chiamata avviata dalla card e poi chiusa con la X riaggancia."""
+    ring_log.update_ring_log(str(tmp_path), lambda r: r.append(
+        {"time": "2026-09-27T10:15:00+02:00", "photo": "squillo_20260927_101500.jpg", "outcome": "answered"}))
+    (tmp_path / "squillo_20260927_101500.jpg").write_bytes(b"\xff\xd8\xff\xd9")
+
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            monkeypatch.setattr(R, "SNAPSHOT_DIR", str(tmp_path))
+            await rig.register()
+            rig.peer.on_invite = answer_200
+            async with Card(rig, engine, layout="popup") as c:
+                await c.until(IDLE + " && !card.shadowRoot.querySelector('#photo').disabled")
+                await c.tap("photo")
+                await c.until("info().pop && card._card.dataset.drawer === 'true'")
+                await asyncio.sleep(1)
+                assert not rig.services and not rig.peer.got(is_("INVITE")) and (await c.T())["av"] == []
+                await c.page.evaluate("card._pop.close()")
+                await c.until("!info().pop")
+                await c.page.evaluate("card.shadowRoot.querySelector('.name').click()")  # chiamata dalla card
+                await c.until("info().pill === 'In chiamata' && info().pop")
+                await c.tap("x")
+                await c.until(IDLE + " && !info().pop")
+                assert rig.services == ["vimar_intercom.call", "vimar_intercom.hangup"], rig.services
+    run(s())
+
+
+@pytest.mark.parametrize("engine", ["chromium"], indirect=True)
+def test_layout_popup_si_apre_allo_squillo_una_volta(monkeypatch, engine):  # noqa: F811
+    """Allo squillo il popup si apre da solo, già in diretta con "Rispondi"; chiuso a mano
+    non si riapre (e non riaggancia: la chiamata non è della card) finché non arriva un
+    nuovo squillo."""
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            await rig.register()
+            async with Card(rig, engine, layout="popup") as c:
+                await c.until(IDLE)
+                rig.ring("ring-1")
+                await c.until("info().pop && info().video !== 'auto' && info().talk === 'Rispondi'")
+                await c.tap("x")
+                await c.until("!info().pop")
+                await asyncio.sleep(1)
+                assert not (await c.info())["pop"] and not rig.services
+                rig.peer.request("CANCEL", "ring-1", 1, "pnl")
+                await c.until(IDLE)
+                rig.ring("ring-2")
+                await c.until("info().pop")
+                assert not (await c.T())["errors"]
+    run(s())
+
+
 @pytest.mark.parametrize("engine", ["chromium"], indirect=True)
 def test_editor_visuale(monkeypatch, engine):  # noqa: F811
     """L'editor (getConfigElement, ha-form finto) manda `config-changed` con le sole chiavi

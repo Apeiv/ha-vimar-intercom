@@ -123,6 +123,10 @@ Settings → Vimar Intercom → **Configure**:
 | **Voice answer** (`voice_answer`) | Who can answer a ringing call by talking on `/audio_ws`: **Declared** (default, only with `?voice_answer=1`), **Off** (never), **Any** (any connection with a mic; a wall tablet with its mic left open can answer by itself on household noise) |
 | **Ring webhooks** (`ring_webhook_url`, `ring_end_webhook_url`) | Optional GET (fire-and-forget, 5 s timeout) fired when a ring starts and when it ends (answered, cancelled or missed) — e.g. the `turnOn`/`turnOff` URLs of a Scrypted Dummy Switch (see [docs/EXTERNAL.md](docs/EXTERNAL.md)). A failure only logs a warning, never blocks the ring. Empty = off |
 
+**Tab voicemail and Home Assistant's away message: one or the other.** The *Away message* and
+*Voicemail* switches exclude each other: turning one on turns the other off (also when the Tab's
+voicemail is switched on from the Tab itself). The away message switch is only available when the message is configured.
+
 Example, Tab 5S Up 40515 (Due Fili Plus, cloud): SGA `61000`, PICG `60001`, video and door panel
 `55001`. These values come from the VIEW app's phonebook, not from the defaults.
 
@@ -146,6 +150,7 @@ already know your plant's SGA or want to tweak the imported actuator list.
 | Call | `button` | SIP call to the default outdoor unit |
 | Call Video (outdoor) / Call Home (indoor) | `button` | Call to `camera_target` / `internal_panel_target` |
 | Answer / Hang up | `button` | Answer (200 OK) / end the call (BYE) |
+| Decline | `button` | Only while it rings: refuses the call with `603 Decline`, so the whole house stops ringing, as in the app. Also the `vimar_intercom.decline` service |
 | Open Door | `button` | `OPEN_2F` to `door_target` |
 | *Dynamic actuators* | `button` | One per entry in `options["actuators"]` (F1/F2, stair lights, relays…); sends `MSG` with `Panda: command` |
 | Voicemail | `switch` | `VOICEMAIL;ON/OFF` (Panda: blue) to the SGA; state read from the Tab's announcements and from `GET_INIT_STATUS`, asked after every command. The commanded value is shown for 10 s at most: with no confirmation the state becomes *unknown* ([#9](../../issues/9)) |
@@ -173,6 +178,16 @@ already know your plant's SGA or want to tweak the imported actuator list.
 
 *The card at rest with the ring history, during a ring (video preview before answering) and in a call. The camera picture is a demo scene.*
 
+**Layouts** (all with demo pictures): `overlay`, `sotto` and `popup` while the doorbell rings, the ring history, and the visual editor.
+
+| `overlay` | `sotto` |
+|---|---|
+| ![overlay layout](docs/images/card-overlay.png) | ![sotto layout](docs/images/card-below.png) |
+
+| `popup`: compact card above, live popup open | History drawer | `compact_style: tile` |
+|---|---|---|
+| ![popup layout](docs/images/card-popup.png) | ![ring history](docs/images/card-history.png) | ![compact tile](docs/images/card-compact-tile.png) |
+
 The integration ships a dashboard card and loads it itself, so there is nothing to add under
 Resources. Pick **Citofono Vimar** in the card picker (camera, name, layout and history have a
 visual editor; the rest stays in YAML) or add it by hand:
@@ -187,7 +202,8 @@ lock: lock.vimar_intercom_serratura
 last_ring: sensor.vimar_intercom_intercom_ultimo_squillo
 anchor: citofono   # "" = off
 history: 8         # 0 = off
-layout: overlay    # or "sotto"
+layout: overlay    # or "sotto" or "popup"
+compact_style: pillola   # "popup" layout only: the compact card is a "pillola" (pill) or a "tile"
 ```
 
 Opening the card never calls the panel. The live video starts only while the doorbell rings or

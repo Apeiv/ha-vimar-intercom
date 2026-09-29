@@ -17,9 +17,14 @@
 //                         dall'automazione — anche l'audio riparte da sola; "" = no)
 //   history: 8            (ultimi squilli con foto e clip, se c'è la cartella foto; 0 = no)
 //   confirm_open: true    (Apri chiede un secondo tocco; false = apre al primo)
+//   shortcuts: [lock.x]   (tasti tondi "Apri" sulla card a riposo, in tutti i layout, senza aprire il popup né
+//                         chiamare la targa; entità lock (unlock) o button (press), anche {entity, name, icon};
+//                         default = la serratura. Rispettano confirm_open. In diretta stanno i tasti veri;
+//                         nel popup "Apri" apre la prima e le altre stanno in fila sotto la barra)
 //   listen_on_ring: false (si sente il visitatore già allo squillo, senza rispondere:
 //                         solo ricezione, il microfono resta spento; anche dall'editor)
-//   layout: overlay       (o "sotto"; anche dall'editor visuale)
+//   layout: overlay       (o "sotto" o "popup"; anche dall'editor visuale)
+//   compact_style: pillola (solo layout popup: la card compatta in dashboard, "pillola" o "tile")
 //
 //   layout: overlay   (default) "Video a tutta card": da fermo riga da 72 px (foto dell'ultimo
 //                     squillo = tasto cronologia | nome · stato · ultimo / tre pill). In diretta
@@ -30,8 +35,15 @@
 //                     SOPRA la riga e i tasti restano nella riga, niente sopra al video. Da fermo
 //                     con cronologia: lista a piena larghezza sotto la riga (3 righe, poi scorre).
 //
-// Stesso DOM per i due layout: cambia solo il CSS, agganciato all'attributo `layout` sull'host
-// (blocchi :host([layout="overlay"]) / :host([layout="sotto"]) in fondo a STYLE).
+//   layout: popup     In dashboard la card è compatta (foto dell'ultimo squillo + stato). Un tocco, o il
+//                     tasto cronologia, apre un <dialog> (pannello scuro tondo centrato, margini 12 px, max 720) dove va la
+//                     card intera, video con sotto i tasti [Parla|Rispondi] [Apri] [Riaggancia]. Il tocco
+//                     sulla card = "Vedi esterno"; la cronologia non chiama mai la targa. Allo squillo (o
+//                     in_call/calling dall'ancora) si apre da sola, una volta per squillo. Chiuderlo
+//                     (X, Esc, tocco fuori) riaggancia se la chiamata l'ha avviata la card, e chiude l'audio.
+//
+// Stesso DOM per i layout: cambia il CSS, agganciato all'attributo `layout` sull'host (blocchi
+// :host([layout="overlay"]) / "sotto" / "popup" in fondo a STYLE); il popup in più sposta la card nel <dialog>.
 //
 // Regole comuni: aprire la pagina non chiama la targa; posti fissi [vedi|annulla|riaggancia]
 // [parla|rispondi|microfono] [apri]; "Apri" in due tocchi; slot 1 spento (non nascosto)
@@ -46,6 +58,7 @@
 // funzionano solo in HTTPS (o su localhost).
 
 const RATE = 8000;
+const FIT_KEY = "vimar_intercom_card_fit";
 const NO_ANSWER = "La targa non risponde, riprova.";
 const REFUSED = "La targa non ha accettato, riprova.";
 const SETUP_TIMEOUT_S = 20;  // oltre, "la targa non risponde" (il cloud a volte ci mette 15 s)
@@ -67,13 +80,27 @@ const dayLabel = (t) => {  // "" oggi, "Ieri", altrimenti "26 set"
 const when = (t) => [dayLabel(t), hm(t)].filter(Boolean).join(" ");  // "18:42", "Ieri 21:30"
 const whenFull = (t) => new Date(t).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 
+const CA = ':host([layout="popup"][compact]) ha-card:not(.pop)';
+const CP = ':host([layout="popup"][compact="pillola"]) ha-card:not(.pop)';
+const CT = ':host([layout="popup"][compact="tile"]) ha-card:not(.pop)';
 const STYLE = `
-  :host { display: block; scroll-margin-top: calc(var(--header-height, 56px) + 8px); }
+  /* Misure e colori ritoccabili senza toccare il resto: chip sul video, tondi delle scorciatoie e della barra, pannello popup. */
+  :host { display: block; scroll-margin-top: calc(var(--header-height, 56px) + 8px);
+          --vi-chip: rgba(0,0,0,.45); --vi-sc-size: 40px; --vi-bar-size: 64px; --vi-sc-pop-size: 48px;
+          --vi-pop-bg: #111; --vi-pop-radius: 32px; --vi-backdrop: rgba(15,15,20,.5);
+          --vi-glass: rgba(20,22,26,.5); --vi-glass-bar: rgba(20,22,26,.55); --vi-glass-btn: rgba(255,255,255,.18); }
+  /* Senza backdrop-filter il vetro non sfoca: più opaco, così il testo resta leggibile. */
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    :host { --vi-glass: rgba(20,22,26,.72); --vi-glass-bar: rgba(20,22,26,.72); }
+  }
   ha-card { position: relative; overflow: hidden; --st: var(--primary-color); --ink: var(--primary-text-color);
             --dim: var(--secondary-text-color); --fill: color-mix(in srgb, var(--ink) 7%, transparent); }
   [data-state="ringing"] { --st: var(--warning-color); }
   [data-state="calling"] { --st: var(--info-color); }
   [data-state="in_call"] { --st: var(--success-color); }
+  [data-state="ringing"] { --dot: #ffb547; }
+  [data-state="calling"] { --dot: #6cb2ff; }
+  [data-state="in_call"] { --dot: #5fd68a; }
   [data-state="offline"] { --st: var(--disabled-text-color, var(--dim)); }
   button { all: unset; box-sizing: border-box; position: relative; cursor: pointer; -webkit-tap-highlight-color: transparent; }
   button:disabled { cursor: default; }
@@ -108,6 +135,10 @@ const STYLE = `
   #photo img[src] + ha-icon { display: none; }
   #photo ha-icon { --mdc-icon-size: 26px; }
   #photo:focus-visible { outline-offset: 0; }
+  /* Bollino "cronologia" sull'angolo della foto: dice che è un tasto anche da fermo. */
+  #photo .hb { position: absolute; right: 3px; bottom: 3px; width: 18px; height: 18px; border-radius: 50%; display: grid;
+               place-items: center; --mdc-icon-size: 13px; color: #fff; background: var(--vi-chip); }
+  #photo:disabled .hb { opacity: .5; }
   [data-drawer="true"] #photo { box-shadow: inset 0 0 0 2px var(--primary-color); }
   [data-state="ringing"] #photo { box-shadow: inset 0 0 0 2px var(--st); }
 
@@ -176,7 +207,7 @@ const STYLE = `
   [data-drawer="true"] .drawer { transform: none; visibility: visible; }
 
   #log { position: absolute; top: 8px; right: 8px; z-index: 3; width: 40px; height: 40px; border-radius: 50%; display: none;
-         place-items: center; color: #fff; background: rgba(0,0,0,.45); }
+         place-items: center; color: #fff; background: var(--vi-chip); }
   #log ha-icon { --mdc-icon-size: 22px; }
   .live #log { display: grid; }
   [data-drawer="true"] #log { background: var(--primary-color); }
@@ -184,8 +215,15 @@ const STYLE = `
   /* Muto locale (audio in arrivo dalla targa): tondo sul video, accanto alla cronologia;
      visibile per tutta la diretta (in JS, hidden segue lo stato "live"), non solo mentre suona. */
   #mute { position: absolute; top: 8px; right: 56px; z-index: 3; width: 40px; height: 40px; border-radius: 50%;
-          display: grid; place-items: center; color: #fff; background: rgba(0,0,0,.45); }
+          display: grid; place-items: center; color: #fff; background: var(--vi-chip); }
   #mute ha-icon { --mdc-icon-size: 22px; }
+
+  /* Adatta/Riempi: tondo accanto a cronologia e muto, solo con il video in vista. */
+  #fit { position: absolute; top: 8px; right: 104px; z-index: 3; width: 40px; height: 40px; border-radius: 50%; display: none;
+         place-items: center; color: #fff; background: var(--vi-chip); }
+  #fit ha-icon { --mdc-icon-size: 22px; }
+  .live #fit { display: grid; }
+  ha-card[data-fit="contain"] #video > canvas, ha-card[data-fit="contain"] .still { object-fit: contain; }
 
   .row { display: flex; gap: 6px; min-width: 0; }
   /* Se la riga è stretta (anteprima dell'editor, ~330 px) si accorcia solo la pill più lunga
@@ -217,30 +255,51 @@ const STYLE = `
   .live .media, [data-drawer="true"] .media { display: block; }
   .live #photo { display: none; }  /* in diretta la cronologia sta sul video */
 
-  /* ---- layout="overlay": in diretta la testata si stende sul video, resta solo la fila dei tasti sullo scrim. */
+  /* ---- layout="overlay" (vetro): in diretta il video riempie la card; pill di stato e cronologia in alto,
+     barra di vetro flottante in basso con 4 posti uguali [audio][rispondi/parla][apri][rifiuta/riaggancia]. */
+  :host([layout="overlay"]) ha-card.live { --ha-card-border-radius: 28px; }
   :host([layout="overlay"]) ha-card:not(.live) .ph { right: min(64%, 320px); }
-  :host([layout="overlay"]) [data-state="ringing"] #log { display: none; }
   :host([layout="overlay"]) .live .head { position: absolute; inset: 0; z-index: 3; display: block; padding: 0; pointer-events: none; }
-  :host([layout="overlay"]) .live .ttl { display: none; }
-  :host([layout="overlay"]) .live .row { position: absolute; left: 0; right: 0; bottom: 0; padding: 26px 8px 10px; justify-content: space-evenly;
-               gap: 0; pointer-events: auto; background: linear-gradient(to top, rgba(0,0,0,.72), rgba(0,0,0,.4) 60%, transparent); }
-  :host([layout="overlay"]) .live .row button { flex-direction: column; height: auto; padding: 0; gap: 4px; border-radius: 0;
-               background: none; color: #fff; font-size: 11px; font-weight: 500; }
-  /* Il rosso di #hangup sta su un selettore con id: senza questa riga vince sullo sfondo nullo e il tasto è un quadrato. */
-  :host([layout="overlay"]) .live #hangup { background: none; }
-  :host([layout="overlay"]) .live .row button::before { inset: -6px -12px; }
-  :host([layout="overlay"]) .live .row button:active { transform: none; }
-  :host([layout="overlay"]) .live .ic { width: 44px; height: 44px; border-radius: 50%; background: rgba(0,0,0,.45); color: #fff; }
-  :host([layout="overlay"]) .live .ic ha-icon { --mdc-icon-size: 22px; }
-  :host([layout="overlay"]) .live button.fill .ic { background: var(--primary-color); }
-  :host([layout="overlay"]) .live button.ok .ic { background: var(--success-color); }
-  :host([layout="overlay"]) .live button.warn .ic { background: var(--warning-color); }
-  :host([layout="overlay"]) .live #hangup .ic { background: var(--error-color); }
+  :host([layout="overlay"]) .live :is(.ttl, #view) { display: none; }
+  :host([layout="overlay"]) .live .badge { top: 12px; left: 12px; height: 36px; padding: 0 14px; gap: 8px; font-size: 14px;
+               background: var(--vi-glass); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
+  :host([layout="overlay"]) .live .badge::before { width: 8px; height: 8px; }
+  :host([layout="overlay"]) .live .badge::before, .pop .badge::before { animation: none; background: var(--dot, var(--st)); }
+  :host([layout="overlay"]) .live :is(#log, #fit) { top: 12px; right: 12px; width: 44px; height: 44px; background: var(--vi-glass);
+               -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
+  :host([layout="overlay"]) .live #fit { right: 64px; }
+  :host([layout="overlay"]) .live[data-drawer="true"] #log { background: var(--primary-color); }
+  :host([layout="overlay"]) .live .row { position: absolute; left: 12px; right: 12px; bottom: 12px; height: 84px; padding: 0; gap: 0;
+               display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: center; pointer-events: none;
+               border-radius: 22px; border: 1px solid var(--vi-glass-btn); background: var(--vi-glass-bar);
+               -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); }
+  :host([layout="overlay"]) .live .row button { pointer-events: auto; display: flex; flex-direction: column; align-items: center;
+               justify-content: center; gap: 6px; order: 0; min-height: 64px; height: auto; padding: 0; border-radius: 0; background: none;
+               color: #fff; font-size: 12px; font-weight: 600; }
+  :host([layout="overlay"]) .live .row button::before { inset: 0; }
+  :host([layout="overlay"]) .live .row button:active { transform: none; opacity: .7; }
+  :host([layout="overlay"]) .live #talk { grid-column: 2; }
+  :host([layout="overlay"]) .live #open { grid-column: 3; }
+  :host([layout="overlay"]) .live #hangup { order: 4; grid-column: 4; background: none; color: #ff8a80; }
+  :host([layout="overlay"]) .live button.ok, :host([layout="overlay"]) .live button.answer { background: none; color: #7fe3a3; }
+  :host([layout="overlay"]) .live button.fill { background: none; color: #9fd0ff; }
+  :host([layout="overlay"]) .live button.warn { background: none; color: #ffcf7f; }
   :host([layout="overlay"]) .live button.answer { animation: none; box-shadow: none; }
-  :host([layout="overlay"]) .live button.answer .ic { width: 52px; height: 52px; margin-top: -8px;
-               box-shadow: 0 0 0 0 color-mix(in srgb, var(--success-color) 55%, transparent); animation: halo 1.4s ease-out infinite; }
+  :host([layout="overlay"]) .live .ic { width: 24px; height: 24px; background: none; }
+  :host([layout="overlay"]) .live .ic ha-icon { --mdc-icon-size: 24px; }
   :host([layout="overlay"]) .live button.busy .ic::after { width: 20px; height: 20px; border-width: 3px; }
-  :host([layout="overlay"]) .live .drawer { bottom: 96px; }
+  /* Audio (#mute) sta nel primo posto della barra: stessa cella, etichetta da CSS. */
+  :host([layout="overlay"]) .live #mute { top: auto; right: auto; bottom: 12px; left: 12px; z-index: 4; width: calc((100% - 24px) / 4);
+               height: 84px; border-radius: 0; background: none; display: flex; flex-direction: column; align-items: center;
+               justify-content: center; gap: 6px; font-size: 12px; font-weight: 600; }
+  :host([layout="overlay"]) .live #mute::after { content: "Audio"; line-height: 16px; }
+  :host([layout="overlay"]) .live #mute ha-icon { --mdc-icon-size: 24px; }
+  /* Scorciatoie "Apri" extra: chip di vetro sopra la barra (la prima è "Apri", già nella barra). */
+  :host([layout="overlay"]) .live .sc { display: flex; position: absolute; left: 12px; right: 12px; bottom: 108px; justify-content: center;
+               gap: 8px; pointer-events: none; }
+  :host([layout="overlay"]) .live .sc:not(:has(button:nth-child(2))), :host([layout="overlay"]) .live .sc button:first-child { display: none; }
+  :host([layout="overlay"]) .live .drawer { top: 64px; right: 12px; bottom: 108px; border-radius: 16px; }
+  :host([layout="overlay"]) ha-card.live:has(.sc button:nth-child(2)) .drawer { bottom: 156px; }
 
   /* ---- layout="sotto": in diretta il video sta sopra la riga, i tasti restano nella riga (a piena larghezza).
      Da fermo la cronologia è una lista sotto la riga, non un palco 4:3. */
@@ -251,25 +310,182 @@ const STYLE = `
   :host([layout="sotto"]) ha-card:not(.live) .drawer { position: static; width: auto; transform: none; visibility: visible; box-shadow: none;
                background: none; transition: none; border-top: 1px solid var(--divider-color); }
   :host([layout="sotto"]) ha-card:not(.live) .hist { max-height: 176px; }
+
+  /* ---- layout="popup": compatta in dashboard (mai .live: niente video). Nel <dialog> la card intera, in un
+     pannello tondo centrato (vetro sul video: margini 12 px, max 720): il video riempie il pannello, in alto
+     pill di stato + cronologia + X, in basso il pannello di vetro con i 4 tondi [audio][parla|rispondi][apri][riaggancia]
+     e sotto i chip delle scorciatoie. Su desktop il pannello è 4:3. */
+  :host([layout="popup"]) ha-card:not(.pop) { cursor: pointer; }
+  #x { display: none; position: absolute; top: 8px; right: 8px; z-index: 3; place-items: center; color: #fff; background: var(--vi-chip); }
+  /* Scorciatoie: tondi sulla card compatta; nel popup solo le altre (la prima è "Apri"), in fila sotto la barra. */
+  .sc, #hist, .bell { display: none; }  /* #hist e .bell: solo nella card compatta del layout popup */
+  ha-card:not(.live):not(.pop):has(.sc button) .head { grid-template-columns: 56px minmax(0, 1fr) auto; }
+  ha-card:not(.live):not(.pop) .sc { display: flex; gap: 4px; grid-column: 3; grid-row: 1 / 3; }
+  ha-card:not(.live):not(.pop):has(.sc button) #open { display: none; }  /* da fermo "Apri" è la scorciatoia */
+  .sc button { display: flex; flex-direction: column; align-items: center; gap: 2px; max-width: 60px; font-size: 11px; color: var(--ink); }
+  .sc button::before { content: ""; position: absolute; inset: -2px -4px; }
+  .sc .ic { width: var(--vi-sc-size); height: var(--vi-sc-size); border-radius: 50%; background: color-mix(in srgb, var(--primary-color) 14%, transparent); color: var(--primary-color); }
+  .sc button.warn .ic { background: var(--warning-color); color: var(--text-primary-color); }
+  .sc button.ok .ic { background: var(--success-color); color: var(--text-primary-color); }
+  .sc button:disabled { opacity: .45; }
+
+  /* ---- layout="popup", card compatta in dashboard: due stili (compact_style). Stesso DOM: .head diventa la riga/griglia,
+     .row e .sc "spariscono" (display: contents) e i loro tasti si dispongono con order. Il tocco fuori dai tasti apre il popup. */
+  ${CA} { border-radius: var(--ha-card-border-radius, 12px); --fill: color-mix(in srgb, var(--ink) 12%, transparent);
+          background: var(--ha-card-background, var(--card-background-color, #fff));
+          box-shadow: var(--ha-card-box-shadow, 0 1px 3px rgba(0,0,0,.18)); }
+  ${CA} .media { display: none; }
+  ${CA} :is(.row, .sc) { display: contents; }
+  ${CA} .ttl { flex-direction: column; align-items: flex-start; gap: 0; min-width: 0; }
+  ${CA} .ttl .sub::before { content: none; }
+  ${CA} .pill { color: var(--dim); font-weight: 400; padding: 0; background: none; }
+  ${CA} .pill::before, ${CA} #photo .hb { display: none; }
+  ${CA} .name { max-width: 100%; }
+  ${CA} :is(#view, #talk, #hangup, #open, #hist, .sc button) { flex: none; min-width: 0; max-width: none; animation: none; box-shadow: none; }
+  ${CA} :is(#view, #talk, #hangup, #open, #hist, .sc button)::before { content: none; }
+  ${CA} :is(#view, #talk, #hangup, #hist, .sc button) .ic { background: none; color: inherit; width: 22px; height: 22px; }
+  ${CA} :is(#view, #talk, #hangup, #hist, .sc button) .ic ha-icon { --mdc-icon-size: 22px; }
+  ${CA} :is(#open, #view, #talk, #hangup) { display: none; }
+  ${CA}[data-state="ringing"] :is(#hist, .last) { display: none; }
+  ${CA}[data-state="ringing"] #talk { display: flex; }
+  ${CT}[data-state="ringing"] #hangup:not([hidden]) { display: flex; }
+
+  /* Pillola: 64 px, raggio 32, foto tonda con anello di stato; a destra tondi 44 px. */
+  ${CP} { --ha-card-border-radius: 32px; --ring: var(--success-color); }
+  ${CP}[data-state="offline"] { --ring: var(--st); }
+  ${CP} .head { display: flex; align-items: center; gap: 12px; height: 64px; padding: 0 8px; }
+  ${CP} .bell { display: none; }
+  ${CP} #photo { order: 1; width: 48px; height: 48px; border-radius: 50%; box-shadow: none; border: 2px solid var(--ring); box-sizing: border-box; }
+  ${CP} #photo img { border-radius: 50%; }
+  ${CP} .ttl { order: 2; flex: 1 1 0; }
+  ${CP} .name { font-size: 15px; font-weight: 700; line-height: 20px; }
+  ${CP} .sub { font-size: 12px; }
+  ${CP} :is(#hist, #talk, .sc button:first-child) { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border-radius: 50%; }
+  ${CP} #hist { order: 3; background: var(--fill); color: var(--ink); }
+  ${CP} .sc button:not(:first-child) { display: none; }
+  ${CP} #talk { display: none; order: 4; background: #1f7a45; color: #fff; }
+  ${CP}[data-state="ringing"] #talk { display: grid; }
+  ${CP} .sc button:first-child { order: 5; background: #0b5cad; color: #fff; }
+  ${CP} .sc button:first-child.warn { background: var(--warning-color); color: #2a1a00; }
+  ${CP} .sc button:first-child.ok { background: var(--success-color); color: #fff; }
+  ${CP} .lbl { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }  /* solo per i lettori di schermo */
+  ${CP} :is(#hist, #talk, .sc button):disabled { opacity: .45; }
+  ${CP}[data-state="ringing"] { --ha-card-background: #ffb547; background: #ffb547; --ink: #2a1a00; --dim: #2a1a00; --ring: #fff; }
+
+  /* Tile: card 16, riga campanello + nome + miniatura, sotto griglia di tasti da 44. */
+  ${CT} { --ha-card-border-radius: 16px; }
+  ${CT} .head { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 8px; padding: 12px; }
+  ${CT} .head::before { content: ""; order: 4; flex: 0 0 100%; height: 0; margin-top: -4px; }
+  ${CT} .bell { order: 1; display: grid; place-items: center; flex: none; width: 40px; height: 40px; margin-right: 4px; border-radius: 50%;
+                color: var(--success-color); background: color-mix(in srgb, var(--success-color) 18%, transparent); }
+  ${CT} .bell ha-icon { --mdc-icon-size: 22px; }
+  ${CT}[data-state="ringing"] .bell { color: #3a2500; background: #ffb547; }
+  ${CT} .ttl { order: 2; flex: 1 1 0; }
+  ${CT} .name { font-size: 15px; font-weight: 600; line-height: 20px; }
+  ${CT}[data-state="ringing"] .name { font-weight: 700; }
+  ${CT} .sub { font-size: 13px; line-height: 18px; }
+  ${CT} #photo { order: 3; width: 48px; height: 36px; border-radius: 8px; }
+  ${CT} :is(#view, #hist, #talk, #hangup, .sc button) { display: flex; flex-direction: row; align-items: center; justify-content: center; gap: 6px;
+                height: 44px; flex: 1 1 calc(33.333% - 8px); padding: 0 8px; border-radius: 12px; font-size: 14px; font-weight: 600;
+                color: var(--ink); background: var(--fill); }
+  ${CT} #view { order: 5; display: flex; }
+  ${CT} #view .lbl { font-size: 0; }  /* nel tile solo "Vedi": il nome accessibile resta "Vedi esterno" (aria-label) */
+  ${CT} #view .lbl::after { content: "Vedi"; font-size: 14px; }
+  ${CT}[data-state="ringing"] #view { display: none; }
+  ${CT} :is(#open, .sc button) { order: 6; color: color-mix(in srgb, #0b5cad 45%, var(--ink)); background: color-mix(in srgb, #0b5cad 16%, transparent); }
+  ${CT} :is(#open, .sc button).warn { color: #2a1a00; background: var(--warning-color); }
+  ${CT} :is(#open, .sc button).ok { color: #fff; background: var(--success-color); }
+  ${CT} #hist { order: 7; }
+  ${CT} #talk { order: 5; color: #fff; background: #2e7d4f; font-weight: 700; }
+  ${CT}:not([data-state="ringing"]) #talk { display: none; }
+  ${CT} #hangup { order: 7; font-weight: 700; color: color-mix(in srgb, #a3231a 45%, var(--ink)); background: color-mix(in srgb, #d93025 14%, transparent); }
+  ${CT}[data-state="ringing"] { --ha-card-background: color-mix(in srgb, #ffb547 14%, var(--card-background-color, #fff));
+                background: color-mix(in srgb, #ffb547 14%, var(--card-background-color, #fff)); }
+  ${CT} :is(#view, #hist, #talk, #hangup, .sc button):disabled { opacity: .45; }
+
+  .pop .media { display: block; position: absolute; inset: 0; aspect-ratio: auto; background: #000; }
+  .pop :is(#x, #log, #fit) { display: grid; top: 14px; width: 44px; height: 44px; border-radius: 50%; background: var(--vi-glass);
+                       -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
+  .pop :is(#x, #log, #fit, #mute) ha-icon { --mdc-icon-size: 22px; }
+  .pop #x { right: 14px; } .pop #log { right: 66px; } .pop #fit { right: 118px; }
+  .pop[data-drawer="true"] #log { background: var(--primary-color); }
+  .pop .badge { display: inline-flex; top: 14px; left: 14px; right: 172px; height: 44px; padding: 0 14px; gap: 8px; font-size: 15px;
+                font-weight: 700; background: var(--vi-glass); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
+  .pop .badge::before { flex: none; width: 8px; height: 8px; }
+  .pop .ttl, .pop #photo, .pop #view { display: none; }
+  /* Pannello di vetro in basso: riga dei tondi + chip delle scorciatoie (le altre: la prima è "Apri"). */
+  .pop .head { position: absolute; left: 14px; right: 14px; bottom: 14px; z-index: 3; display: flex; flex-direction: column; align-items: stretch; gap: 12px;
+               padding: 14px; border-radius: 26px; border: 1px solid var(--vi-glass-btn); background: var(--vi-glass-bar);
+               -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px); }
+  .pop .row { display: grid; grid-template-columns: repeat(4, 1fr); justify-items: center; gap: 0; }
+  .pop #talk { grid-column: 2; } .pop #open { grid-column: 3; } .pop #hangup { grid-column: 4; order: 4; }
+  .pop .row button { order: 0; display: grid; place-items: center; width: 56px; height: 56px; padding: 0; border-radius: 50%; background: none; color: #fff; }
+  .pop .row button::before { inset: -4px; }
+  .pop .row button:active { transform: none; opacity: .7; }
+  .pop .row .lbl { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }  /* solo per i lettori di schermo */
+  .pop .ic { width: 56px; height: 56px; border-radius: 50%; background: var(--vi-glass-btn); color: #fff; }
+  .pop .ic ha-icon { --mdc-icon-size: 24px; }
+  .pop #talk .ic, .pop button.ok .ic { background: #30b35f; }
+  .pop #talk.fill .ic { background: var(--primary-color); }
+  .pop button.warn .ic { background: var(--warning-color); }
+  .pop #hangup .ic { background: #e5483d; }
+  .pop button.answer { animation: none; box-shadow: none; }
+  .pop button.answer .ic { box-shadow: 0 0 0 0 color-mix(in srgb, var(--success-color) 55%, transparent); animation: halo 1.4s ease-out infinite; }
+  .pop button.busy .ic::after { width: 24px; height: 24px; border-width: 3px; }
+  /* Audio (#mute) nel primo posto dei tondi: allineato alla griglia a 4 colonne del pannello. */
+  .pop #mute { top: auto; right: auto; bottom: 29px; left: calc((100% - 58px) / 8 + 1px); z-index: 4; width: 56px; height: 56px; border-radius: 50%;
+               background: var(--vi-glass-btn); }
+  .pop:has(.sc button:nth-child(2)) #mute { bottom: 77px; }
+  .pop .sc { display: flex; flex-wrap: nowrap; justify-content: center; gap: 8px; }
+  .pop .sc:not(:has(button:nth-child(2))), .pop .sc button:first-child { display: none; }
+  .pop .drawer { top: 70px; right: 14px; bottom: 130px; border-radius: 20px; }
+  .pop:has(.sc button:nth-child(2)) .drawer { bottom: 178px; }
+  /* Chip di vetro (popup e overlay). Tocco 44 px con ::before. */
+  .pop .sc button, :host([layout="overlay"]) .live .sc button { flex-direction: row; gap: 6px; height: 36px; max-width: none; padding: 0 14px;
+               border-radius: 18px; font-size: 14px; color: #fff; background: var(--vi-glass-btn); pointer-events: auto;
+               -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
+  .pop .sc button::before, :host([layout="overlay"]) .live .sc button::before { inset: -4px 0; }
+  .pop .sc .ic, :host([layout="overlay"]) .live .sc .ic { width: 18px; height: 18px; background: none; color: #fff; }
+  .pop .sc .ic ha-icon, :host([layout="overlay"]) .live .sc .ic ha-icon { --mdc-icon-size: 18px; }
+  /* Il focus da tastiera resta visibile sul vetro. */
+  .pop button:focus-visible, :host([layout="overlay"]) .live button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+  dialog.pop { width: calc(100% - 24px); max-width: 720px; height: min(620px, calc(100% - 24px)); max-height: calc(100% - 24px); margin: auto;
+               padding: 0; border: 0; border-radius: var(--vi-pop-radius); overflow: hidden; color: #fff; background: var(--vi-pop-bg);
+               box-shadow: 0 20px 60px rgba(0,0,0,.45); color-scheme: dark;
+               /* Scuro fisso, qualunque tema: le variabili del tema chiaro non passano qui dentro. */
+               --primary-text-color: #fff; --secondary-text-color: #c4c4c4; --card-background-color: var(--vi-pop-bg); --ha-card-background: var(--vi-pop-bg); }
+  dialog.pop, .hist { overscroll-behavior: contain; }
+  dialog.pop::backdrop { background: var(--vi-backdrop); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+  dialog.pop ha-card { height: 100%; background: none; --ha-card-border-radius: 0; --ha-card-box-shadow: none; --ha-card-border-width: 0; }
+  @media (min-width: 640px) {
+    dialog.pop, dialog.pop ha-card { height: auto; }
+    .pop .media { position: relative; inset: auto; aspect-ratio: 4 / 3; }
+  }
 `;
 
 const btn = (id, icon, label) =>
-  `<button id="${id}"><span class="ic"><ha-icon icon="${icon}" aria-hidden="true"></ha-icon></span>` +
+  `<button${id ? ` id="${id}"` : ""} data-icon="${icon}" data-label="${label}"><span class="ic"><ha-icon icon="${icon}" aria-hidden="true"></ha-icon></span>` +
   `<span class="lbl">${label}</span></button>`;
 const DRAWER = `<aside class="drawer" id="drawer" aria-label="Ultimi squilli"><div class="hist"></div>
   <div class="empty"><ha-icon icon="mdi:bell-off-outline" aria-hidden="true"></ha-icon><span></span></div></aside>`;
 const SCENE = `<div id="video"></div><img class="still" alt="">
   <span class="ph"><ha-icon icon="mdi:doorbell-video" aria-hidden="true"></ha-icon></span>`;
-const PHOTO = `<button id="photo" aria-label="Cronologia squilli" aria-expanded="false" aria-controls="drawer" disabled>
-  <img alt=""><ha-icon icon="mdi:doorbell-video" aria-hidden="true"></ha-icon></button>`;
-const LOG = `<button id="log" aria-label="Cronologia squilli" aria-expanded="false" aria-controls="drawer">
-  <ha-icon icon="mdi:menu-open" aria-hidden="true"></ha-icon></button>`;
+const PHOTO = `<button id="photo" aria-label="Cronologia squilli" title="Cronologia squilli" aria-expanded="false" aria-controls="drawer" disabled>
+  <img alt=""><ha-icon icon="mdi:doorbell-video" aria-hidden="true"></ha-icon><ha-icon class="hb" icon="mdi:history" aria-hidden="true"></ha-icon></button>`;
+const X = `<button id="x" aria-label="Chiudi"><ha-icon icon="mdi:close" aria-hidden="true"></ha-icon></button>`;
+const LOG = `<button id="log" aria-label="Cronologia squilli" title="Cronologia squilli" aria-expanded="false" aria-controls="drawer">
+  <ha-icon icon="mdi:history" aria-hidden="true"></ha-icon></button>`;
 // Sempre in vista per tutta la diretta: se l'audio non sta ancora suonando (bloccato su
 // iOS o mai partito) il tocco avvia l'ascolto — è il gesto vero che sblocca l'AudioContext;
 // se sta suonando (ascolto allo squillo o parlato) lo muta/smuta soltanto. Mai la chiamata,
 // mai il microfono, mai il WebSocket. Icona sola, senza etichetta.
 const MUTE = `<button id="mute" aria-label="Audio" aria-pressed="true">
   <ha-icon icon="mdi:volume-off" aria-hidden="true"></ha-icon></button>`;
+// Adatta (video intero, bande scure: predefinito) / Riempi (cover, zoom). Si ricorda per dispositivo.
+const FIT = `<button id="fit" aria-label="Riempi schermo" title="Riempi schermo" aria-pressed="false">
+  <ha-icon icon="mdi:arrow-expand-all" aria-hidden="true"></ha-icon></button>`;
+const HIST = `<button id="hist" aria-label="Cronologia squilli" title="Cronologia squilli" disabled><span class="ic"><ha-icon icon="mdi:history" aria-hidden="true"></ha-icon></span><span class="lbl">Storico</span></button>`;
+const BELL = `<span class="bell" aria-hidden="true"><ha-icon icon="mdi:bell"></ha-icon></span>`;
 const SUB = `<span class="sub"><span class="pill" role="status" aria-live="polite"></span><span class="last"></span><span class="err" role="alert"></span></span>`;
 const ROW = `<div class="row">${btn("view", "mdi:cctv", "Vedi esterno")}${btn("talk", "mdi:microphone", "Parla")}` +
   `${btn("hangup", "mdi:phone-hangup", "Riaggancia")}${btn("open", "mdi:door-open", "Apri")}</div>`;
@@ -278,9 +494,9 @@ const PHOTO_DLG = `<dialog class="photo" aria-label="Squillo"><img alt="Foto del
   `<video controls playsinline preload="metadata" hidden></video><p class="cap"></p></dialog>`;
 
 const TEMPLATE = `<ha-card>
-  <div class="media">${SCENE}<span class="badge dyn" aria-hidden="true"></span>${MUTE}${LOG}${DRAWER}</div>
-  <div class="head">${PHOTO}<div class="ttl"><span class="name"></span>${SUB}</div>${ROW}</div>
-  ${PHOTO_DLG}</ha-card>`;
+  <div class="media">${SCENE}<span class="badge dyn" aria-hidden="true"></span>${MUTE}${FIT}${LOG}${X}${DRAWER}</div>
+  <div class="head">${BELL}${PHOTO}<div class="ttl"><span class="name"></span>${SUB}</div>${ROW}<div class="sc"></div>${HIST}</div>
+  ${PHOTO_DLG}</ha-card><dialog class="pop" aria-label="Citofono"></dialog>`;
 
 const concat = (...parts) => {
   const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
@@ -420,6 +636,7 @@ class NalPlayer {
   }
 }
 
+const SC = { lock: ["unlock", "mdi:door-open"], button: ["press", "mdi:gesture-tap-button"] };  // dominio → servizio, icona
 const DEFAULTS = {
   name: "Citofono",
   camera: "camera.vimar_intercom_intercom",
@@ -428,9 +645,15 @@ const DEFAULTS = {
   last_ring: "sensor.vimar_intercom_intercom_ultimo_squillo",
   anchor: "citofono",
   history: 8,
-  layout: "overlay",  // o "sotto"
+  layout: "overlay",  // o "sotto" o "popup"
+  compact_style: "pillola",  // card compatta del layout popup: o "tile"
   confirm_open: true,
   listen_on_ring: false,
+};
+
+// Popup aperto: la dashboard sotto non scorre (su iOS il dito sulla cronologia la trascinava).
+const lockPageScroll = (on) => {
+  for (const el of [document.documentElement, document.body]) el.style.overflow = on ? "hidden" : "";
 };
 
 class VimarIntercomCard extends HTMLElement {
@@ -447,12 +670,17 @@ class VimarIntercomCard extends HTMLElement {
 
   setConfig(config) {
     this._cfg = { ...DEFAULTS, ...config };
-    this.setAttribute("layout", this._cfg.layout === "sotto" ? "sotto" : "overlay");  // il CSS si aggancia qui
+    this.setAttribute("layout", ["sotto", "popup"].includes(this._cfg.layout) ? this._cfg.layout : "overlay");  // il CSS si aggancia qui
+    this.setAttribute("compact", this._cfg.compact_style === "tile" ? "tile" : "pillola");
     if (this._root) {  // l'editor richiama setConfig sulla card viva: nome, cronologia e layout cambiano subito
       this._applyCfg();
       this._histKey = null;
       if (this._hass) this._render();
     }
+  }
+
+  get _popup() {
+    return this._cfg.layout === "popup";
   }
 
   // entity_id da usare per camera / status / lock / last_ring (vedi l'intestazione).
@@ -467,9 +695,20 @@ class VimarIntercomCard extends HTMLElement {
     return hass.states[this._ent("camera")]?.attributes?.card_entities?.[key] || want;
   }
 
+  get _preview() {
+    return !!this.closest("hui-card-preview, hui-dialog-edit-card");
+  }
+
+  // Compatta = un tasto (anche da tastiera); nel popup no.
+  _armCard() {
+    const on = this._popup && !this._pop.open;
+    for (const [k, v] of [["role", "button"], ["tabindex", "0"]]) on ? this._card.setAttribute(k, v) : this._card.removeAttribute(k);
+  }
+
   _applyCfg() {
     this._root.querySelector(".name").textContent = this._cfg.name;
     this._log.hidden = !(this._cfg.history > 0);
+    this._armCard();
   }
 
   set hass(hass) {
@@ -504,7 +743,7 @@ class VimarIntercomCard extends HTMLElement {
       this._card.classList.remove("hold");
       this._live = undefined;
     }
-    const show = live || !!this._holdT;
+    const show = (live || !!this._holdT) && (!this._popup || this._pop.open);  // compatta: niente video
     this._setVideo(show);
     this._card.dataset.state = state;
     this._card.classList.toggle("live", show);
@@ -529,9 +768,9 @@ class VimarIntercomCard extends HTMLElement {
     // Allo squillo "Vedi esterno" resta al suo posto, spento: lo slot non si svuota.
     this._view.hidden = ["calling", "in_call"].includes(state);
     this._view.disabled = state !== "idle" || this._view.classList.contains("busy");
-    this._hangup.hidden = !["calling", "in_call"].includes(state);
-    this._label(this._hangup, state === "calling" ? "Annulla" : "Riaggancia");
     const ring = state === "ringing", inCall = state === "in_call" || state === "calling";
+    this._hangup.hidden = !LIVE.includes(state) && !this._pop.open;  // squillo: "Rifiuta" in ogni layout
+    this._label(this._hangup, state === "calling" ? "Annulla" : ring ? "Rifiuta" : "Riaggancia");
     // L'audio automatico è riuscito (_autoAudioTried) ma il gesto vero mancava (iOS):
     // "Microfono" diventa "Audio", ben visibile, finché non si tocca — un microfono
     // spento si legge come "muto", non come invito a toccare.
@@ -543,6 +782,8 @@ class VimarIntercomCard extends HTMLElement {
     this._label(this._talk, ring ? "Rispondi" : audioHint ? "Audio" : inCall ? "Microfono" : "Parla");
     this._talk.disabled = state === "offline" || (!window.isSecureContext && !ring)
       || (state === "calling" && !on);
+    this._shortcuts();
+    this._histBtn.disabled = this._photo.disabled;
     this._open.disabled = state === "offline" || hass.states[this._ent("lock")]?.state === "unavailable";
     if ((state === "idle" || state === "offline") && this._ws) this._stopAudio();
 
@@ -552,6 +793,7 @@ class VimarIntercomCard extends HTMLElement {
     // (vedi onclick, sotto: se non sta ancora suonando avvia l'ascolto invece di mutare).
     const audible = (!!this._ws || !!this._listenWs) && !this._muted;
     this._mute.hidden = !live;
+    this._applyFit();
     this._icon(this._mute, audible ? "mdi:volume-high" : "mdi:volume-off");
     this._mute.setAttribute("aria-pressed", !audible);
 
@@ -574,7 +816,8 @@ class VimarIntercomCard extends HTMLElement {
     // (sotto): si azzera solo lasciando gli stati dal vivo, non ad ogni giro di `_render`
     // durante ringing/calling — altrimenti un blocco vero (iOS) sparirebbe e riproverebbe
     // ad ogni aggiornamento di `hass`, anche senza alcun cambio di stato.
-    if (!live) { this._audioBlocked = false; this._muted = false; }  // il muto vale una sessione dal vivo sola
+    if (!live) { this._audioBlocked = false; this._muted = false; }
+    if (LIVE.includes(was) && !live) this._mine = false;  // chiamata finita: non più "della card"  // il muto vale una sessione dal vivo sola
 
     // `listen_on_ring`: si sente il visitatore già a video (ringing/calling/in_call in
     // anteprima), senza rispondere né aprire il microfono — smette da sola a fine
@@ -584,7 +827,31 @@ class VimarIntercomCard extends HTMLElement {
     // Chiusura solo per fine diretta o audio vero: un ascolto avviato a mano dal tasto
     // Audio (anche a `listen_on_ring` spento) resta finché dura la diretta.
     if (!live || this._ws || this._starting) this._stopListen();
-    else if (this._cfg.listen_on_ring && !this._listenWs && !this._listenStarting) this._startListen(true);
+    else if (this._cfg.listen_on_ring && (!this._popup || this._pop.open) && !this._listenWs && !this._listenStarting) this._startListen(true);
+
+    // Popup: si apre da solo allo squillo (o dall'ancora), una volta per squillo.
+    if (!live) this._popTried = false;
+    else if (this._pop.open) this._popTried = true;
+    else if (this._popup && !this._popTried && this.isConnected && !this._preview
+        && (state === "ringing" || (this._cfg.anchor && location.hash === `#${this._cfg.anchor}`))) {
+      this._popTried = true;
+      this._openPop();
+    }
+  }
+
+  // Sposta la card nel dialog; `view`: il tocco sulla card fa "Vedi esterno".
+  _openPop(view) {
+    if (this._pop.open) return;
+    this._card.classList.add("pop");
+    this._pop.append(this._card);
+    this._pop.showModal();
+    lockPageScroll(true);
+    this._armCard();
+    this._render();
+    if (view && !this._view.disabled) {
+      this._mine = true;
+      this._call("call", this._view).catch(() => {});
+    }
   }
 
   _label(button, text) {
@@ -604,19 +871,36 @@ class VimarIntercomCard extends HTMLElement {
     this._last = $(".last");
     this._badge = $(".badge.dyn");   // badge sul video col testo dello stato (dove c'è)
     this._log = $("#log");
+    this._fit = $("#fit");
     this._photo = $("#photo");
     this._pic = $("#photo img");
     this._still = $(".still");
     this._hist = $(".hist");
     this._empty = $(".empty span");
     this._dlg = $("dialog.photo");
+    this._pop = $("dialog.pop");
     this._clipEl = $("dialog.photo video");
     // Tocco ovunque (o Esc) chiude, tranne sui controlli del video.
     this._dlg.onclick = (e) => e.target !== this._clipEl && this._dlg.close();
     this._dlg.onclose = () => { this._clipEl.pause(); this._clipEl.removeAttribute("src"); this._clipEl.load(); };
+    // Popup chiuso (X, Esc, fuori): la card torna al suo posto, audio chiuso, riaggancio solo se la chiamata è della card.
+    this._pop.onclick = (e) => e.target === this._pop && this._pop.close();
+    this._pop.onclose = () => {
+      lockPageScroll(false);
+      this._card.classList.remove("pop");
+      this._root.insertBefore(this._card, this._pop);
+      this._armCard();
+      this._stopAudio();
+      this._stopListen();
+      const mine = this._mine;
+      this._mine = false;
+      if (mine && ["calling", "in_call"].includes(this._state)) this._call("hangup", this._hangup).catch(() => {});
+      this._render();
+    };
     this._err = $(".err");
     this._hint = "";  // niente avviso permanente: in HTTP il microfono è semplicemente spento
     this._view = $("#view");
+    this._view.setAttribute("aria-label", "Vedi esterno");
     this._talk = $("#talk");
     this._hangup = $("#hangup");
     this._open = $("#open");
@@ -625,11 +909,33 @@ class VimarIntercomCard extends HTMLElement {
     this._applyCfg();
     this._view.className = "fill";
     this._open.setAttribute("aria-label", "Apri portone, tocca due volte");
+    this._sc = $(".sc");
+    this._histBtn = $("#hist");
     if (!window.isSecureContext) this._talk.title = "Per parlare serve Home Assistant in HTTPS.";
-    for (const b of [this._log, this._photo]) b.onclick = () => this._setDrawer(this._card.dataset.drawer !== "true");
-    this._view.onclick = () => this._call("call", this._view).catch(() => {});
-    this._talk.onclick = () => (this._ws ? this._stopAudio() : this._starting || this._startTalk());
-    this._hangup.onclick = () => this._call("hangup", this._hangup).catch(() => {});
+    for (const b of [this._log, this._photo, this._histBtn]) b.onclick = (e) => {
+      if (this._popup && !this._pop.open) { e.stopPropagation(); this._setDrawer(true); return this._openPop(); }  // cronologia: mai la targa
+      this._setDrawer(this._card.dataset.drawer !== "true");
+    };
+    this._card.onclick = (e) => this._popup && !this._pop.open && !e.target.closest("button") && this._openPop(!this._preview);  // anteprima dell'editor: niente Vedi esterno
+    this._card.onkeydown = (e) => e.target === this._card && (e.key === "Enter" || e.key === " ") && (e.preventDefault(), this._card.click());
+    this._root.getElementById("x").onclick = () => this._pop.close();
+    this._view.onclick = () => {
+      if (this._popup && !this._pop.open) return this._openPop(!this._preview);  // card compatta: apre il popup e fa "Vedi esterno"
+      this._mine = true;
+      this._call("call", this._view).catch(() => {});
+    };
+    this._talk.onclick = () => {
+      if (this._popup && !this._pop.open) this._openPop();  // "Rispondi" sulla card compatta: prima il popup
+      this._ws ? this._stopAudio() : this._starting || this._startTalk();
+    };
+    this._hangup.onclick = () => {  // allo squillo "Rifiuta" (smette di suonare in tutta la casa), poi "Riaggancia"
+      if (this._state === "ringing") this._call("decline", this._hangup).catch(() => {});
+      else if (LIVE.includes(this._state)) this._call("hangup", this._hangup).catch(() => {});
+      if (this._pop.open) {
+        this._mine = false;  // già fatto qui: la chiusura non riaggancia di nuovo
+        this._pop.close();
+      }
+    };
     this._open.onclick = () => this._openDoor();
     // Non ancora in ascolto (bloccato su iOS o mai partito): il tocco stesso è il gesto
     // vero che sblocca l'AudioContext, quindi avvia l'ascolto invece di mutare un canale
@@ -638,6 +944,14 @@ class VimarIntercomCard extends HTMLElement {
       if (this._ws || this._listenWs) this._toggleMute();
       else if (!this._listenStarting) this._startListen();
     };
+    // Adatta (contain, predefinito) / Riempi (cover): la scelta resta sul dispositivo.
+    try { this._cover = localStorage.getItem(FIT_KEY) === "cover"; } catch { this._cover = false; }
+    this._fit.onclick = () => {
+      this._cover = !this._cover;
+      try { localStorage.setItem(FIT_KEY, this._cover ? "cover" : "contain"); } catch { /* storage bloccato: vale per questa sessione */ }
+      this._applyFit();
+    };
+    this._applyFit();
     // Un avviso vive SAY_MS al posto della riga di stato, poi sparisce (NO_ANSWER resta finché si collega).
     new MutationObserver(() => {
       clearTimeout(this._sayT);
@@ -646,10 +960,19 @@ class VimarIntercomCard extends HTMLElement {
     }).observe(this._err, { childList: true, characterData: true, subtree: true });
   }
 
+  _applyFit() {
+    this._card.dataset.fit = this._cover ? "cover" : "contain";
+    const label = this._cover ? "Adatta video" : "Riempi schermo";  // il tasto dice cosa farà
+    this._fit.setAttribute("aria-label", label);
+    this._fit.title = label;
+    this._fit.setAttribute("aria-pressed", this._cover);
+    this._icon(this._fit, this._cover ? "mdi:fit-to-screen-outline" : "mdi:arrow-expand-all");
+  }
+
   _setDrawer(open) {
     this._card.dataset.drawer = open;
     for (const b of [this._log, this._photo]) b.setAttribute("aria-expanded", open);
-    this._icon(this._log, open ? "mdi:menu-close" : "mdi:menu-open");
+    this._icon(this._log, "mdi:history");  // aperto o chiuso: lo dice lo sfondo del tasto
   }
 
   // Link diretto (es. dalla notifica): con l'URL .../camera#citofono la card si porta in
@@ -697,7 +1020,7 @@ class VimarIntercomCard extends HTMLElement {
       this._empty.textContent = "Nessuno squillo registrato";
       const still = srcs.find(Boolean);
       for (const img of [this._still, this._pic]) if (still) img.src = still; else img.removeAttribute("src");
-      this._photo.disabled = !rings.length;
+      this._photo.disabled = this._histBtn.disabled = !rings.length;
     } catch {
       if (n !== this._histN) return;
       this._hist.replaceChildren();
@@ -760,7 +1083,19 @@ class VimarIntercomCard extends HTMLElement {
       if (this._err.textContent === NO_ANSWER) this._err.textContent = this._hint;
     }
     const s = this._setupAt ? Math.round((Date.now() - this._setupAt) / 1000) : 0;
-    this._pill.textContent = calling ? `${LABEL.calling} ${s} s` : LABEL[this._state];
+    // Card compatta che suona: "Suonano alla porta" nel nome e "Tocca per vedere · mm:ss" nello stato.
+    const ring = this._state === "ringing", compactRing = ring && this._popup && !this._pop.open;
+    if (ring && !this._ringAt) {
+      this._ringAt = Date.now();
+      this._ringTimer = setInterval(() => this._tickSetup(), 1000);
+    } else if (!ring && this._ringAt) {
+      clearInterval(this._ringTimer);
+      this._ringAt = null;
+    }
+    const r = Math.floor((Date.now() - (this._ringAt || Date.now())) / 1000), two = (n) => String(n).padStart(2, "0");
+    this._root.querySelector(".name").textContent = compactRing ? LABEL.ringing : this._cfg.name;
+    this._pill.textContent = calling ? `${LABEL.calling} ${s} s`
+      : compactRing ? `Tocca per vedere · ${two(Math.floor(r / 60))}:${two(r % 60)}` : LABEL[this._state];
     this._badge.textContent = this._pill.textContent;
     if (s >= SETUP_TIMEOUT_S && this._err.textContent === this._hint) this._err.textContent = NO_ANSWER;
   }
@@ -799,22 +1134,50 @@ class VimarIntercomCard extends HTMLElement {
 
   // Doppio tocco (confirm_open, default): il primo arma per 3 s, il secondo apre. La pressione lunga su iOS
   // litiga con VoiceOver e col menu contestuale; confirm() si conferma di riflesso.
-  async _openDoor() {
-    if (this._cfg.confirm_open && !this._armed) {
+  // Scorciatoie (config `shortcuts`, default la serratura): [{ entity, name, icon }], con dominio lock o button.
+  _list() {
+    const raw = this._cfg.shortcuts ?? [this._ent("lock")];
+    return raw.map((s) => (typeof s === "string" ? { entity: s } : s)).filter((s) => SC[s.entity?.split(".")[0]]);
+  }
+
+  // Tasti tondi nella card compatta; si rifanno solo se cambia l'elenco (nome/icona dallo stato).
+  _shortcuts() {
+    const list = this._list().map((s) => {
+      const st = this._hass.states[s.entity], dom = s.entity.split(".")[0];
+      return { ...s, name: s.name || (dom === "lock" ? "Apri" : st?.attributes?.friendly_name || s.entity),
+        icon: s.icon || st?.attributes?.icon || SC[dom][1], off: st?.state === "unavailable" };
+    });
+    const key = JSON.stringify(list);
+    if (key === this._scKey) return;
+    this._scKey = key;
+    this._sc.replaceChildren(...list.map((s) => {
+      const t = document.createElement("template");
+      t.innerHTML = btn("", s.icon, s.name);
+      const b = t.content.firstElementChild;
+      b.disabled = s.off;
+      b.onclick = (e) => { e.stopPropagation(); this._openDoor(b, s.entity); };  // mai il popup né la targa
+      return b;
+    }));
+  }
+
+  // `b`: il tasto che si arma / si conferma (Apri o una scorciatoia), `entity`: la prima scorciatoia se non detto.
+  async _openDoor(b = this._open, entity = this._list()[0]?.entity || this._ent("lock")) {
+    if (this._cfg.confirm_open && this._armed !== b) {
       this._resetOpen();
-      this._armed = true;
+      this._armed = this._flash = b;
       this._openTimer = setTimeout(() => this._resetOpen(), 3000);
-      this._open.className = "warn";
-      this._label(this._open, "Conferma");
+      b.className = "warn";
+      this._label(b, "Conferma");
       return;
     }
     this._resetOpen();
     this._err.textContent = this._hint;
     try {
-      await this._hass.callService("lock", "unlock", { entity_id: this._ent("lock") });
-      this._open.className = "ok";
-      this._icon(this._open, "mdi:check");
-      this._label(this._open, "Aperto");
+      await this._hass.callService(entity.split(".")[0], SC[entity.split(".")[0]][0], { entity_id: entity });
+      this._flash = b;
+      b.className = "ok";
+      this._icon(b, "mdi:check");
+      this._label(b, "Aperto");
       this._openTimer = setTimeout(() => this._resetOpen(), 3000);
     } catch (e) {
       this._err.textContent = `Apertura non riuscita: ${e.message || e}`;
@@ -823,10 +1186,13 @@ class VimarIntercomCard extends HTMLElement {
 
   _resetOpen() {
     clearTimeout(this._openTimer);
-    this._armed = false;
-    this._open.className = "";
-    this._icon(this._open, "mdi:door-open");
-    this._label(this._open, "Apri");
+    this._armed = null;
+    const b = this._flash;
+    this._flash = null;
+    if (!b) return;
+    b.className = "";
+    this._icon(b, b.dataset.icon);
+    this._label(b, b.dataset.label);
   }
 
   async _call(service, button) {
@@ -872,6 +1238,7 @@ class VimarIntercomCard extends HTMLElement {
     this._err.textContent = this._hint;
     if (!window.isSecureContext) {  // solo "Rispondi": video sì, voce no
       if (auto) return;
+      this._mine = true;
       await this._call("answer", this._talk).catch(() => {});
       return;
     }
@@ -891,9 +1258,14 @@ class VimarIntercomCard extends HTMLElement {
       mic = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
       });
-      if (this._state === "ringing") await this._call("answer", this._talk);
-      else if (answering && this._state !== "in_call") throw new Error("lo squillo è finito");
-      else if (this._state !== "in_call") await this._call("call", this._talk);
+      if (this._state === "ringing") {
+        this._mine = true;
+        await this._call("answer", this._talk);
+      } else if (answering && this._state !== "in_call") throw new Error("lo squillo è finito");
+      else if (this._state !== "in_call") {
+        this._mine = true;
+        await this._call("call", this._talk);
+      }
       this._audioBlocked = false;
       await this._openAudio(mic, ctx);
     } catch (e) {
@@ -928,20 +1300,18 @@ class VimarIntercomCard extends HTMLElement {
     };
   }
 
-  // Nodo di guadagno fra i buffer in arrivo e l'uscita: lo tocca solo il tasto "Audio"
-  // (mai il microfono o il WebSocket). Il muto scelto resta finché dura la sessione dal
-  // vivo (azzerato in _render quando si esce dal vivo).
-  _gain(ctx) {
-    const g = ctx.createGain();
+  // Un guadagno per sessione (`key`: _listenGain o _talkGain): lo tocca solo il tasto "Audio",
+  // mai il microfono o il WebSocket. Il muto dura finché dura la diretta.
+  _gain(ctx, key) {
+    const g = (this[key] = ctx.createGain());
     g.gain.value = this._muted ? 0 : 1;
     g.connect(ctx.destination);
-    this._playGain = g;
     return g;
   }
 
   _toggleMute() {
     this._muted = !this._muted;
-    if (this._playGain) this._playGain.gain.value = this._muted ? 0 : 1;
+    for (const g of [this._listenGain, this._talkGain]) if (g) g.gain.value = this._muted ? 0 : 1;
     this._render();
   }
 
@@ -965,7 +1335,7 @@ class VimarIntercomCard extends HTMLElement {
       if (!this.isConnected || this._ws || (auto && !this._cfg.listen_on_ring)) return ctx.close();
       const ws = new WebSocket(location.origin.replace(/^http/, "ws") + path);
       ws.binaryType = "arraybuffer";
-      ws.onmessage = this._pcmSink(ctx, this._gain(ctx));
+      ws.onmessage = this._pcmSink(ctx, this._gain(ctx, "_listenGain"));
       ws.onclose = () => { if (this._listenWs === ws) this._stopListen(); };
       this._listenCtx = ctx;
       this._listenWs = ws;
@@ -976,14 +1346,13 @@ class VimarIntercomCard extends HTMLElement {
     }
   }
 
-  // `_render` la richiama a ogni giro finché `listen_on_ring` è spento (no-op quando non
-  // c'è nulla da fermare): niente `_playGain = null` qui, altrimenti cancellerebbe anche
-  // il nodo di guadagno del parlato vero in corso (stesso campo, sessioni mai insieme).
+  // `_render` la richiama a ogni giro: senza nulla da fermare è un no-op.
   _stopListen() {
     this._listenWs?.close();
     this._listenWs = null;
     this._listenCtx?.close();
     this._listenCtx = null;
+    this._listenGain = null;
   }
 
   async _openAudio(mic, ctx) {
@@ -996,7 +1365,7 @@ class VimarIntercomCard extends HTMLElement {
     this._ws = ws;  // da qui _stopAudio lo chiude anche se qualcosa sotto fallisce
     ws.binaryType = "arraybuffer";
     ctx.resume();
-    ws.onmessage = this._pcmSink(ctx, this._gain(ctx));  // voce del visitatore
+    ws.onmessage = this._pcmSink(ctx, this._gain(ctx, "_talkGain"));  // voce del visitatore
     ws.onclose = () => {
       // Solo la sessione corrente: chiuso da noi, o un WS vecchio (microfono spento
       // e riacceso in fretta) che si chiude in ritardo e spegnerebbe quello nuovo.
@@ -1044,12 +1413,13 @@ class VimarIntercomCard extends HTMLElement {
     const ws = this._ws;
     this._ws = null;
     if (ws && ws.readyState <= WebSocket.OPEN) ws.close();
-    this._playGain = null;
+    this._talkGain = null;
     if ((a || ws) && this._root) this._render();
   }
 
   disconnectedCallback() {
     for (const e of ["hashchange", "location-changed"]) window.removeEventListener(e, this._toAnchor);
+    if (this._pop.open) this._pop.close();
     this._stopAudio();
     this._stopListen();
     if (this._player) {  // card tolta dalla pagina: il WS video non resta aperto
@@ -1058,6 +1428,8 @@ class VimarIntercomCard extends HTMLElement {
       this._live = undefined;  // al prossimo hass si ricrea
     }
     clearInterval(this._setupTimer);
+    clearInterval(this._ringTimer);
+    this._ringAt = null;
     clearTimeout(this._holdT);
     this._holdT = null;  // altrimenti al rientro il riquadro resterebbe "dal vivo" da fermo
     this._card.classList.remove("hold");
@@ -1078,12 +1450,18 @@ const SCHEMA = [
   { name: "layout", selector: { select: { mode: "dropdown", options: [
     { value: "overlay", label: "Video a tutta card" },
     { value: "sotto", label: "Tasti sotto il video" },
+    { value: "popup", label: "Popup al tocco" },
   ] } } },
+  { name: "compact_style", selector: { select: { mode: "dropdown", options: [
+    { value: "pillola", label: "Pillola" },
+    { value: "tile", label: "Tile" },
+  ] } } },
+  { name: "shortcuts", selector: { entity: { multiple: true, domain: ["lock", "button"] } } },
   { name: "history", selector: { number: { min: 0, max: 50, mode: "box" } } },
   { name: "confirm_open", selector: { boolean: {} } },
   { name: "listen_on_ring", selector: { boolean: {} } },
 ];
-const FIELD = { camera: "Telecamera", name: "Nome", layout: "In diretta", history: "Squilli in cronologia (0 = niente)",
+const FIELD = { camera: "Telecamera", name: "Nome", layout: "In diretta", compact_style: "Card compatta (layout popup)", shortcuts: "Scorciatoie Apri sulla card compatta (vuoto = serratura)", history: "Squilli in cronologia (0 = niente)",
   confirm_open: "Apri con doppio tocco", listen_on_ring: "Ascolta il visitatore durante lo squillo" };
 
 class VimarIntercomCardEditor extends HTMLElement {
@@ -1108,7 +1486,7 @@ class VimarIntercomCardEditor extends HTMLElement {
         const config = { ...this._cfg };
         for (const { name } of SCHEMA) {
           const v = e.detail.value[name];
-          if (v === undefined || v === "" || v === DEFAULTS[name]) delete config[name]; else config[name] = v;
+          if (v === undefined || v === "" || v === DEFAULTS[name] || v?.length === 0) delete config[name]; else config[name] = v;
         }
         this._cfg = config;
         this.dispatchEvent(new CustomEvent("config-changed", { detail: { config }, bubbles: true, composed: true }));
