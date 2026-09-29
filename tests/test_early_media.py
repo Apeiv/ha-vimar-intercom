@@ -372,3 +372,31 @@ def test_tetto_ai_tentativi_di_autenticazione(sfide, attesi):
         esiti.append(sip._retry_auth(ch, n, last))
         last = ch
     assert esiti == attesi
+
+
+def test_rifiuto_diffonde_ring_ended_cosi_il_prossimo_squillo_non_resta_muto(rete, monkeypatch):
+    eventi = []
+
+    async def _bc(t, m):
+        eventi.append(t)
+
+    monkeypatch.setattr(sip, "broadcast", _bc)
+    asyncio.run(sip.handle_incoming_invite(INVITE))
+    asyncio.run(sip.do_decline_incoming())
+    assert eventi[-1:] == ["ring_ended"] and "ring_ended" not in eventi[:-1]
+
+
+def test_200_non_inviato_diffonde_ring_ended(rete, monkeypatch):
+    eventi = []
+
+    async def _bc(t, m):
+        eventi.append(t)
+
+    async def _boom(msg):
+        raise OSError("caduto")
+
+    monkeypatch.setattr(sip, "broadcast", _bc)
+    asyncio.run(sip.handle_incoming_invite(INVITE))
+    monkeypatch.setattr(sip, "send", _boom)
+    ok, _ = asyncio.run(sip.do_answer_incoming())
+    assert not ok and eventi[-1:] == ["ring_ended"]

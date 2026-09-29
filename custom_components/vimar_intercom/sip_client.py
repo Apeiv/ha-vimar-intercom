@@ -1897,8 +1897,7 @@ def early_media() -> bool:
 async def _ring_timeout(cid) -> None:
     if ringing(cid) and not in_call:
         # Risposta finale anche qui: se il CANCEL si è solo perso, la targa smette.
-        await do_decline_incoming("480 Temporarily Unavailable")
-        await broadcast("ring_ended", "Squillo scaduto")
+        await do_decline_incoming("480 Temporarily Unavailable", "Squillo scaduto")
 
 
 async def do_answer_incoming():
@@ -1942,6 +1941,9 @@ async def do_answer_incoming():
     except Exception as e:  # connessione caduta: niente chiamata, niente anteprima orfana
         if p["early"]:
             await media.stop_media()
+        # Lo squillo è chiuso: senza ring_ended l'hub resta "in squillo" e il prossimo
+        # non lancia evento né webhook.
+        await broadcast("ring_ended", "Risposta non inviata")
         return False, f"Risposta non inviata: {e}"
 
     _set_in_call(True)
@@ -1971,7 +1973,7 @@ async def do_answer_incoming():
     return True, "Risposto!"
 
 
-async def do_decline_incoming(reason: str = "603 Decline"):
+async def do_decline_incoming(reason: str = "603 Decline", msg: str = "Squillo rifiutato"):
     if not ringing():
         return
 
@@ -1982,6 +1984,10 @@ async def do_decline_incoming(reason: str = "603 Decline"):
         # chiamate e faceva rispondere 486 a ogni squillo nuovo, per sempre.
         _LOGGER.warning("Rifiuto dello squillo non inviato (%s): lo chiudo in locale", e)
     await _end_ring()
+    # Senza ring_ended l'hub resta "in squillo" (_was_ringing) e il prossimo squillo
+    # non lancia evento né webhook. Non per l'eco di una nostra chiamata: non è uno squillo.
+    if not (in_call or calling):
+        await broadcast("ring_ended", msg)
 
 
 async def _end_ring():
