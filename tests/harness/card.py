@@ -150,7 +150,8 @@ window.info = () => ({ pill: c.shadowRoot.querySelector(".pill").textContent,
   player: c._player && { frames: c._player.frames, resets: c._player.resets, wait: c._player._wait || 0,
                          ws: T.wsOpenAt, nal: T.firstNalAt, frame: T.firstFrameAt },
   audio: !c._audio && !c._ws ? "off" : "on",
-  listen: !!c._listenWs });
+  listen: !!c._listenWs,
+  mute: c.shadowRoot.getElementById("mute").hidden ? null : { muted: !!c._muted, gain: c._playGain?.gain.value } });
 </script></body></html>"""
 
 

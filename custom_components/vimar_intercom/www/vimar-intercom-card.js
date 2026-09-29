@@ -181,6 +181,12 @@ const STYLE = `
   .live #log { display: grid; }
   [data-drawer="true"] #log { background: var(--primary-color); }
 
+  /* Muto locale (audio in arrivo dalla targa): tondo sul video, accanto alla cronologia;
+     visibilità decisa in JS (solo mentre arriva davvero audio), non dallo stato "live". */
+  #mute { position: absolute; top: 8px; right: 56px; z-index: 3; width: 40px; height: 40px; border-radius: 50%;
+          display: grid; place-items: center; color: #fff; background: rgba(0,0,0,.45); }
+  #mute ha-icon { --mdc-icon-size: 22px; }
+
   .row { display: flex; gap: 6px; min-width: 0; }
   /* Se la riga è stretta (anteprima dell'editor, ~330 px) si accorcia solo la pill più lunga
      ("Vedi es…"): "Parla" e "Apri" restano leggibili per intero. */
@@ -258,6 +264,10 @@ const PHOTO = `<button id="photo" aria-label="Cronologia squilli" aria-expanded=
   <img alt=""><ha-icon icon="mdi:doorbell-video" aria-hidden="true"></ha-icon></button>`;
 const LOG = `<button id="log" aria-label="Cronologia squilli" aria-expanded="false" aria-controls="drawer">
   <ha-icon icon="mdi:menu-open" aria-hidden="true"></ha-icon></button>`;
+// Muta solo l'audio in arrivo dalla targa (ascolto allo squillo o parlato): niente
+// riaggancio, niente microfono, niente WebSocket chiuso. Icona sola, senza etichetta.
+const MUTE = `<button id="mute" aria-label="Audio" aria-pressed="false">
+  <ha-icon icon="mdi:volume-high" aria-hidden="true"></ha-icon></button>`;
 const SUB = `<span class="sub"><span class="pill" role="status" aria-live="polite"></span><span class="last"></span><span class="err" role="alert"></span></span>`;
 const ROW = `<div class="row">${btn("view", "mdi:cctv", "Vedi esterno")}${btn("talk", "mdi:microphone", "Parla")}` +
   `${btn("hangup", "mdi:phone-hangup", "Riaggancia")}${btn("open", "mdi:door-open", "Apri")}</div>`;
@@ -266,7 +276,7 @@ const PHOTO_DLG = `<dialog class="photo" aria-label="Squillo"><img alt="Foto del
   `<video controls playsinline preload="metadata" hidden></video><p class="cap"></p></dialog>`;
 
 const TEMPLATE = `<ha-card>
-  <div class="media">${SCENE}<span class="badge dyn" aria-hidden="true"></span>${LOG}${DRAWER}</div>
+  <div class="media">${SCENE}<span class="badge dyn" aria-hidden="true"></span>${MUTE}${LOG}${DRAWER}</div>
   <div class="head">${PHOTO}<div class="ttl"><span class="name"></span>${SUB}</div>${ROW}</div>
   ${PHOTO_DLG}</ha-card>`;
 
@@ -534,6 +544,13 @@ class VimarIntercomCard extends HTMLElement {
     this._open.disabled = state === "offline" || hass.states[this._ent("lock")]?.state === "unavailable";
     if ((state === "idle" || state === "offline") && this._ws) this._stopAudio();
 
+    // Muto (tondo sul video): visibile solo mentre arriva davvero audio dalla targa
+    // (parlato vero o solo ascolto allo squillo), non tutta la diretta.
+    const playingAudio = !!this._ws || !!this._listenWs;
+    this._mute.hidden = !playingAudio;
+    this._icon(this._mute, this._muted ? "mdi:volume-off" : "mdi:volume-high");
+    this._mute.setAttribute("aria-pressed", !!this._muted);
+
     // Arrivo dall'ancora (link della notifica) già "in_call" (l'automazione ha risposto
     // lei, con vimar_intercom.answer): l'audio si aggancia da sola, un tentativo per
     // chiamata — se l'utente stacca il microfono a mano non si riattacca da sola, e se
@@ -553,7 +570,7 @@ class VimarIntercomCard extends HTMLElement {
     // (sotto): si azzera solo lasciando gli stati dal vivo, non ad ogni giro di `_render`
     // durante ringing/calling — altrimenti un blocco vero (iOS) sparirebbe e riproverebbe
     // ad ogni aggiornamento di `hass`, anche senza alcun cambio di stato.
-    if (!live) this._audioBlocked = false;
+    if (!live) { this._audioBlocked = false; this._muted = false; }  // il muto vale una sessione dal vivo sola
 
     // `listen_on_ring`: si sente il visitatore già a video (ringing/calling/in_call in
     // anteprima), senza rispondere né aprire il microfono — smette da sola a fine
@@ -600,6 +617,7 @@ class VimarIntercomCard extends HTMLElement {
     this._talk = $("#talk");
     this._hangup = $("#hangup");
     this._open = $("#open");
+    this._mute = $("#mute");
     this._videoBox = $("#video");
     this._applyCfg();
     this._view.className = "fill";
@@ -610,6 +628,7 @@ class VimarIntercomCard extends HTMLElement {
     this._talk.onclick = () => (this._ws ? this._stopAudio() : this._starting || this._startTalk());
     this._hangup.onclick = () => this._call("hangup", this._hangup).catch(() => {});
     this._open.onclick = () => this._openDoor();
+    this._mute.onclick = () => this._toggleMute();
     // Un avviso vive SAY_MS al posto della riga di stato, poi sparisce (NO_ANSWER resta finché si collega).
     new MutationObserver(() => {
       clearTimeout(this._sayT);
@@ -881,7 +900,9 @@ class VimarIntercomCard extends HTMLElement {
   // Riproduce la voce del visitatore (0x01 + PCM16LE) su un AudioContext: usato sia dal
   // parlato vero (_openAudio, col microfono) sia dal solo ascolto allo squillo
   // (_startListen, senza microfono). Un chiusura sola per chiamata: `playAt` vive qui.
-  _pcmSink(ctx) {
+  // Passa da un GainNode (_gain) così il tasto "Audio" può azzerare solo questa
+  // riproduzione: niente riaggancio, niente microfono, WebSocket sempre aperto.
+  _pcmSink(ctx, gain) {
     let playAt = 0;
     return (ev) => {
       if (typeof ev.data === "string" || new Uint8Array(ev.data, 0, 1)[0] !== 0x01) return;
@@ -891,11 +912,28 @@ class VimarIntercomCard extends HTMLElement {
       for (let i = 0; i < pcm.length; i++) ch[i] = pcm[i] / 32768;
       const src = ctx.createBufferSource();
       src.buffer = buf;
-      src.connect(ctx.destination);
+      src.connect(gain);
       playAt = Math.max(playAt, ctx.currentTime + 0.05);  // piccolo buffer contro gli scatti
       src.start(playAt);
       playAt += buf.duration;
     };
+  }
+
+  // Nodo di guadagno fra i buffer in arrivo e l'uscita: lo tocca solo il tasto "Audio"
+  // (mai il microfono o il WebSocket). Il muto scelto resta finché dura la sessione dal
+  // vivo (azzerato in _render quando si esce dal vivo).
+  _gain(ctx) {
+    const g = ctx.createGain();
+    g.gain.value = this._muted ? 0 : 1;
+    g.connect(ctx.destination);
+    this._playGain = g;
+    return g;
+  }
+
+  _toggleMute() {
+    this._muted = !this._muted;
+    if (this._playGain) this._playGain.gain.value = this._muted ? 0 : 1;
+    this._render();
   }
 
   // Ascolto senza rispondere (`listen_on_ring`): solo ricezione, niente microfono né
@@ -913,7 +951,7 @@ class VimarIntercomCard extends HTMLElement {
       if (!this.isConnected || !this._cfg.listen_on_ring) return ctx.close();  // stato cambiato nell'attesa
       const ws = new WebSocket(location.origin.replace(/^http/, "ws") + path);
       ws.binaryType = "arraybuffer";
-      ws.onmessage = this._pcmSink(ctx);
+      ws.onmessage = this._pcmSink(ctx, this._gain(ctx));
       ws.onclose = () => { if (this._listenWs === ws) this._stopListen(); };
       this._listenCtx = ctx;
       this._listenWs = ws;
@@ -924,6 +962,9 @@ class VimarIntercomCard extends HTMLElement {
     }
   }
 
+  // `_render` la richiama a ogni giro finché `listen_on_ring` è spento (no-op quando non
+  // c'è nulla da fermare): niente `_playGain = null` qui, altrimenti cancellerebbe anche
+  // il nodo di guadagno del parlato vero in corso (stesso campo, sessioni mai insieme).
   _stopListen() {
     this._listenWs?.close();
     this._listenWs = null;
@@ -941,7 +982,7 @@ class VimarIntercomCard extends HTMLElement {
     this._ws = ws;  // da qui _stopAudio lo chiude anche se qualcosa sotto fallisce
     ws.binaryType = "arraybuffer";
     ctx.resume();
-    ws.onmessage = this._pcmSink(ctx);  // voce del visitatore
+    ws.onmessage = this._pcmSink(ctx, this._gain(ctx));  // voce del visitatore
     ws.onclose = () => {
       // Solo la sessione corrente: chiuso da noi, o un WS vecchio (microfono spento
       // e riacceso in fretta) che si chiude in ritardo e spegnerebbe quello nuovo.
@@ -989,6 +1030,7 @@ class VimarIntercomCard extends HTMLElement {
     const ws = this._ws;
     this._ws = null;
     if (ws && ws.readyState <= WebSocket.OPEN) ws.close();
+    this._playGain = null;
     if ((a || ws) && this._root) this._render();
   }
 
