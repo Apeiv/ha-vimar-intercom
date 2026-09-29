@@ -92,3 +92,28 @@ def test_the_reader_reconnects_on_a_broken_stream(monkeypatch):
     asyncio.run(_run())
     assert len(dispatched) == 1 and dispatched[0].startswith("OPTIONS")
     assert reconnects == [True]
+
+
+def test_framing_error_reconnects_are_rate_limited(monkeypatch):
+    """A peer sending unframeable data had us reconnect in a tight loop."""
+    import asyncio as _asyncio
+    reconnects, sleeps = [], []
+
+    async def reconnect():
+        reconnects.append(True)
+
+    async def sleep(seconds):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(sip, "_reconnect_from_reader", reconnect)
+    monkeypatch.setattr(sip, "_last_framing_reconnect", -1e9)
+    monkeypatch.setattr(sip, "framing_errors", 0)
+    monkeypatch.setattr(sip.asyncio, "sleep", sleep)
+
+    async def main():
+        await sip._reconnect_after_framing_error()
+        await sip._reconnect_after_framing_error()
+
+    _asyncio.run(main())
+    assert len(reconnects) == 2 and sip.framing_errors == 2
+    assert len(sleeps) == 1 and 1.5 < sleeps[0] <= sip.FRAMING_RECONNECT_MIN_S

@@ -97,6 +97,25 @@ def test_a_temporarily_unavailable_panel_is_not_a_missing_one(hub, monkeypatch):
     assert R.CAMERA_TARGET == "55100" and saved == []
 
 
+def test_a_panel_refusing_the_media_is_not_a_missing_one(hub, monkeypatch):
+    """488 says the panel is there and did not like our SDP (SRTP setting)."""
+    h, saved = hub
+    calls = fake_panels(monkeypatch, {"sip:55001@p"}, failure="488 Not Acceptable Here")
+    h._last_ring_panel = "55001"
+    asyncio.run(h._do_auto_call())
+    assert calls == ["sip:55100@p"]
+    assert R.CAMERA_TARGET == "55100" and saved == []
+
+
+@pytest.mark.parametrize("failure", ["404 Not Found", "604 Does Not Exist Anywhere"])
+def test_a_panel_that_does_not_exist_falls_back(hub, monkeypatch, failure):
+    h, saved = hub
+    calls = fake_panels(monkeypatch, {"sip:55001@p"}, failure=failure)
+    h._last_ring_panel = "55001"
+    asyncio.run(h._do_auto_call())
+    assert calls == ["sip:55100@p", "sip:55001@p"]
+
+
 VIDEO_OFFER = ("v=0\r\nc=IN IP4 10.0.0.9\r\nm=audio 4000 RTP/AVP 0\r\n"
                "m=video 4002 RTP/AVP 96\r\n")
 AUDIO_ONLY_OFFER = "v=0\r\nc=IN IP4 10.0.0.9\r\nm=audio 4000 RTP/AVP 0\r\n"

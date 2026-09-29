@@ -505,12 +505,24 @@ def reset_state() -> None:
 
     The SIP state lives in module variables, which survive a reload: without
     this the new hub started out convinced it was still in a call.
+
+    The hub being unloaded is not notified of these changes (its state
+    callback is dropped first: the next hub sets its own at start), the
+    transport is closed and forgotten, and whoever still waits for a response
+    is woken with _CANCEL instead of waiting for a queue nobody fills.
     """
     global _local_crypto_key, _local_video_crypto_key, _last_sweep
+    global _state_change_callback, reader, writer, _udp_sock
     cancel_reconnect()
+    _state_change_callback = None
     _set_in_call(False)
     _set_calling(False)
     _set_registered(False)
+    for sock in (writer, _udp_sock):
+        if sock is not None:
+            with contextlib.suppress(Exception):
+                sock.close()
+    reader = writer = _udp_sock = None
     for key in call_state:
         call_state[key] = None
     timer = pending_incoming.pop("timer", None)
@@ -518,6 +530,9 @@ def reset_state() -> None:
         timer.cancel()
     pending_incoming.clear()
     pending_incoming.update(_PENDING_INITIAL)
+    for queue in list(pending_responses.values()):
+        with contextlib.suppress(Exception):
+            queue.put_nowait(_CANCEL)
     pending_responses.clear()
     _seen_requests.clear()
     _last_sweep = 0.0
@@ -929,9 +944,28 @@ async def reader_task():
             await _dispatch_message(raw)
         if rest is None:
             # Broken framing (see _split_stream): nothing after it can be trusted.
-            await _reconnect_from_reader()
+            await _reconnect_after_framing_error()
             rest = b""
         buf = rest
+
+
+# A peer that keeps sending unframeable data would otherwise have us reconnect
+# in a tight loop: at most one framing-error reconnect every this many seconds.
+FRAMING_RECONNECT_MIN_S = 2.0
+framing_errors = 0            # since start, for the log and diagnostics
+_last_framing_reconnect = -1e9
+
+
+async def _reconnect_after_framing_error() -> None:
+    global framing_errors, _last_framing_reconnect
+    framing_errors += 1
+    wait = FRAMING_RECONNECT_MIN_S - (time.monotonic() - _last_framing_reconnect)
+    if wait > 0:
+        _LOGGER.warning("SIP: framing error #%d right after the last one: reconnecting "
+                        "in %.1f s", framing_errors, wait)
+        await asyncio.sleep(wait)
+    _last_framing_reconnect = time.monotonic()
+    await _reconnect_from_reader()
 
 
 # Largest body the framer accepts: the reader's buffer guard is the same 1 MB.
@@ -998,7 +1032,8 @@ _T1 = 0.5   # primo intervallo di ritrasmissione (s)
 _T2 = 4.0   # intervallo massimo (s)
 
 
-async def _send_request(msg: str, cid: str, timeout: float = 15) -> list[str]:
+async def _send_request(msg: str, cid: str, timeout: float = 15,
+                        on_sent=None) -> list[str]:
     """Invia una richiesta non-INVITE e ne raccoglie le risposte fino alla finale.
 
     Due differenze rispetto a `send()` + `_wait_final()`:
@@ -1010,6 +1045,8 @@ async def _send_request(msg: str, cid: str, timeout: float = 15) -> list[str]:
       stessa transazione per il server) a 0,5 - 1 - 2 - 4 - 4 … secondi, finché non
       arriva una risposta qualsiasi. Su TCP/TLS il trasporto è affidabile e non si
       ritrasmette.
+
+    on_sent: called once the request has left, before waiting for the answer.
     """
     q = pending_responses.setdefault(cid, asyncio.Queue())
     # La coda di un dialogo (BYE) raccoglie anche i 200 degli INFO di keyframe:
@@ -1023,6 +1060,8 @@ async def _send_request(msg: str, cid: str, timeout: float = 15) -> list[str]:
     results: list[str] = []
     try:
         await send(msg)  # anche un invio fallito toglie la coda (finally)
+        if on_sent:
+            on_sent()
         # Coda tolta da altri: BYE incrociati, handle_incoming_bye ha chiuso il dialogo e
         # la risposta al nostro BYE non arriverà qui. Si esce subito, non dopo `timeout`.
         while pending_responses.get(cid) is q:
@@ -1040,6 +1079,9 @@ async def _send_request(msg: str, cid: str, timeout: float = 15) -> list[str]:
                     _LOGGER.debug("ritrasmissione cid=%s (prossima tra %.1fs)", cid[:24], interval)
                     await send(msg)
                 continue
+            if raw is _CANCEL:  # reset_state: nobody will answer any more
+                q.put_nowait(raw)  # for whoever else waits on this queue
+                break
             kind, hdrs, *_ = _parse(raw)
             if want and hdrs.get("cseq", "").split() != want:
                 continue
@@ -1063,6 +1105,9 @@ async def _wait_final(cid, timeout=15):
             break
         try:
             raw = await asyncio.wait_for(q.get(), timeout=min(rem, 3))
+            if raw is _CANCEL:  # reset_state: nobody will answer any more
+                q.put_nowait(raw)
+                break
             results.append(raw)
             kind, *_ = _parse(raw)
             if isinstance(kind, int) and kind >= 200:
@@ -1155,7 +1200,7 @@ def _line_security(offer: dict | None, kind: str) -> tuple[bool, dict | None]:
         return False, None
     if not line.get("secure"):
         return True, None
-    if line.get("crypto_key"):
+    if line.get("crypto_key") and not line.get("refused"):
         return True, {"tag": line.get("crypto_tag") or "1",
                       "suite": line.get("crypto_suite") or _DEFAULT_CRYPTO["suite"]}
     _LOGGER.warning("SDP: m=%s offers RTP/SAVP without a supported crypto suite "
@@ -1164,7 +1209,7 @@ def _line_security(offer: dict | None, kind: str) -> tuple[bool, dict | None]:
     return False, None
 
 
-def build_sdp(offer: dict | None = None):
+def build_sdp(offer: dict | None = None, reuse_keys: bool = False):
     """Costruisce l'offerta/risposta SDP.
 
     Su questo impianto (verificato sul campo 20/08/2026 verso la targa 55100)
@@ -1173,6 +1218,10 @@ def build_sdp(offer: dict | None = None):
     è RTP/AVP senza a=crypto. SRTP resta disponibile via R.MEDIA_ENC=True per
     impianti che negoziano media_enc. As an answer, each m-line mirrors the
     offer's profile and crypto suite for that line (see _line_security).
+
+    reuse_keys: a new answer inside a dialog (re-INVITE) keeps the local SRTP
+    keys the running media already encrypts with, so what we advertise and
+    what srtp_tx sends stay the same key.
     """
     global _local_crypto_key, _local_video_crypto_key
     sid = str(int(time.time()))
@@ -1183,8 +1232,15 @@ def build_sdp(offer: dict | None = None):
 
     # RTP in chiaro su una linea: nessuna chiave locale → setup_media non crea
     # srtp_tx/rx per quella linea.
-    _local_crypto_key = _b64.b64encode(os.urandom(30)).decode() if audio_sec else None
-    _local_video_crypto_key = _b64.b64encode(os.urandom(30)).decode() if video_sec else None
+    def _key(sec, current):
+        if not sec:
+            return None
+        if reuse_keys and current:
+            return current
+        return _b64.b64encode(os.urandom(30)).decode()
+
+    _local_crypto_key = _key(audio_sec, _local_crypto_key)
+    _local_video_crypto_key = _key(video_sec, _local_video_crypto_key)
     audio_proto = "RTP/SAVP" if audio_sec else "RTP/AVP"
     video_proto = "RTP/SAVP" if video_sec else "RTP/AVP"
     audio_crypto = (f"a=crypto:{audio_sec['tag']} {audio_sec['suite']} "
@@ -1234,8 +1290,19 @@ def build_sdp(offer: dict | None = None):
         f"b=AS:512\r\n"
         f"t=0 0\r\n"
         f"a=rtcp-xr:rcvr-rtt=all:10000 stat-summary=loss,dup,jitt,TTL voip-metrics\r\n"
-        + "".join(blocks[kind] for kind in _offered_kinds(offer))
+        + "".join(blocks.get(kind) or _refused_block(offer[kind])
+                  for kind in _offered_kinds(offer))
     )
+
+
+def _refused_block(line: dict) -> str:
+    """An m-line we do not handle (m=text, m=application, ...), refused.
+
+    RFC 3264 section 6: the answer keeps it, with port 0 and a format from the
+    offer; dropping it shifts every later line of the answer.
+    """
+    fmts = " ".join(line.get("fmts") or ["0"])
+    return f"m={line.get('media', 'application')} 0 {line.get('proto') or 'RTP/AVP'} {fmts}\r\n"
 
 
 def _answer_fits(answer: str, offer: dict | None) -> bool:
@@ -1245,24 +1312,32 @@ def _answer_fits(answer: str, offer: dict | None) -> bool:
         return True  # no SDP in the re-INVITE: the old session stands
     ours = _sdp_lines(answer)
     kinds = _offered_kinds(offer)
-    if [k for k, _ in ours] != kinds:
+    if [media for media, _ in ours] != [offer[k].get("media", k) for k in kinds]:
         return False
-    return all(offer[k]["port"] or not live for k, live in ours)
+    return all(offer[k]["port"] or not live for k, (_, live) in zip(kinds, ours))
 
 
 def _sdp_lines(sdp_text: str) -> list[tuple[str, bool]]:
-    """(kind, live) for each audio/video m-line of an SDP, in order."""
+    """(media, live) for each m-line of an SDP, in order."""
     lines = []
     for line in sdp_text.split("\n"):
         parts = line.strip().split()
-        if parts and parts[0] in ("m=audio", "m=video") and len(parts) > 1:
+        if parts and parts[0].startswith("m=") and len(parts) > 1:
             lines.append((parts[0][2:], parts[1] != "0"))
     return lines
 
 
+def _loggable(section: dict | None) -> dict:
+    """A parsed SDP section without its SRTP master key, for the log."""
+    return {k: v for k, v in (section or {}).items() if k != "crypto_key"}
+
+
 def parse_sdp(sdp_text):
     # "order" lists the m-lines as offered. A section the SDP lacks stays an
-    # empty dict (no "port"): it is not a line of this session.
+    # empty dict (no "port"): it is not a line of this session. Any other
+    # m-line (m=text, m=application, a second m=audio) gets its own section
+    # "m<n>" with "unknown": we answer it with port 0, and its c= and a=
+    # lines stay in it instead of changing the line before.
     result = {"audio": {}, "video": {}, "conn": "", "order": []}
     m = None
     for line in sdp_text.split("\n"):
@@ -1273,13 +1348,23 @@ def parse_sdp(sdp_text):
                 result[m]["ip"] = ip
             else:
                 result["conn"] = ip
-        elif line.startswith(("m=audio", "m=video")):
-            m = line[2:7]
+        elif line.startswith("m="):
             parts = line.split()
+            media = parts[0][2:]
+            try:
+                port = int(parts[1]) if len(parts) > 1 else 0
+            except ValueError:
+                port = 0
+            if media in ("audio", "video") and "port" not in result[media]:
+                m = media
+            else:
+                m = f"m{len(result['order'])}"
+                result[m] = {"media": media, "unknown": True}
             result["order"].append(m)
-            result[m]["port"] = int(parts[1])
+            result[m]["port"] = port
             result[m]["proto"] = parts[2] if len(parts) > 2 else ""
-            result[m]["secure"] = "SAVP" in result[m]["proto"].upper()
+            result[m]["secure"] = (not result[m].get("unknown")
+                                   and "SAVP" in result[m]["proto"].upper())
             result[m]["fmts"] = parts[3:]
         elif line[2:] in ("sendrecv", "sendonly", "recvonly", "inactive") and line.startswith("a="):
             result.setdefault(m or "session", {})["dir"] = line[2:]
@@ -1291,19 +1376,24 @@ def parse_sdp(sdp_text):
             # a=crypto:<tag> <suite> inline:<key>[|lifetime][|MKI] (RFC 4568)
             parts = line[9:].split()
             if len(parts) >= 3 and parts[2].startswith("inline:"):
-                result[m].setdefault("crypto", []).append({
-                    "tag": parts[0], "suite": parts[1].upper(),
-                    "key": parts[2][7:].split("|", 1)[0]})
+                sec = result[m]
+                tag, suite = parts[0], parts[1].upper()
+                # The list keeps tag and suite only: the parsed SDP is logged,
+                # and a master key in a log decrypts the call.
+                sec.setdefault("crypto", []).append({"tag": tag, "suite": suite})
+                # The key used for this line: the first a=crypto with a suite
+                # we support, only on an RTP/SAVP line (on RTP/AVP it means
+                # nothing).
+                if sec.get("secure") and "crypto_key" not in sec and suite in _SRTP_SUITES:
+                    sec.update(crypto_key=parts[2][7:].split("|", 1)[0],
+                               crypto_tag=tag, crypto_suite=suite)
     session_dir = result.pop("session", {}).get("dir")
     for section in ("audio", "video"):
-        # The key used for this line: the first a=crypto with a suite we
-        # support, only on an RTP/SAVP line (on RTP/AVP it means nothing).
         line = result[section]
-        chosen = next((c for c in line.get("crypto", []) if c["suite"] in _SRTP_SUITES),
-                      None) if line.get("secure") else None
-        if chosen:
-            line.update(crypto_key=chosen["key"], crypto_tag=chosen["tag"],
-                        crypto_suite=chosen["suite"])
+        if line.get("port") and line.get("secure") and "crypto_key" not in line:
+            # RTP/SAVP with no crypto suite we support: our answer refuses it
+            # with port 0 (_line_security), so no media may be set up on it.
+            line["refused"] = True
     for section in ("audio", "video"):
         if "port" not in result[section]:
             continue
@@ -1398,6 +1488,7 @@ async def do_register():
     # (RFC 3261 section 22.3).
     auth_hdr = "Authorization"
     resps: list[str] = []
+    last_code = None
     for _attempt in range(3):
         resps = await _send_request(
             _msg(auth=auth, seq=_next_cseq(), auth_hdr=auth_hdr), cid)
@@ -1409,6 +1500,7 @@ async def do_register():
         if final is None:
             break
         code, hdrs = final
+        last_code = code
         if code == 200:
             granted = _granted_expires(hdrs)
             if granted is not None and granted < MIN_GRANTED_EXPIRES:
@@ -1433,6 +1525,12 @@ async def do_register():
         seen_nonces.add(nonce)
         auth = _make_auth("REGISTER", uri, ch)
         auth_hdr = "Authorization" if code == 401 else "Proxy-Authorization"
+    if last_code in (401, 407) and final is not None:
+        # Three challenges, each with a new nonce: the credentials never passed.
+        _LOGGER.warning("REGISTER: credentials refused (the registrar rotated its "
+                        "nonce each time)")
+        _set_registered(False)
+        return False
     # Diagnostica: "0 risposte" = nulla è tornato nemmeno dopo le ritrasmissioni;
     # altrimenti diciamo quali codici sono arrivati, che prima non si leggevano.
     codes = [_parse(r)[0] for r in resps]
@@ -1702,7 +1800,8 @@ async def do_call(target=None, silence_limit=None):
 
                 if remote:
                     call_state["remote_sdp"] = remote
-                    _LOGGER.info("SDP: audio=%s video=%s", remote.get('audio', {}), remote.get('video', {}))
+                    _LOGGER.info("SDP: audio=%s video=%s", _loggable(remote.get('audio')),
+                                 _loggable(remote.get('video')))
                     await media.setup_media(remote, _local_crypto_key, _local_video_crypto_key,
                                             silence_limit=call_state["silence_limit"])
                     if not calling:
@@ -1815,6 +1914,9 @@ async def send_keyframe_request():
                 )
             except (asyncio.TimeoutError, KeyError):
                 break
+            if raw is _CANCEL:  # reset_state, or do_hangup for do_call: not ours
+                foreign.append(raw)
+                break
             code, hdrs, *_ = _parse(raw)
             cseq = hdrs.get("cseq", "").split()
             if "INFO" not in hdrs.get("cseq", "INFO"):
@@ -1845,7 +1947,12 @@ async def send_keyframe_request():
     # possedere la stessa coda. La coda del dialog viene ripulita a hangup.
 
 
-async def do_hangup():
+async def do_hangup(on_local_end=None):
+    """End the call: at once locally, then wait for the BYE's answer.
+
+    on_local_end: called once the call has ended locally (media off,
+    call_ended broadcast) and the BYE has left, before that wait.
+    """
     if calling and (q := pending_responses.get(call_state["call_id"])):
         # "Annulla" mentre la targa squilla: do_call manda il CANCEL ed esce. Fino
         # alla 1.0.9 do_call restava in attesa e, al 200 OK, la chiamata partiva
@@ -1857,6 +1964,8 @@ async def do_hangup():
         if not ringing():  # non spegnere l'anteprima di uno squillo
             await media.stop_media()
         await broadcast("call_ended", "Chiamata terminata")
+        if on_local_end:
+            on_local_end()
         return
 
     cid = call_state["call_id"]
@@ -1893,7 +2002,7 @@ async def do_hangup():
     try:
         # Come le altre non-INVITE: su UDP ritrasmesso finché la targa risponde. Un
         # BYE perso la lasciava occupata (486 al "Vedi esterno" successivo).
-        await _send_request(bye, cid, timeout=5)
+        await _send_request(bye, cid, timeout=5, on_sent=on_local_end)
     except Exception as e:  # noqa: BLE001
         # Connessione caduta (TLS cloud in riconnessione): la chiamata si chiude
         # comunque qui. Prima restava in_call per sempre, col media acceso, il timer
@@ -2025,15 +2134,21 @@ async def handle_incoming_invite(raw):
                        f"Call-ID: {cid}\r\nCSeq: {cseq}\r\nContent-Length: 0\r\n\r\n")
             return
         sdp = call_state.get("local_sdp")
+        keys = (_local_crypto_key, _local_video_crypto_key)
         if not sdp or not _answer_fits(sdp, remote):
             # The re-offer adds, drops or declines a line: the old answer no
-            # longer has the offer's m-lines (RFC 3264 section 8).
-            sdp = call_state["local_sdp"] = build_sdp(remote)
+            # longer has the offer's m-lines (RFC 3264 section 8). The keys
+            # the media already sends with stay: a new key in the answer and
+            # the old one in srtp_tx would make our audio undecryptable.
+            sdp = call_state["local_sdp"] = build_sdp(remote, reuse_keys=True)
         await send(f"SIP/2.0 200 OK\r\n{via_block}To: {to_hdr}\r\nFrom: {from_hdr}\r\n"
                    f"Call-ID: {cid}\r\nCSeq: {cseq}\r\nContact: {_simple_contact()}\r\n"
                    f"Content-Type: application/sdp\r\n"
                    f"Content-Length: {_clen(sdp)}\r\n\r\n{sdp}")
-        if remote and remote != call_state["remote_sdp"]:
+        rekeyed = keys != (_local_crypto_key, _local_video_crypto_key)
+        if remote and (remote != call_state["remote_sdp"] or rekeyed):
+            # rekeyed: a line turned to SRTP (or back) and got a key it had
+            # not: the media must encrypt with what the answer says.
             call_state["remote_sdp"] = remote
             await media.setup_media(remote, _local_crypto_key, _local_video_crypto_key,
                                     silence_limit=call_state["silence_limit"])
@@ -2229,7 +2344,8 @@ async def do_answer_incoming():
 
     if remote:
         call_state["remote_sdp"] = remote
-        _LOGGER.info("Answer SDP: audio=%s video=%s", remote.get('audio'), remote.get('video'))
+        _LOGGER.info("Answer SDP: audio=%s video=%s", _loggable(remote.get('audio')),
+                     _loggable(remote.get('video')))
         # Con early media il flusso è già aperto, salvo che qualcosa l'abbia chiuso.
         # The early media may be audio only: either line being open counts.
         early_open = any(proto is not None and proto.remote_addr

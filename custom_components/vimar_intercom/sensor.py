@@ -76,8 +76,8 @@ SENSORS: tuple[VimarSensorDescription, ...] = (
         # no way to tell which phones are paired, and generating a new QR
         # rotates the shared credential and unpairs them.
         value_fn=lambda hub: len(hub.devices),
-        # Identifiers masked, addresses without the port: the full values
-        # stay in the hub, where devices are merged.
+        # Identifiers masked, no addresses: the full values stay in the hub,
+        # where devices are merged.
         attrs_fn=lambda hub: {
             "dispositivi": hub.devices_public,
             "riepilogo": hub.devices_summary,

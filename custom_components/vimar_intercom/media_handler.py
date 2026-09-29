@@ -112,8 +112,8 @@ def _from_the_call(proto, addr) -> bool:
     # explain a silent stream without flooding the log.
     if remote and getattr(proto, "_foreign_logged", None) is not remote:
         proto._foreign_logged = remote
-        _LOGGER.debug("Plain RTP from %s dropped: the call's media is at %s",
-                      addr[0], remote[0])
+        _LOGGER.info("Plain RTP from %s dropped: the call's media is at %s",
+                     addr[0], remote[0])
     return False
 
 
@@ -138,6 +138,7 @@ class RTPAudioProtocol(asyncio.DatagramProtocol):
         # Voce in uscita: μ-law in attesa del pacer (_tx_loop, 160 B ogni 20 ms).
         self.tx_buf = bytearray()
         self.tx_primed = False  # voice resumes only with _TX_PREBUFFER queued
+        self.tx_held = 0        # bytes queued at the last tick while not primed
         self.tx_enabled = False   # False durante l'anteprima dello squillo
         self.tx_count = 0
         # Forward decrypted RTP to the AV ffmpeg, only while it's running.
@@ -453,7 +454,7 @@ class RTPVideoProtocol(asyncio.DatagramProtocol):
         if self._next_seq is None:
             self._next_seq = seq
             self._ssrc = ssrc
-        if rtp:
+        if rtp and seq not in self._reorder_buf:  # a duplicate is cached once
             self._cache_gop(rtp, payload)
         self._reorder_buf[seq] = payload
 
@@ -785,7 +786,8 @@ async def setup_media(remote_sdp, local_crypto_key=None, local_video_crypto_key=
     audio_suite = audio.get("crypto_suite") or "AES_CM_128_HMAC_SHA1_80"
     video_suite = video.get("crypto_suite") or "AES_CM_128_HMAC_SHA1_80"
 
-    if audio.get("port") and audio_proto:
+    # A line our answer refused (RTP/SAVP without a usable suite) carries no media.
+    if audio.get("port") and not audio.get("refused") and audio_proto:
         aip = audio.get("ip", remote_ip)
         audio_proto.remote_addr = (aip, audio["port"])
         audio_proto.pkt_count = 0
@@ -808,6 +810,7 @@ async def setup_media(remote_sdp, local_crypto_key=None, local_video_crypto_key=
                             " ".join(fmts))
         audio_proto.tx_buf.clear()
         audio_proto.tx_primed = False
+        audio_proto.tx_held = 0
         audio_proto.tx_count = 0
         # La targa dice sendonly/inactive: non vuole ricevere la nostra voce.
         audio_proto.tx_enabled = not early and audio.get("dir") not in ("sendonly", "inactive")
@@ -817,7 +820,7 @@ async def setup_media(remote_sdp, local_crypto_key=None, local_video_crypto_key=
         _mode = "SRTP" if audio_proto.srtp_rx else "RTP"
         await broadcast("log", f"Audio {_mode} → {aip}:{audio['port']}")
 
-    if video.get("port") and video_proto:
+    if video.get("port") and not video.get("refused") and video_proto:
         vip = video.get("ip", remote_ip)
         video_proto.remote_addr = (vip, video["port"])
         # Reset ALL state for new call (tranne SPS/PPS: vedi __init__, per targa)
@@ -845,11 +848,16 @@ async def setup_media(remote_sdp, local_crypto_key=None, local_video_crypto_key=
         video_proto.send_stun()
         _vmode = "SRTP" if video_proto.srtp_rx else "RTP"
         await broadcast("log", f"Video {_vmode} → {vip}:{video['port']} (direct)")
-    elif video_proto and video_proto.remote_addr:
-        # No video in this session (an audio-only panel, or a re-INVITE that
-        # declined it): stop sending STUN and keyframe requests to the old one.
-        video_proto.remote_addr = None
-        frame_grabber.stop(video_proto)
+    elif video_proto:
+        if video_proto.remote_addr:
+            # No video in this session (an audio-only panel, or a re-INVITE
+            # that declined it): stop sending STUN and keyframe requests to
+            # the old one.
+            video_proto.remote_addr = None
+            frame_grabber.stop(video_proto)
+        # Nothing of an earlier call's video may be replayed in this one, and
+        # the keyframe loop must not see video "flowing".
+        _forget_video(video_proto)
 
     if _stun_task:
         _stun_task.cancel()
@@ -868,6 +876,13 @@ def claim_voice() -> None:
     """Parla una persona: la chiamata non è più una semplice vista, silenzio senza limite."""
     global _silence_limit
     _silence_limit = None
+def _forget_video(vp) -> None:
+    """Drop the call's cached keyframe group (RTP for /av, WS messages for the
+    cards) and its packet count. The transports live as long as the hub: left
+    in place, the next call's viewer got the previous call's picture."""
+    vp.pkt_count = 0
+    vp._gop = vp._gop_ts = None
+    vp._gop_msgs, vp._gop_hdr = [], []
 
 
 def enable_tx():
@@ -897,6 +912,7 @@ async def stop_media():
         audio_proto.tx_enabled = False
         audio_proto.tx_buf.clear()
         audio_proto.tx_primed = False
+        audio_proto.tx_held = 0
         audio_proto.remote_addr = None
         audio_proto.pkt_count = 0
         audio_proto.srtp_rx = None
@@ -913,7 +929,7 @@ async def stop_media():
         video_proto._fua_buf = bytearray()
         video_proto._fua_started = False
         video_proto._fua_expected_seq = None
-        video_proto._gop_msgs = []  # video finito: niente replay a chi si collega dopo
+        _forget_video(video_proto)  # video finito: niente replay a chi si collega dopo
     frame_grabber.stop(video_proto)
     await av_stream.stop_av_ffmpeg()
 
@@ -1009,8 +1025,14 @@ async def _tx_loop():
                 continue
             if t_view is None:
                 t_view = loop.time()
-            if not ap.tx_primed and len(ap.tx_buf) >= _TX_PREBUFFER:
-                ap.tx_primed = True
+            if not ap.tx_primed:
+                queued = len(ap.tx_buf)
+                # The pre-buffer is there, or one whole packet has waited a
+                # tick with nothing after it (the end of a phrase): send it,
+                # rather than hold it until the next burst or forever.
+                if queued >= _TX_PREBUFFER or (queued >= 160 and queued == ap.tx_held):
+                    ap.tx_primed = True
+                ap.tx_held = queued
             if ap.tx_primed and len(ap.tx_buf) >= 160:
                 frame = bytes(ap.tx_buf[:160])
                 del ap.tx_buf[:160]
@@ -1019,6 +1041,7 @@ async def _tx_loop():
                     continue  # solo la vista: 0 = mai silenzio; poi si chiude da sola, come prima
                 frame = SILENCE_ULAW
                 ap.tx_primed = False  # underrun: wait for the pre-buffer again
+                ap.tx_held = len(ap.tx_buf)
             ap.send_rtp(frame)
     except asyncio.CancelledError:
         pass
@@ -1062,7 +1085,10 @@ async def send_pcm(pcm: bytes, alive) -> None:
     for n, i in enumerate(range(0, len(pcm), 320)):
         if not alive():
             return
-        send_audio(pcm[i:i + 320])
+        chunk = pcm[i:i + 320]
+        # The tail is padded with silence to a whole 20 ms packet: the pacer
+        # only sends whole packets, and a short tail would never go out.
+        send_audio(chunk + bytes(320 - len(chunk)))
         await asyncio.sleep(max(0.0, start + (n + 1) * 0.02 - loop.time()))
     await asyncio.sleep(0.1)  # l'ultimo pezzo esce dal pacer prima del BYE
 

@@ -163,6 +163,28 @@ def _keep_runtime(monkeypatch):
             monkeypatch.setattr(R, name, getattr(R, name))
 
 
+@pytest.fixture(autouse=True)
+def _fresh_sip_state(monkeypatch):
+    """sip_client keeps the call, the dialogs and the device list in module
+    globals: each test gets a fresh device list and the module is put back to
+    its starting state afterwards, so nothing a test leaves behind (a call
+    "in progress", an SRTP key, a seen request) leaks into the next one."""
+    try:
+        from custom_components.vimar_intercom import sip_client as sip
+        from custom_components.vimar_intercom.inventory import DeviceInventory
+    except Exception:  # noqa: BLE001 - a module that does not import skips its own tests
+        yield
+        return
+    monkeypatch.setattr(sip, "DEVICES", DeviceInventory())
+    for name in ("reader", "writer", "_udp_sock", "_state_change_callback"):
+        monkeypatch.setattr(sip, name, getattr(sip, name))
+    yield
+    # Nothing to close or notify: those references belong to the test.
+    for name in ("reader", "writer", "_udp_sock", "_state_change_callback"):
+        setattr(sip, name, None)
+    sip.reset_state()
+
+
 @pytest.fixture
 def hub(monkeypatch):
     """Hub vero con SIP finto: registrato, a riposo; do_call riuscita e registrata in hub.chiamate."""

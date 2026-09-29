@@ -7,6 +7,7 @@ intercettiamo i NAL prodotti tramite _queue_nal.
 """
 from __future__ import annotations
 
+import asyncio
 import shutil
 import socket
 import struct
@@ -264,10 +265,13 @@ def test_dopo_stop_media_l_rtp_in_ritardo_si_scarta_e_il_gop_parte_solo_dall_idr
         seq = 0
 
         def feed(*nals, ssrc=7):
+            # Always from the panel's address, also after stop_media: what is
+            # dropped then is dropped by the "media closed" guard.
             nonlocal seq
             for n in nals:
                 seq += 1
-                vp.datagram_received(struct.pack("!BBHII", 0x80, 96, seq, 0, ssrc) + n, vp.remote_addr)
+                vp.datagram_received(struct.pack("!BBHII", 0x80, 96, seq, 0, ssrc) + n,
+                                     ("192.0.2.1", 4002))
 
         await mh.setup_media(sdp)
         feed(pf, pf)                         # P prima dell'IDR: non entrano nel GOP
@@ -278,7 +282,8 @@ def test_dopo_stop_media_l_rtp_in_ritardo_si_scarta_e_il_gop_parte_solo_dall_idr
         assert vp.remote_addr is None and vp._gop_msgs == []
         queued = vp._nal_queue.qsize()       # i NAL della chiamata, già in coda per i WS
         feed(pf, sps, pps, idr, pf)          # in ritardo dalla targa: via
-        ap.datagram_received(struct.pack("!BBHII", 0x80, 0, 1, 0, 5) + b"\xff" * 160, ap.remote_addr)
+        ap.datagram_received(struct.pack("!BBHII", 0x80, 0, 1, 0, 5) + b"\xff" * 160,
+                             ("192.0.2.1", 4000))
         assert vp.pkt_count == 0 and vp._gop_msgs == [] and vp._nal_queue.qsize() == queued
         assert ap.pkt_count == 0 and ap.audio_buffer.empty()
         await mh.setup_media(sdp)           # chiamata nuova: si riparte, dal suo IDR
@@ -401,3 +406,66 @@ def test_an_empty_gop_replays_nothing():
     p = RTPVideoProtocol()
     p._gop = None
     assert p.gop_in_sequence_order() == []
+
+
+def _media_rig(monkeypatch):
+    vp, ap = RTPVideoProtocol(), mh.RTPAudioProtocol()
+    vp._nal_queue = asyncio.Queue()
+    monkeypatch.setattr(mh, "ws_send_bytes", lambda *_a, **_k: None, raising=False)
+    for k, v in dict(video_proto=vp, audio_proto=ap, _stun_task=None, _audio_task=None,
+                     _tx_task=None).items():
+        monkeypatch.setattr(mh, k, v)
+    monkeypatch.setattr(mh.frame_grabber, "start", lambda vp: None)
+    monkeypatch.setattr(mh.frame_grabber, "stop", lambda vp: None)
+    return vp, ap
+
+
+_SPS, _PPS, _IDR = bytes([0x67, 1]), bytes([0x68, 1]), bytes([0x65, 1])
+
+
+def _feed_keyframe(vp):
+    for seq, nal in enumerate((_SPS, _PPS, _IDR), 1):
+        vp.datagram_received(struct.pack("!BBHII", 0x80, 96, seq, 0, 7) + nal, ("192.0.2.1", 4002))
+
+
+def _stop_tasks():
+    for name in ("_stun_task", "_audio_task", "_tx_task"):
+        task = getattr(mh, name)
+        if task:
+            task.cancel()
+
+
+def test_an_audio_only_call_after_a_video_call_has_no_cached_keyframe(monkeypatch):
+    """The transports live as long as the hub: a keyframe group left from the
+    last call was replayed to the next call's viewer."""
+    async def s():
+        vp, _ = _media_rig(monkeypatch)
+        await mh.setup_media({"conn": "192.0.2.1", "audio": {"port": 4000}, "video": {"port": 4002}})
+        _feed_keyframe(vp)
+        assert vp._gop and vp._gop_msgs and vp.pkt_count
+        await mh.stop_media()
+        await mh.setup_media({"conn": "192.0.2.1", "audio": {"port": 4000}, "video": {}})
+        assert vp._gop is None and vp._gop_ts is None and vp._gop_msgs == []
+        assert vp.gop_in_sequence_order() == [] and vp.pkt_count == 0
+        _stop_tasks()
+    asyncio.run(s())
+
+
+def test_a_reinvite_that_drops_the_video_forgets_its_keyframe(monkeypatch):
+    async def s():
+        vp, _ = _media_rig(monkeypatch)
+        await mh.setup_media({"conn": "192.0.2.1", "audio": {"port": 4000}, "video": {"port": 4002}})
+        _feed_keyframe(vp)
+        await mh.setup_media({"conn": "192.0.2.1", "audio": {"port": 4000}, "video": {"port": 0}})
+        assert vp._gop is None and vp._gop_msgs == [] and vp.pkt_count == 0
+        _stop_tasks()
+    asyncio.run(s())
+
+
+def test_a_duplicate_waiting_in_the_reorder_buffer_is_cached_once():
+    p, _, _ = _video_rx()
+    p._gop, p._gop_ts = [], 0
+    p.datagram_received(_pkt(20, nal=0x65), p.remote_addr)
+    p.datagram_received(_pkt(22), p.remote_addr)      # 21 late: 22 waits
+    p.datagram_received(_pkt(22), p.remote_addr)      # a copy of 22, still waiting
+    assert [_seq_of(r) for r in p._gop].count(22) == 1

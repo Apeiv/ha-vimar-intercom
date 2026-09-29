@@ -47,7 +47,7 @@ def rete(monkeypatch):
     monkeypatch.setattr(sip, "send_keyframe_request", _keyframe)
     monkeypatch.setattr(mh, "setup_media", _setup)
     monkeypatch.setattr(mh, "stop_media", _stop)
-    monkeypatch.setattr(sip, "build_sdp", lambda offer=None: "v=0\r\nSDP-NOSTRO\r\n")
+    monkeypatch.setattr(sip, "build_sdp", lambda offer=None, reuse_keys=False: "v=0\r\nSDP-NOSTRO\r\n")
     monkeypatch.setattr(sip, "in_call", False)
     monkeypatch.setattr(sip, "calling", False)
     monkeypatch.setattr(sip.R, "USE_LOCAL_UDP", False)  # cloud: media dai relay pubblici

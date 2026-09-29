@@ -164,7 +164,7 @@ already know your plant's SGA or want to tweak the imported actuator list.
 | Intercom In Call | `binary_sensor` | A call is up |
 | Intercom Ringing | `binary_sensor` | ON while an outdoor unit is calling (attribute: caller) |
 | Intercom Outgoing Call | `binary_sensor` | ON while Home Assistant is calling |
-| Intercom Dispositivi | `sensor` | Number of devices seen on the plant (phones sharing the SIP account, panels); attribute `dispositivi` lists them with the identifier masked, kept across restarts |
+| Intercom Dispositivi | `sensor` | Number of devices seen on the plant (phones sharing the SIP account, panels); attribute `dispositivi` lists them with the identifier masked and no address, kept across restarts. Every Home Assistant user can read the attribute, device names included (a phone's name is often its owner's) |
 | Intercom State | `sensor` (enum) | offline / idle / ringing / in_call / calling (plus network attributes, and on plants with the long reply the apartment `GID`, `apt_names` and the declared `media_enc`) |
 | Intercom Last Caller | `sensor` | Outdoor unit or monitor of the last ring |
 | Intercom Last Ring | `sensor` (timestamp) | Time of the last ring |

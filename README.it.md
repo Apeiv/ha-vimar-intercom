@@ -164,7 +164,7 @@ tuo impianto o vuoi modificare la lista attuatori prodotta dall'import).
 | Intercom In Call | `binary_sensor` | Chiamata attiva |
 | Intercom Squillo | `binary_sensor` | ON mentre una targa chiama (attr: chiamante) |
 | Intercom Chiamata In Uscita | `binary_sensor` | ON mentre HA chiama |
-| Intercom Dispositivi | `sensor` | numero di dispositivi visti sull'impianto (telefoni che condividono l'account SIP, targhe); l'attributo `dispositivi` li elenca con l'identificativo mascherato, e resta dopo un riavvio |
+| Intercom Dispositivi | `sensor` | numero di dispositivi visti sull'impianto (telefoni che condividono l'account SIP, targhe); l'attributo `dispositivi` li elenca con l'identificativo mascherato e senza indirizzo, e resta dopo un riavvio. Ogni utente di Home Assistant può leggerlo, nomi dei dispositivi compresi (il nome di un telefono è spesso quello di chi lo usa) |
 | Intercom Stato | `sensor` (enum) | offline / idle / ringing / in_call / calling (+ attributi rete; sugli impianti con la risposta lunga anche il `GID` dell'appartamento, `apt_names` e il `media_enc` dichiarato) |
 | Intercom Ultimo Chiamante | `sensor` | targa/monitor dell'ultimo squillo |
 | Intercom Ultimo Squillo | `sensor` (timestamp) | ora dell'ultimo squillo (attr: chiamante, foto/foto_url e clip/clip_url con `snapshot_dir`) |

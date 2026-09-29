@@ -46,6 +46,22 @@ def test_a_late_call_ended_leaves_the_new_call_alone(hub, monkeypatch):
     assert hub._auto_called is True and cancelled == []
 
 
+def test_a_late_call_ended_is_not_sent_to_the_cards(hub, monkeypatch):
+    """The card would close the view of the call that is up."""
+    monkeypatch.setattr(sip, "in_call", True)
+    sent = []
+
+    async def ws(payload):
+        sent.append(payload["type"])
+
+    hub.set_ws_broadcast(ws)
+    asyncio.run(hub._handle_broadcast("call_ended", ""))
+    assert sent == []
+    monkeypatch.setattr(sip, "in_call", False)
+    asyncio.run(hub._handle_broadcast("call_ended", ""))
+    assert sent == ["call_ended"], "a real end still reaches the cards"
+
+
 def test_a_late_call_ended_does_not_close_the_new_calls_stats(hub, monkeypatch):
     monkeypatch.setattr(sip, "in_call", True)
     hub.stats["last_call_end"] = None
@@ -62,7 +78,7 @@ def test_a_view_opening_during_the_hang_up_does_not_cut_the_bye(hub, monkeypatch
     async def slow_hangup():
         events.append("bye sent")
         await asyncio.sleep(0.3)
-        sip.in_call = False
+        monkeypatch.setattr(sip, "in_call", False)
         events.append("bye done")
 
     async def do_call(target=None):
@@ -101,7 +117,7 @@ def _auto_hangup_scenario(hub, monkeypatch, hangup):
 def test_a_viewer_leaving_during_the_hang_up_wait_gets_no_call(hub, monkeypatch):
     async def slow_hangup():
         await asyncio.sleep(0.3)
-        sip.in_call = False
+        monkeypatch.setattr(sip, "in_call", False)
 
     calls = _auto_hangup_scenario(hub, monkeypatch, slow_hangup)
 
@@ -126,7 +142,7 @@ def test_a_view_after_a_local_hang_up_does_not_wait_for_the_bye_answer(hub, monk
     monkeypatch.setattr(hub_mod, "HANGUP_LOCAL_SETTLE", 0.1)
 
     async def hangup_without_answer():
-        sip.in_call = False
+        monkeypatch.setattr(sip, "in_call", False)
         hub._on_sip_state_change()         # what _set_in_call does for real
         await asyncio.sleep(5)             # the BYE answer that never comes
 
@@ -200,7 +216,7 @@ def test_unloading_mid_call_hangs_up_and_resets_the_sip_state(hub, monkeypatch):
     monkeypatch.setattr(sip, "writer", None, raising=False)
     monkeypatch.setattr(sip, "_udp_sock", None, raising=False)
     monkeypatch.setattr(sip, "_state_change_callback", None, raising=False)
-    sip.pending_incoming["active"] = True
+    monkeypatch.setitem(sip.pending_incoming, "active", True)
     asyncio.run(hub.async_stop())
     assert hung_up == [True]
     assert sip.in_call is False and sip.registered is False
@@ -284,11 +300,12 @@ def test_an_old_copy_outside_the_window_is_a_new_request(monkeypatch):
 
 
 def test_unloading_forgets_the_seen_requests_keys_and_ring(monkeypatch):
-    sip._seen_requests[("MESSAGE", "m1", "7 MESSAGE")] = 1.0
+    monkeypatch.setitem(sip._seen_requests, ("MESSAGE", "m1", "7 MESSAGE"), 1.0)
     monkeypatch.setattr(sip, "_local_crypto_key", "k1")
     monkeypatch.setattr(sip, "_local_video_crypto_key", "k2")
     monkeypatch.setattr(sip, "_state_change_callback", None, raising=False)
-    sip.pending_incoming.update(cid="c1", caller_uri="sip:55001@d", body="v=0")
+    for key, value in dict(cid="c1", caller_uri="sip:55001@d", body="v=0").items():
+        monkeypatch.setitem(sip.pending_incoming, key, value)
     sip.DEVICES.note_binding('<sip:60999@1.1.1.1>;+sip.instance="<urn:uuid:aaa>";expires=900')
     sip.reset_state()
     assert sip._seen_requests == {}
@@ -406,3 +423,157 @@ def test_the_ring_webhook_task_is_held(hub, monkeypatch):
         assert not hub._background
 
     asyncio.run(_run())
+
+
+# ─── the public hang-up (button, card, HomeKit) ──────────────────────────────
+
+def _hangup_without_answer(hub, monkeypatch, events, before_end=0.0):
+    async def do_hangup(on_local_end=None):
+        await asyncio.sleep(before_end)
+        monkeypatch.setattr(sip, "in_call", False)
+        hub._on_sip_state_change()         # what _set_in_call does for real
+        events.append("local end")
+        if on_local_end:
+            on_local_end()
+        await asyncio.sleep(5)             # the BYE answer the cloud never sends
+        events.append("bye answered")
+    return do_hangup
+
+
+def test_async_hangup_returns_once_the_call_ended_locally(hub, monkeypatch):
+    monkeypatch.setattr(sip, "in_call", True)
+    events = []
+    monkeypatch.setattr(sip, "do_hangup", _hangup_without_answer(hub, monkeypatch, events))
+
+    async def main():
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        await hub.async_hangup()
+        waited = loop.time() - started
+        held = [t for t in hub._background if not t.done()]
+        for task in asyncio.all_tasks() - {asyncio.current_task()}:
+            task.cancel()
+        return waited, held
+
+    waited, held = asyncio.run(main())
+    assert waited < 1.0, "it waited for the BYE answer"
+    assert events == ["local end"] and held, "the BYE goes on in the background"
+
+
+def test_a_view_opening_right_after_async_hangup_waits_for_the_local_end(hub, monkeypatch):
+    monkeypatch.setattr(hub_mod, "HANGUP_LOCAL_SETTLE", 0.05)
+    monkeypatch.setattr(sip, "in_call", True)
+    events = []
+    monkeypatch.setattr(sip, "do_hangup", _hangup_without_answer(hub, monkeypatch, events, before_end=0.2))
+
+    async def do_call(target=None):
+        events.append("new call")
+        return True, "200"
+
+    monkeypatch.setattr(sip, "do_call", do_call)
+
+    async def main():
+        hang = asyncio.create_task(hub.async_hangup())
+        await asyncio.sleep(0.01)
+        assert hub._hanging_up, "the guard is up while the BYE leaves"
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        assert await hub.stream_opened() is True
+        waited = loop.time() - started
+        await hang
+        await asyncio.sleep(0)
+        for task in asyncio.all_tasks() - {asyncio.current_task()}:
+            task.cancel()
+        return waited
+
+    waited = asyncio.run(main())
+    assert events == ["local end", "new call"]
+    assert waited < 1.0
+
+
+def test_async_hangup_that_fails_before_the_local_end_raises(hub, monkeypatch):
+    async def broken(on_local_end=None):
+        raise OSError("socket gone")
+
+    monkeypatch.setattr(sip, "do_hangup", broken)
+    with pytest.raises(OSError):
+        asyncio.run(hub.async_hangup())
+    assert hub._hanging_up is False
+
+
+def test_an_old_hang_up_finishing_leaves_the_newer_guard_up(hub):
+    async def main():
+        first = hub._begin_hanging_up()
+        second = hub._begin_hanging_up()
+        done = asyncio.get_running_loop().create_future()
+        done.set_result(None)
+        hub._hangup_finished(first, done)
+        assert first.is_set(), "its own waiters wake up"
+        assert hub._hanging_up and not second.is_set()
+        hub._hangup_finished(second, done)
+        assert hub._hanging_up is False and second.is_set()
+
+    asyncio.run(main())
+
+
+def test_a_stale_auto_call_failure_keeps_the_current_flag(hub, monkeypatch):
+    async def fail(target=None):
+        return False, "486 Busy Here"
+
+    monkeypatch.setattr(sip, "do_call", fail)
+    hub._auto_gen = 2
+    hub._auto_called = True                # the auto-call of generation 2
+    asyncio.run(hub._do_auto_call(1))      # generation 1 fails late
+    assert hub._auto_called is True
+    asyncio.run(hub._do_auto_call(2))
+    assert hub._auto_called is False
+
+
+def test_unloading_cancels_the_background_tasks(hub, monkeypatch):
+    async def nothing():
+        return None
+
+    monkeypatch.setattr(hub_mod.media, "stop_media", nothing)
+    monkeypatch.setattr(hub_mod.media, "close_transports", lambda: None)
+    monkeypatch.setattr(sip, "writer", None, raising=False)
+    monkeypatch.setattr(sip, "_udp_sock", None, raising=False)
+
+    async def main():
+        task = hub._spawn(asyncio.sleep(30), "webhook")
+        hub._begin_hanging_up()
+        hub._hangup_settle = asyncio.get_running_loop().call_later(30, hub._end_hanging_up)
+        settle = hub._hangup_settle
+        await hub.async_stop()
+        await asyncio.sleep(0)
+        return task.cancelled(), settle.cancelled(), hub._hangup_settle
+
+    assert asyncio.run(main()) == (True, True, None)
+
+
+def test_reset_state_wakes_waiters_closes_the_transport_and_notifies_nobody(monkeypatch):
+    closed, notified = [], []
+
+    class _Sock:
+        def close(self):
+            closed.append(True)
+
+    monkeypatch.setattr(sip, "writer", _Sock())
+    monkeypatch.setattr(sip, "_udp_sock", _Sock())
+    monkeypatch.setattr(sip, "in_call", True)
+    sip.set_state_callback(lambda: notified.append(True))
+
+    async def main():
+        waiter = asyncio.create_task(sip._send_request(
+            "OPTIONS sip:x SIP/2.0\r\nCSeq: 1 OPTIONS\r\n\r\n", "cid-wait", timeout=30))
+        await asyncio.sleep(0.01)
+        sip.reset_state()
+        return await asyncio.wait_for(waiter, 1)
+
+    async def send(_msg):
+        return None
+
+    monkeypatch.setattr(sip, "send", send)
+    assert asyncio.run(main()) == []
+    assert closed == [True, True] and sip.writer is None and sip._udp_sock is None
+    assert notified == [], "the hub being unloaded is not called back"
+    assert sip.in_call is False and sip._state_change_callback is None

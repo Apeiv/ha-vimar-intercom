@@ -69,6 +69,8 @@ KEY_ACTUATORS      = "actuators"
 KEY_MEDIA_ENC      = "media_enc"
 KEY_VOICE_ANSWER   = "voice_answer"
 KEY_SGA_TARGET     = "sga_target"
+# Why the entry uses another transport than the one asked for (setup fallback).
+KEY_SETUP_NOTE     = "setup_note"
 KEY_PICG_TARGET    = "picg_target"
 KEY_CAMERA_TARGET  = "camera_target"
 KEY_INTERNAL_PANEL_TARGET = "internal_panel_target"
@@ -165,12 +167,18 @@ async def _test_sip_registration(
     device_uuid: str = "",
     device_name: str = MY_NAME,
     timeout: float = 8.0,
+    unregister: bool = False,
 ) -> tuple[bool, str]:
     """Register over local UDP; returns (success, message).
 
     The REGISTER carries the same identity the integration will use (MyName,
     Mobile-IMEI, +sip.instance): the intercom binds a pairing to that identity
     and refuses a different one with 503, so a test without it proves nothing.
+
+    unregister: once the test has passed, remove its binding (Expires: 0, same
+    Contact). With the integration running, the test registration takes over
+    the running one's binding (same +sip.instance) and points it at this
+    socket, closed right after: rings would go nowhere until the next renewal.
     """
 
     def _run() -> tuple[bool, str]:
@@ -191,7 +199,8 @@ async def _test_sip_registration(
             sock.connect(target)
             my_ip, my_port = sock.getsockname()[:2]
 
-            def make_register(auth_hdr: str | None = None, seq: int = 1) -> bytes:
+            def make_register(auth_hdr: str | None = None, seq: int = 1,
+                              expires: int = 60) -> bytes:
                 contact = f"<sip:{sip_user}@{my_ip}:{my_port}>"
                 if device_uuid:
                     contact += f';+sip.instance="<urn:uuid:{device_uuid}>"'
@@ -204,7 +213,7 @@ async def _test_sip_registration(
                     f"Call-ID: {call_id}",
                     f"CSeq: {seq} REGISTER",
                     f"Contact: {contact}",
-                    "Expires: 60",
+                    f"Expires: {expires}",
                     f"User-Agent: {USER_AGENT}",
                     f"MyName: {device_name}",
                 ]
@@ -214,6 +223,17 @@ async def _test_sip_registration(
                     lines.append(f"Authorization: {auth_hdr}")
                 lines += ["Content-Length: 0", "", ""]
                 return "\r\n".join(lines).encode()
+
+            def drop_binding(auth_hdr: str | None, seq: int) -> None:
+                """Best effort: the test result stands whatever the answer."""
+                if not unregister:
+                    return
+                try:
+                    sock.settimeout(min(timeout, 2.0))
+                    sock.send(make_register(auth_hdr=auth_hdr, seq=seq, expires=0))
+                    read_final()
+                except OSError as exc:  # socket.timeout included
+                    _LOGGER.debug("SIP test: unregister not confirmed (%s)", exc)
 
             def read_final() -> str:
                 """Skip provisional responses (100 Trying), return the final one."""
@@ -236,6 +256,7 @@ async def _test_sip_registration(
             response = read_final()
             first = response.split("\r\n", 1)[0]
             if " 200" in first:
+                drop_binding(None, 2)
                 return True, "Registration succeeded (no auth)"
             if " 401" not in first and " 407" not in first:
                 return False, refused(first)
@@ -252,6 +273,7 @@ async def _test_sip_registration(
             sock.send(make_register(auth_hdr=auth, seq=2))
             first2 = read_final().split("\r\n", 1)[0]
             if " 200" in first2:
+                drop_binding(auth, 3)
                 return True, "Registration succeeded"
             return False, refused(first2) if " 503" in first2 else f"Authentication refused: {first2}"
 
@@ -701,6 +723,7 @@ class VimarIntercomConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 f"{self._credentials['sip_user']}@{self._credentials['sip_domain']}")
             self._abort_if_unique_id_configured()
 
+            fallback: str | None = None
             local_proxy    = user_input.get("local_proxy", "").strip()
             use_local_udp  = user_input.get("use_local_udp", profile.prefers_local_udp)
             local_udp_port = int(user_input.get("local_udp_port", DEFAULT_LOCAL_UDP_PORT))
@@ -722,6 +745,7 @@ class VimarIntercomConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if not self._identity:
                     self._identity = runtime.new_device_identity()
                 self._identity["device_name"] = device_name
+                use_local_wanted = use_local_udp
                 use_local_udp, ok, msg = await _probe_transport(
                     self._credentials,
                     local_proxy=local_proxy,
@@ -733,6 +757,11 @@ class VimarIntercomConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self._qr_error = msg
                 if not ok:
                     errors["local_proxy"] = "sip_registration_failed"
+                elif use_local_udp != use_local_wanted:
+                    # The path asked for did not work and the other one did:
+                    # the entry works, but the user must know it is not the
+                    # transport they chose.
+                    fallback = msg
 
             if not errors:
                 data = {
@@ -742,9 +771,20 @@ class VimarIntercomConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     KEY_USE_LOCAL_UDP:  use_local_udp,
                     KEY_LOCAL_UDP_PORT: local_udp_port,
                 }
+                extra = {}
+                if fallback:
+                    _LOGGER.warning("Setup: %s", fallback)
+                    data[KEY_SETUP_NOTE] = fallback
+                    names = {True: "local UDP", False: "cloud TLS"}
+                    extra = {"description": "transport_fallback",
+                             "description_placeholders": {
+                                 "tried": names[use_local_wanted],
+                                 "used": names[use_local_udp],
+                                 "detail": fallback}}
                 return self.async_create_entry(
                     title=f"Vimar Intercom ({local_proxy})",
                     data=data,
+                    **extra,
                 )
 
         return self.async_show_form(
@@ -896,6 +936,9 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     device_imei   = str(current.get("device_imei") or ""),
                     device_uuid   = str(current.get("device_uuid") or ""),
                     device_name   = str(current.get("device_name") or MY_NAME),
+                    # The entry is set up and registered with this identity:
+                    # do not leave its binding on the test's closed socket.
+                    unregister    = True,
                 )
                 if not ok:
                     errors["local_proxy"] = "sip_registration_failed"

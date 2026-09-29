@@ -6,7 +6,26 @@ Italian and are kept as they were written.
 
 ## [Unreleased]
 
-### Fixes and improvements
+### Added
+
+- New "Intercom Dispositivi" sensor: the devices seen on the plant (phones sharing the SIP
+  account, panels). The list is kept across restarts and its attributes are kept out of the
+  recorder. The attribute shows device names to every Home Assistant user; identifiers are
+  masked and addresses are left out (the hub keeps them, to merge devices).
+- The video panel can be learned: when `camera_target` is empty and the default panel does not
+  exist (404 or 604), the panel that last rang with video is tried and saved. A choice in the
+  options always wins; a busy (486), unavailable (480) or media-refusing (488) panel is not
+  replaced. The learning is logged at WARNING.
+- The voicemail and DND switches warn when the plant's state contradicts a command it accepted
+  with 200 OK (usually a wrong `sga_target`).
+- The device name the integration pairs with (MyName) is configurable, and validated: 1 to 64
+  printable characters.
+- Setup probes the transport: it tries the path the plant profile suggests and falls back between
+  cloud and local, storing what worked. A fallback is logged at WARNING, shown when the entry is
+  created and kept in the entry data (`setup_note`). The plant profile only sets the transport
+  default; media encryption keeps following the plant's own declaration (`media_enc` auto).
+
+### Fixed
 
 Call and media:
 
@@ -38,6 +57,29 @@ Call and media:
 - The camera's stream source is a loopback URL on Home Assistant's own HTTP port and scheme, not
   `internal_url`, which may point at a reverse proxy that `/av` refuses (403).
 
+- Keepalive: a REGISTER renewal that fails during a call is retried once instead of tearing
+  down the connection the call runs on (the reader still reconnects if the link is really gone).
+  A failed tick counts as one registration failure, not two.
+- A late `call_ended` from an earlier call no longer reaches the cards, which closed the view of
+  the call that was up.
+- A re-INVITE answered with a new SDP keeps the local SRTP keys the media already sends with;
+  if a line gets a new key the media is set up again.
+- The cached keyframe group, its WebSocket form and the video packet count are cleared when the
+  media stops and when a session has no video: the next call's viewer no longer got the previous
+  call's picture. A duplicate packet waiting for reordering is cached once.
+- The Hang up button, the card and the away message hang up through the same guard as the
+  automatic hang-up: a view opening meanwhile waits for the call to end. The BYE runs in the
+  background and the hang-up returns once it has left, not after the answer the cloud never
+  sends. Unloading cancels the hub's background tasks.
+- An older hang-up finishing late no longer drops the guard of a newer one, and a late auto-call
+  failure no longer clears the flag of the auto-call that replaced it.
+- The last talk packet after an underrun is sent after one tick instead of waiting for a second
+  one, and the tail of an away message is padded to a whole packet.
+- Plain RTP dropped because it came from another address is logged at INFO, once per call.
+- An RTP/SAVP line refused in our answer (no supported crypto suite) gets no media. Media lines
+  we do not handle (`m=text`, `m=application`, a second `m=audio`) are answered with port 0 in
+  their place, and their `c=`/`a=` lines no longer change the line before them.
+
 SIP:
 
 - REGISTER retries once more when the registrar rotates its nonce, and answers a 407 with
@@ -59,16 +101,16 @@ SIP:
 - Every connection made through the unverified TLS fallback to the cloud proxy is logged at
   WARNING.
 
+- A framing error reconnects at most once every 2 s, and the errors are counted.
+- Unloading closes and forgets the SIP transport, wakes whoever still waits for a response and
+  no longer calls back into the hub being unloaded.
+- Three challenges with a rotated nonce are reported as refused credentials.
+
 Setup and configuration:
 
 - Entries from the m4r1k fork keep working: `sip_cloud_domain` is read as the cloud domain, and a
   legacy `device_id` becomes both device identifiers.
 - HA1 is always recomputed from the password on the domain in use.
-- The device name the integration pairs with (MyName) is configurable, and validated: 1 to 64
-  printable characters.
-- Setup probes the transport: it tries the path the plant profile suggests and falls back between
-  cloud and local, storing what worked. The plant profile only sets the transport default; media
-  encryption keeps following the plant's own declaration (`media_enc` auto).
 - Only one config entry is allowed.
 - The options form no longer pre-fills `camera_target` with 55100: saved once, it counted as a
   user choice and the panel learned from the last ring was never used. Empty stays empty.
@@ -77,19 +119,6 @@ Setup and configuration:
   under the integration's data.
 - Saving values into the entry data (detected model, learned panel) no longer reloads the
   integration; only a change of the options does.
-
-Entities and diagnostics:
-
-- New "Intercom Dispositivi" sensor: the devices seen on the plant (phones sharing the SIP
-  account, panels). The list is kept across restarts, identifiers are masked and ports dropped in
-  the attribute, and the attributes are kept out of the recorder.
-- The video panel can be learned: when `camera_target` is empty and the default panel does not
-  exist (404), the panel that last rang with video is tried and saved. A choice in the options
-  always wins; a busy (486) or unavailable (480) panel is not replaced. The learning is logged at
-  WARNING.
-- The voicemail and DND switches warn when the plant's state contradicts a command it accepted
-  with 200 OK (usually a wrong `sga_target`).
-- SRTP keys are masked in the logs, and the debug log buffer is bigger.
 
 Documentation:
 
@@ -100,6 +129,16 @@ Documentation:
   requirements; the Tab 7S Up 40517 added to the compatibility table.
 - New `docs/HARDWARE.md` (what differs between plants) and `docs/TEST_PLAN.md` (field test round).
   The Italian README inside the component folder is now a pointer to the root README.
+
+### Security
+
+- SRTP master keys are kept out of the logs: the parsed SDP keeps only the key it uses, the SDP
+  log lines drop it, and the log filter masks `inline:` keys, any value under a `key` or `*_key`
+  field and a key-sized base64 value after `key:`. The debug log buffer is bigger.
+- The device list attribute no longer carries the devices' addresses.
+- The SIP test in the options removes its own registration (Expires: 0, same Contact) once it
+  passes: with the integration running it replaced the live binding with one pointing at the
+  test's closed socket.
 
 ## [1.0.14] - 2026-09-30
 

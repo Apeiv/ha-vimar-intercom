@@ -52,14 +52,6 @@ def mask_device_id(device_id: str) -> str:
     return MASK_PREFIX + device_id[-6:]
 
 
-def _host_only(address: str) -> str:
-    """ "192.0.2.7:5060" -> "192.0.2.7" (IPv6 in brackets keeps its brackets)."""
-    if address.startswith("["):
-        return address.split("]", 1)[0] + "]"
-    host, sep, port = address.rpartition(":")
-    return host if sep and port.isdigit() and ":" not in host else address
-
-
 def sip_id(value: str) -> str:
     """The SIP user inside a URI or a From/To header."""
     match = _SIP_ID.search(value or "")
@@ -96,8 +88,10 @@ class Device:
         data["first_seen"] = round(self.first_seen)
         data["last_seen"] = round(self.last_seen)
         if public:
+            # Every Home Assistant user sees the attribute: where a phone
+            # connects from (its home or mobile IP) is not theirs to see.
             data["device_id"] = mask_device_id(self.device_id)
-            data["address"] = _host_only(self.address)
+            data.pop("address")
         return data
 
 
@@ -267,7 +261,7 @@ class DeviceInventory:
         """The known devices, most recent first.
 
         public: the form shown in Home Assistant, with the identifier masked
-        and the address without its port.
+        and no address.
         """
         return [
             device.as_dict(public)
@@ -283,8 +277,8 @@ class DeviceInventory:
         for device in sorted(self._devices.values(), key=lambda d: d.last_seen, reverse=True):
             label = device.name or (names or {}).get(device.sip_id) or device.sip_id
             parts = [f"{label} ({device.sip_id})"]
-            if device.address:
-                parts.append(_host_only(device.address) if public else device.address)
+            if device.address and not public:
+                parts.append(device.address)
             if device.user_agent:
                 parts.append(device.user_agent.split("|")[0])
             if device.registered and device.expires:

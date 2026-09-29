@@ -51,7 +51,7 @@ def test_the_saved_list_is_given_back_to_the_hub(devices):
     assert entity.native_value == 1
 
 
-def test_the_attribute_masks_the_identifier_and_drops_the_port(devices):
+def test_the_attribute_masks_the_identifier_and_drops_the_address(devices):
     hub = hub_mod.VimarIntercomHub()
     devices.note_peer({"from": "<sip:60901@d>", "mobile-imei": PHONE_ID,
                        "myname": "Kitchen iPhone",
@@ -59,8 +59,9 @@ def test_the_attribute_masks_the_identifier_and_drops_the_port(devices):
     attrs = _entity(hub, {}).extra_state_attributes
     shown = attrs["dispositivi"][0]
     assert shown["device_id"] == "***556666"
-    assert shown["address"] == "192.0.2.97"
-    assert PHONE_ID not in str(attrs) and "64406" not in str(attrs)
+    assert "address" not in shown
+    assert PHONE_ID not in str(attrs) and "192.0.2.97" not in str(attrs)
+    assert "64406" not in str(attrs)
     assert hub.devices[0]["device_id"] == PHONE_ID, "the hub keeps the full value"
 
 

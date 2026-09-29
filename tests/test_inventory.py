@@ -13,22 +13,22 @@ inv = pytest.importorskip("custom_components.vimar_intercom.inventory")
 OWN = "0123456789abcdef"
 
 IPHONE_MESSAGE = {
-    "from": "<sip:60901@127.0.0.1>;tag=sNnYYRfd8",
+    "from": "<sip:60901@127.0.0.1>;tag=tag-iphone",
     "to": "<sip:61000@127.0.0.1>",
     "myname": "Kitchen iPhone",
-    "mobile-imei": "E4380B63-A490-4B0E-9A24-02820BEC1C56",
+    "mobile-imei": "00000000-0000-4000-8000-000000000001",
     "user-agent": "TOGA_iPhone16,1_iOS27.0/5.4.73|AppVer:2.4.5|ProtVer:1.0|",
     "_via_all": [
-        "SIP/2.0/TLS 63.34.36.117:7042;rport;branch=z9hG4bK.4cc",
-        "SIP/2.0/TLS 192.0.2.17:5091;rport=35197;branch=z9hG4bK.Da4;received=198.51.100.65",
-        "SIP/2.0/TLS 192.0.2.97:64406;branch=z9hG4bK.55o;rport=64406;received=192.0.2.97",
+        "SIP/2.0/TLS 203.0.113.10:7042;rport;branch=z9hG4bK.relay",
+        "SIP/2.0/TLS 192.0.2.17:5091;rport=40000;branch=z9hG4bK.proxy;received=198.51.100.65",
+        "SIP/2.0/TLS 192.0.2.97:40002;branch=z9hG4bK.phone;rport=40002;received=192.0.2.97",
     ],
 }
 
 ENTRANCE_INVITE = {
-    "from": "<sip:55001@127.0.0.1>;tag=IMWQLeahd",
+    "from": "<sip:55001@127.0.0.1>;tag=tag-panel",
     "user-agent": "Linphonec/3.8.0-linphone-daemon (belle-sip/1.4.0)",
-    "via": "SIP/2.0/TLS 63.34.36.117:7042;rport=7042;received=63.34.36.117",
+    "via": "SIP/2.0/TLS 203.0.113.10:7042;rport=7042;received=203.0.113.10",
 }
 
 
@@ -101,7 +101,7 @@ class TestPeers:
         assert device.sip_id == "60901"
         assert device.name == "Kitchen iPhone"
         assert device.user_agent.startswith("TOGA_iPhone16,1_iOS27.0")
-        assert device.address == "192.0.2.97:64406", "the last Via hop is the sender"
+        assert device.address == "192.0.2.97:40002", "the last Via hop is the sender"
         assert device.is_self is False
 
     def test_a_device_without_identity_headers_is_still_recorded(self):
@@ -109,7 +109,7 @@ class TestPeers:
         device = inventory.note_peer(ENTRANCE_INVITE)
         assert device.sip_id == "55001"
         assert device.user_agent.startswith("Linphonec")
-        assert device.address == "63.34.36.117:7042"
+        assert device.address == "203.0.113.10:7042"
 
     def test_a_later_message_enriches_rather_than_erases(self):
         """A request that omits MyName must not wipe a name we already know."""
@@ -152,7 +152,7 @@ class TestReporting:
         inventory.note_peer(ENTRANCE_INVITE)
         line = inventory.describe({"55001": "Targa Esterna"})[0]
         assert line.startswith("Targa Esterna (55001)")
-        assert "63.34.36.117:7042" in line
+        assert "203.0.113.10:7042" in line
         assert "|" not in line, "the user-agent tail is noise"
 
     def test_the_inventory_cannot_grow_without_bound(self):

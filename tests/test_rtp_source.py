@@ -44,9 +44,11 @@ def test_no_call_no_video():
 
 
 def test_a_dropped_source_is_logged_once_per_call(caplog):
+    """At INFO: a silent stream from a relay on another address must be
+    explainable from a default log."""
     proto = media.RTPAudioProtocol()
     proto.remote_addr = ("198.51.100.7", 40000)
-    with caplog.at_level("DEBUG", logger=media.__name__):
+    with caplog.at_level("INFO", logger=media.__name__):
         for seq in range(1, 4):
             proto.datagram_received(pcmu(seq), ("192.0.2.66", 40000))
         assert caplog.text.count("192.0.2.66") == 1

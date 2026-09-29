@@ -103,3 +103,61 @@ def test_a_refused_identity_is_explained(cf, monkeypatch):
     port, _ = fake_intercom("SIP/2.0 503 You're not allowed to make this operation")
     ok, msg = register(cf, monkeypatch, port)
     assert not ok and "refuses this identity" in msg
+
+
+def fake_intercom_3():
+    """Like fake_intercom, and answers a third REGISTER (the unregister) with 200."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind(("127.0.0.1", 0))
+    sock.settimeout(5)
+    seen = []
+
+    def serve():
+        try:
+            for reply in ("SIP/2.0 401 Unauthorized\r\n"
+                          'WWW-Authenticate: Digest realm="r", nonce="n"\r\n\r\n',
+                          "SIP/2.0 200 OK\r\n\r\n", "SIP/2.0 200 OK\r\n\r\n"):
+                data, addr = sock.recvfrom(65535)
+                seen.append(data.decode())
+                sock.sendto(reply.encode(), addr)
+        except OSError:
+            pass
+        finally:
+            sock.close()
+
+    threading.Thread(target=serve, daemon=True).start()
+    return sock.getsockname()[1], seen
+
+
+@pytest.mark.parametrize("unregister", [True, False])
+def test_the_options_test_removes_its_own_binding(cf, monkeypatch, unregister):
+    """With the integration running, the test binding (same +sip.instance)
+    replaces the live one and points it at a socket closed right after."""
+    port, seen = fake_intercom_3()
+    monkeypatch.setattr(cf, "DEFAULT_LOCAL_SIP_PORT", port)
+    ok, msg = asyncio.run(cf._test_sip_registration(
+        sip_user="60999", sip_password="pw", sip_domain="127.0.0.1",
+        local_proxy="127.0.0.1", local_udp_port=0, device_uuid="uuid-1",
+        device_name="Test", timeout=3, unregister=unregister))
+    assert ok, msg
+    if not unregister:
+        assert len(seen) == 2
+        return
+    assert len(seen) == 3
+    contact = [h for h in seen[1].split("\r\n") if h.startswith("Contact:")]
+    assert "Expires: 0\r\n" in seen[2] and contact[0] + "\r\n" in seen[2]
+    assert "Authorization: Digest" in seen[2]
+
+
+def test_the_options_flow_asks_for_the_unregister(cf, monkeypatch):
+    seen = {}
+
+    async def _test(**kw):
+        seen.update(kw)
+        return True, "ok"
+
+    monkeypatch.setattr(cf, "_test_sip_registration", _test)
+    from tests.test_config_flow_camera_target import _base_entry_data, _flow
+    flow = _flow(cf, _base_entry_data())
+    asyncio.run(flow.async_step_settings({"local_proxy": "192.0.2.9", "use_local_udp": True}))
+    assert seen.get("unregister") is True

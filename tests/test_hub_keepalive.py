@@ -127,7 +127,7 @@ def test_a_failed_renewal_reconnects_at_once(hub, chiamate, monkeypatch):
     assert hub.stats["last_register_time"] is not None
 
 
-def test_a_failed_renewal_and_reconnect_both_count(hub, chiamate, monkeypatch):
+def test_a_failed_renewal_and_reconnect_count_once(hub, chiamate, monkeypatch):
     monkeypatch.setattr(sip, "registered", True, raising=False)
     chiamate["register_ok"] = False
     chiamate["reconnect_ok"] = False
@@ -136,8 +136,31 @@ def test_a_failed_renewal_and_reconnect_both_count(hub, chiamate, monkeypatch):
     _tick(hub, chiamate, monkeypatch)
 
     assert chiamate["reconnect"] == 1
-    assert hub.stats["register_failures"] == prima + 2
+    assert hub.stats["register_failures"] == prima + 1, "one failed tick, one failure"
     assert chiamate["init_status"] == 0
+
+
+@pytest.mark.parametrize("flag", ["in_call", "calling"])
+@pytest.mark.parametrize("retry_ok", [True, False])
+def test_a_failed_renewal_during_a_call_never_reconnects(hub, chiamate, monkeypatch, flag, retry_ok):
+    """A reconnect tears down the connection the live call runs on."""
+    monkeypatch.setattr(sip, "registered", True, raising=False)
+    monkeypatch.setattr(sip, flag, True, raising=False)
+    hub._init_status_sent = True
+    answers = iter([False, retry_ok])
+
+    async def _register():
+        chiamate["register"] += 1
+        return next(answers)
+
+    monkeypatch.setattr(sip, "do_register", _register)
+    prima = hub.stats["register_failures"]
+
+    _tick(hub, chiamate, monkeypatch)
+
+    assert chiamate["reconnect"] == 0
+    assert chiamate["register"] == 2, "the REGISTER is retried once"
+    assert hub.stats["register_failures"] == prima + 1, "one failed tick, one failure"
 
 
 def test_the_fast_reconnect_joins_the_running_attempt(monkeypatch):

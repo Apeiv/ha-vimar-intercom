@@ -63,6 +63,9 @@
       "already_configured": "Device is already configured.",
       "no_mac": "The intercom announced itself without a MAC: add it by hand from Settings → Devices & services."
     },
+    "create_entry": {
+      "transport_fallback": "Home Assistant could not register over {tried} and uses {used} instead: {detail}. It works, but if you expected {tried}, check the intercom's network settings."
+    },
     "flow_title": "{name} ({host})"
   },
   "options": {

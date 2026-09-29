@@ -108,13 +108,14 @@ def test_cloud_info_e_bye_passano_dal_record_route(monkeypatch):
             assert _routed(ack, rig.peer) and _routed(info, rig.peer), (ack.hdrs, info.hdrs)
             assert sip.call_state["route_set"] == [rig.peer.record_route]
             t0 = time.monotonic()
-            await rig.hub.async_hangup()
-            assert time.monotonic() - t0 < 2, "il BYE non ha avuto risposta"
-            bye = rig.peer.got(is_("BYE"))[-1]
+            await rig.hub.async_hangup()                   # returns once the BYE has left
+            bye = await rig.peer.wait_for(is_("BYE"))
             assert _routed(bye, rig.peer) and f";tag={rig.peer.to_tag}" in bye.h("to")
+            await wait_until(lambda: sip.call_state["call_id"] is None, 2, "BYE answered")
+            assert time.monotonic() - t0 < 2, "il BYE non ha avuto risposta"
             assert rig.peer.dropped == [], f"scartati dal proxy: {rig.peer.dropped}"
             assert rig.hub.status == "idle" and len(rig.events("call_ended")) == 1
-            assert sip.call_state["call_id"] is None and sip.call_state["route_set"] is None
+            assert sip.call_state["route_set"] is None
     run(s())
 
 
@@ -154,6 +155,7 @@ def test_cloud_200_tardivo_chiuso_dal_record_route(monkeypatch):
             await rig.peer.wait_for(is_("INVITE"))
             await asyncio.sleep(0.2)
             await rig.hub.async_hangup()
+            await rig.peer.wait_for(is_("CANCEL"))         # the 200 crosses the CANCEL
             go.set()
             assert not (await call)[0]
             inv = rig.peer.got(is_("INVITE"))[0]
@@ -176,15 +178,18 @@ def test_riaggancia_va_idle_subito_anche_se_il_bye_resta_senza_risposta(monkeypa
             rig.peer.silent = {"BYE"}
             hang = asyncio.create_task(rig.hub.async_hangup())
             await wait_until(lambda: rig.hub.status == "idle", 0.5, "idle subito dopo il BYE")
-            assert not hang.done() and media.audio_proto.remote_addr is None
+            # The hang-up returns once the BYE has left, without its answer.
+            await asyncio.wait_for(hang, 0.5)
+            assert media.audio_proto.remote_addr is None
             assert rig.events("call_ended") and not sip.in_call
             assert sip.call_state["call_id"] == inv.cid, "dialogo dimenticato prima della risposta"
             n = len(rig.peer.log)
             rig.bye(inv)                                   # la targa chiude a modo suo (10 s)
             r = await rig.peer.wait_for(lambda m: m.code and "BYE" in m.h("cseq"), start=n)
             assert r.code == 200
-            await asyncio.wait_for(hang, 2)                # la coda tolta lo sblocca
-            assert len(rig.events("call_ended")) == 1 and sip.call_state["call_id"] is None
+            # la coda tolta sblocca il BYE rimasto in background
+            await wait_until(lambda: sip.call_state["call_id"] is None, 2, "dialogo chiuso")
+            assert len(rig.events("call_ended")) == 1
             # e non richiama la targa da solo: il prossimo "Vedi esterno" parte pulito
             rig.peer.silent = set()
             assert (await rig.hub.async_call())[0]

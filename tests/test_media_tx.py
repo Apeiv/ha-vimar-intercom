@@ -32,6 +32,10 @@ def audio(monkeypatch):
     return ap
 
 
+async def _no_sleep(_s):
+    return None
+
+
 def _run_tx(seconds: float):
     async def go():
         t = asyncio.create_task(mh._tx_loop())
@@ -197,13 +201,30 @@ def test_setup_media_uses_the_negotiated_suite_on_each_line(audio, monkeypatch):
 
 def test_voice_resumes_only_with_two_packets_queued(audio):
     """One packet of voice alone after an underrun would play as voice, silence,
-    voice: it waits for a second one."""
-    mh.send_audio(b"\x10\x00" * 160)          # one packet: not enough
-    _run_tx(0.1)
-    assert all(p[12:] == mh.SILENCE_ULAW for p in audio.transport.out)
-    assert len(audio.tx_buf) == 160
-    audio.transport.out.clear()
+    voice: if a second arrives within a tick, both go out back to back."""
+    mh.send_audio(b"\x10\x00" * 160)          # one packet: not enough yet
+    audio.tx_held = 0                          # ...and it has not waited a tick
     mh.send_audio(b"\x10\x00" * 160)          # the second arrives
     _run_tx(0.1)
     voice = [p for p in audio.transport.out if p[12:] != mh.SILENCE_ULAW]
     assert len(voice) == 2 and audio.transport.out[:2] == voice
+
+
+def test_a_lone_last_packet_is_sent_after_one_tick(audio):
+    """The end of a phrase: one packet queued and nothing after it. It used to
+    wait for a second packet that never came, and the phrase lost its end."""
+    mh.send_audio(b"\x10\x00" * 160)
+    _run_tx(0.1)
+    out = audio.transport.out
+    voice = [i for i, p in enumerate(out) if p[12:] != mh.SILENCE_ULAW]
+    assert len(voice) == 1 and voice[0] >= 1, "it waited one tick, then went"
+    assert len(audio.tx_buf) == 0
+
+
+def test_the_tail_of_a_message_is_padded_and_sent(audio, monkeypatch):
+    sent = []
+    monkeypatch.setattr(mh, "send_audio", sent.append)
+    monkeypatch.setattr(mh.asyncio, "sleep", _no_sleep)
+    asyncio.run(mh.send_pcm(b"\x10\x00" * 250, lambda: True))  # 20 ms + 10 ms
+    assert [len(c) for c in sent] == [320, 320]
+    assert sent[1][:180] == b"\x10\x00" * 90 and sent[1][180:] == bytes(140)

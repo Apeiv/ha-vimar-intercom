@@ -140,3 +140,24 @@ def test_a_plain_device_name_is_kept(cf, monkeypatch):
                                 user_input={"local_proxy": "192.168.1.2",
                                             "device_name": "Casa Rossi"})
     assert result["data"]["device_name"] == "Casa Rossi"
+
+
+def test_a_transport_fallback_is_shown_and_kept(cf, monkeypatch, caplog):
+    """Asked for local UDP, registered on the cloud: the entry works, but the
+    user must see that it is not the transport they chose."""
+    with caplog.at_level("WARNING"):
+        result, calls, _ = network_step(cf, monkeypatch, CREDENTIALS, local_ok=False, cloud_ok=True,
+                                        user_input={"local_proxy": "192.168.1.2",
+                                                    "use_local_udp": True})
+    assert result["type"] == "create_entry" and calls == ["local", "cloud"]
+    assert result["data"]["use_local_udp"] is False
+    assert "503" in result["data"]["setup_note"]
+    assert result["description"] == "transport_fallback"
+    assert result["description_placeholders"]["tried"] == "local UDP"
+    assert result["description_placeholders"]["used"] == "cloud TLS"
+    assert "registered via cloud TLS" in caplog.text
+
+
+def test_no_fallback_no_note(cf, monkeypatch):
+    result, _, _ = network_step(cf, monkeypatch, CREDENTIALS, local_ok=True, cloud_ok=True)
+    assert "setup_note" not in result["data"] and "description" not in result

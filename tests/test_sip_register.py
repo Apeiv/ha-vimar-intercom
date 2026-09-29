@@ -86,3 +86,25 @@ def test_a_401_is_answered_with_authorization(registrar):
     assert asyncio.run(sip.do_register()) is True
     assert "\r\nAuthorization: Digest " in sent[1]
     assert "Proxy-Authorization" not in sent[1]
+
+
+def test_three_rotated_nonces_are_reported_as_refused_credentials(registrar, caplog):
+    registrar([challenge("a"), challenge("b"), challenge("c")])
+    with caplog.at_level("WARNING"):
+        assert asyncio.run(sip.do_register()) is False
+    assert "credentials refused (the registrar rotated its nonce each time)" in caplog.text
+    assert "nessuna risposta finale" not in caplog.text
+
+
+def test_the_contacts_of_a_200_reach_the_device_list(registrar, monkeypatch):
+    """The registrar lists every binding of the shared SIP user in its 200."""
+    from custom_components.vimar_intercom.inventory import DeviceInventory
+    monkeypatch.setattr(sip, "DEVICES", DeviceInventory())
+    monkeypatch.setattr(sip.R, "DEVICE_UUID", "ours")
+    ok = response(200, Contact='<sip:60999@192.0.2.5:5070>;+sip.instance="<urn:uuid:ours>";expires=900, '
+                               '<sip:60999@198.51.100.9:5071>;+sip.instance="<urn:uuid:other>";expires=600')
+    registrar([ok])
+    assert asyncio.run(sip.do_register()) is True
+    devices = {d["device_id"]: d for d in sip.DEVICES.snapshot()}
+    assert set(devices) == {"ours", "other"}
+    assert devices["other"]["registered"] is True
