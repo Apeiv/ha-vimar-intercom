@@ -274,6 +274,8 @@ async def _stop_av_ffmpeg_locked():
             end_client(q, _av_clients)
         _LOGGER.info("AV ffmpeg stopped")
         # In background: può bloccare per secondi (vedi sopra), mai sul thread del loop.
+        # ponytail: fire-and-forget voluto (vedi docstring); a raffica di riconnessioni può occupare
+        # thread dell executor per secondi: un semaforo se succede davvero.
         asyncio.get_running_loop().run_in_executor(None, _close_av_pipes, proc)
 
 
