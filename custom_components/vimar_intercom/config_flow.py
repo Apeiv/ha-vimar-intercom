@@ -8,7 +8,6 @@ import ipaddress
 import json
 import logging
 import os
-import re
 import secrets
 import socket
 import ssl
@@ -43,7 +42,7 @@ from . import qr_decoder
 from . import rest_client
 from . import rubrica_import
 from . import runtime
-from .sip_client import _resolve_sip_targets
+from .sip_client import _challenge_params, _resolve_sip_targets
 from . import validate
 from .runtime import (
     MEDIA_ENC_MODES, VOICE_ANSWER_MODES, media_enc_mode, view_keepalive_default, voice_answer_mode,
@@ -292,22 +291,16 @@ async def _test_sip_registration(
     return await loop.run_in_executor(None, _run)
 
 
-_CHALLENGE_PARAM = re.compile(r'([A-Za-z][A-Za-z0-9_-]*)\s*=\s*(?:"([^"]*)"|([^,\s]+))')
-
-
 def _parse_challenge(response: str) -> dict[str, str]:
     """The Digest challenge parameters of a 401/407 response."""
     for line in response.split("\r\n"):
         name, sep, value = line.partition(":")
         if not sep or name.strip().lower() not in ("www-authenticate", "proxy-authenticate"):
             continue
-        scheme, sep, params = value.strip().partition(" ")
+        scheme, sep, _params = value.strip().partition(" ")
         if not sep or scheme.lower() != "digest":
             continue
-        return {
-            m.group(1).lower(): m.group(2) if m.group(2) is not None else m.group(3)
-            for m in _CHALLENGE_PARAM.finditer(params)
-        }
+        return _challenge_params(value)
     return {}
 
 

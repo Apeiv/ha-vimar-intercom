@@ -297,13 +297,26 @@ def _digest_resp(method, uri, nonce, realm=None, qop=None, nc=None, cnonce=None)
     return hashlib.md5(f"{ha1}:{nonce}:{ha2}".encode()).hexdigest()
 
 
-def _challenge_params(challenge: str) -> dict:
-    p = {}
-    for item in challenge.replace("Digest ", "").split(","):
-        if "=" in item:
-            k, v = item.strip().split("=", 1)
-            p[k.strip()] = v.strip().strip('"')
-    return p
+# One name=value of a challenge: a quoted value may hold commas (a realm, a
+# qop list), so the value is matched whole instead of splitting on commas.
+_CHALLENGE_PARAM = re.compile(r'([A-Za-z][A-Za-z0-9_-]*)\s*=\s*(?:"([^"]*)"|([^,\s]+))')
+
+
+def _challenge_params(challenge: str) -> dict[str, str]:
+    """Parameters of a WWW-Authenticate / Proxy-Authenticate value.
+
+    `Digest realm="a, b", nonce="n"` gives {"realm": "a, b", "nonce": "n"};
+    names are lower-cased. Another scheme (Basic) gives {}.
+    """
+    scheme, sep, params = (challenge or "").strip().partition(" ")
+    if "=" in scheme:
+        params = challenge  # no scheme name: parameters only
+    elif not sep or scheme.lower() != "digest":
+        return {}
+    return {
+        m.group(1).lower(): m.group(2) if m.group(2) is not None else m.group(3)
+        for m in _CHALLENGE_PARAM.finditer(params)
+    }
 
 
 # L'ultima sfida del proxy (Proxy-Authenticate): con quella gli INFO di keyframe
@@ -335,7 +348,7 @@ def _make_auth(method, uri, challenge):
     qop = p.get("qop", "")
     nc = "00000001"
     cnonce = secrets.token_hex(8)
-    if "auth" in qop:
+    if "auth" in [item.strip().lower() for item in qop.split(",")]:
         resp = _digest_resp(method, uri, nonce, realm, "auth", nc, cnonce)
         hdr = (f'Digest username="{R.SIP_USER}", realm="{realm}", '
                f'nonce="{nonce}", uri="{uri}", response="{resp}", '
