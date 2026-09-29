@@ -232,3 +232,24 @@ def test_encoder_riavviato_a_meta_chiamata_av_continua(monkeypatch):
             await rig.hub.async_hangup()
             await av.close()
     run(s())
+
+
+def test_av_esce_anche_senza_audio_rtp(monkeypatch):
+    """Il maintainer, con un SDP PCMU+H264 e solo video: «copy» ~89 KB, «aac» 0 byte,
+    perché l'encoder non parte senza il primo pacchetto audio (183 muta, SRTP audio
+    che fallisce). /av deve uscire lo stesso, con video decodificabile."""
+    from harness.media import PanelMedia
+    start = PanelMedia.start  # l'audio della targa va a una porta chiusa: solo video
+    monkeypatch.setattr(PanelMedia, "start", lambda self, v, a: start(self, v, ("127.0.0.1", 9)))
+
+    async def s():
+        async with Rig(monkeypatch, real_av=True, http=True) as rig:
+            await rig.register()
+            rig.answer(media_on=True)
+            assert (await rig.hub.async_call())[0]
+            av = AvClient(rig.base).start()
+            await wait_until(lambda: av.bytes > 20000, 10, "video su /av senza audio")
+            await rig.hub.async_hangup()
+            await av.close()
+            assert decodable_frames(av.segments[0]) >= 10
+    run(s())

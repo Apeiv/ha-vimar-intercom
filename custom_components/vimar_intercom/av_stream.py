@@ -82,6 +82,20 @@ def _write_av_sdp():
     return _AV_SDP_PATH
 
 
+def _seed_silence(audio_proto) -> None:
+    """3 pacchetti PCMU di silenzio (60 ms) subito dopo l'avvio: l'encoder AAC non
+    parte, e con lui l'uscita di ffmpeg, finché non riceve il primo audio, e se la
+    targa non ne manda (anteprima 183 muta, SRTP audio che fallisce) /av restava a
+    0 byte. Passano da av_rtp: l'audio vero poi continua da qui (SSRC nuovo)."""
+    for i in range(3):
+        rtp = struct.pack("!BBHII", 0x80, 0, i, i * 160, 0) + b"\xff" * 160
+        try:
+            audio_proto.ffmpeg_av_sock.sendto(
+                audio_proto.av_rtp.fix(rtp, 0), ("127.0.0.1", FFMPEG_AV_AUDIO_PORT))
+        except OSError:
+            pass
+
+
 async def _start_av_ffmpeg_locked():
     """Start ffmpeg that reads H264+PCMU RTP and outputs MPEG-TS to pipe.
 
@@ -150,6 +164,7 @@ async def _start_av_ffmpeg_locked():
         if media.audio_proto:
             media.audio_proto.av_rtp = AvRtp(160)
             media.audio_proto.forward_av = True
+            _seed_silence(media.audio_proto)
         _LOGGER.info("AV ffmpeg started (MPEG-TS output), RTP forwarding enabled")
     else:
         # Il motivo sta nello stderr (es. «bind failed» con porte che si
