@@ -111,6 +111,9 @@ class VimarIntercomHub:
 
     def __init__(self):
         self._tasks: list[asyncio.Task] = []
+        # Fire-and-forget tasks (see _spawn): the event loop keeps only weak
+        # references, so a task nobody holds can be collected half way.
+        self._background: set[asyncio.Task] = set()
         self._running = False
         self._ring_callbacks: list[Callable] = []
         self._persist: Callable[[dict], None] | None = None
@@ -348,11 +351,29 @@ class VimarIntercomHub:
     def is_ringing(self) -> bool:
         return sip.ringing()
 
+    def _spawn(self, coro, name: str) -> asyncio.Task:
+        """Run `coro` in the background, holding the task until it is done.
+
+        asyncio keeps only a weak reference to a task: a bare create_task()
+        can be garbage collected before it finishes. An exception is logged
+        here, since nobody awaits the task.
+        """
+        task = asyncio.create_task(coro, name=f"vimar_intercom {name}")
+        self._background.add(task)
+
+        def _done(t: asyncio.Task) -> None:
+            self._background.discard(t)
+            if not t.cancelled() and t.exception() is not None:
+                _LOGGER.error("%s failed: %s", name, t.exception(), exc_info=t.exception())
+
+        task.add_done_callback(_done)
+        return task
+
     def fire_ring_callbacks(self) -> None:
         """Evento doorbell → automazioni. Da solo è lo squillo di prova
         (servizio simulate_ring): niente SIP, push, WebSocket né statistiche."""
         if R.RING_WEBHOOK_URL:
-            asyncio.create_task(webhook.fire(R.RING_WEBHOOK_URL))
+            self._spawn(webhook.fire(R.RING_WEBHOOK_URL), "ring webhook")
         for cb in self._ring_callbacks:
             try:
                 cb()
@@ -464,15 +485,11 @@ class VimarIntercomHub:
         self._touch()
         # Notify WS clients of state change
         if self._ws_broadcast_fn:
-            task = asyncio.create_task(self._ws_broadcast_fn({
+            self._spawn(self._ws_broadcast_fn({
                 "type": "state",
                 "registered": sip.registered,
                 "in_call": sip.in_call,
-            }))
-            task.add_done_callback(
-                lambda t: _LOGGER.error("WS state broadcast error: %s", t.exception())
-                if not t.cancelled() and t.exception() else None
-            )
+            }), "WS state broadcast")
 
     async def stream_opened(self) -> bool:
         """Uno spettatore apre /av. False = niente chiamata in vista, inutile aspettare."""
@@ -517,7 +534,7 @@ class VimarIntercomHub:
         if sip.registered:
             self._auto_called = True
             # Fire auto-call as background task — don't block the HTTP response
-            asyncio.create_task(self._do_auto_call())
+            self._spawn(self._do_auto_call(), "auto-call")
             return True
         return False
 
@@ -602,6 +619,9 @@ class VimarIntercomHub:
                 bye = asyncio.ensure_future(
                     asyncio.wait_for(sip.do_hangup(), HANGUP_BYE_TIMEOUT))
                 bye.add_done_callback(self._hangup_finished)
+                # Held until done: it outlives this task when a view cancels it.
+                self._background.add(bye)
+                bye.add_done_callback(self._background.discard)
                 try:
                     await asyncio.shield(bye)
                 except asyncio.CancelledError:
@@ -999,7 +1019,7 @@ class VimarIntercomHub:
                              sip.in_call, sip.calling)
                 # 486, not the default 603: a 6xx means "decline everywhere", and
                 # the PBX propagates it and cancels the ring on the Tab too.
-                asyncio.create_task(sip.do_decline_incoming("486 Busy Here"))
+                self._spawn(sip.do_decline_incoming("486 Busy Here"), "echo ring decline")
                 return
 
             # Solo qui, non in fire_ring_callbacks(): quel metodo lo chiama anche il
@@ -1024,7 +1044,7 @@ class VimarIntercomHub:
                 self._ring_time = now.isoformat(timespec="milliseconds")
                 ring = {"time": self._ring_time, "photo": name, "clip": stem + ".mp4",
                         "outcome": "missed", "caller": _uri_to_id(sip.pending_incoming.get("caller_uri"))}
-                asyncio.create_task(self._ring_log(lambda rings: rings.append(ring)))
+                self._spawn(self._ring_log(lambda rings: rings.append(ring)), "ring log")
                 # Clip come un Ring: il video dello squillo, dall'anteprima alla fine (o
                 # alla fine della chiamata se rispondiamo noi), fino a CLIP_MAX_S.
                 frame_grabber.record(os.path.join(R.SNAPSHOT_DIR, stem + ".mp4"), CLIP_MAX_S, self._clip_done)
@@ -1044,7 +1064,7 @@ class VimarIntercomHub:
         if self._was_ringing and not self.is_ringing:
             self._was_ringing = False
             if R.RING_END_WEBHOOK_URL:
-                asyncio.create_task(webhook.fire(R.RING_END_WEBHOOK_URL))
+                self._spawn(webhook.fire(R.RING_END_WEBHOOK_URL), "ring end webhook")
 
     async def _ring_log(self, change: Callable[[list], None]) -> None:
         try:
@@ -1066,7 +1086,7 @@ class VimarIntercomHub:
                 if r.get("time") == key:
                     r["outcome"] = outcome
 
-        asyncio.create_task(self._ring_log(change))
+        self._spawn(self._ring_log(change), "ring log")
 
     async def _save_ring_photo(self, name: str) -> None:
         """Foto di chi ha suonato (anteprima dello squillo) nella cartella delle opzioni,
@@ -1724,6 +1744,17 @@ class VimarIntercomHub:
             if sip.registered:
                 ok = await sip.do_register()
                 _LOGGER.debug("Keepalive: %s", "OK" if ok else "FAILED")
+                if not ok:
+                    # We were registered and the renewal failed: reconnect now,
+                    # not a whole keepalive interval later with the intercom
+                    # unreachable meanwhile. sip.reconnect() joins an attempt
+                    # already running (the reader's), it never starts a second.
+                    self.stats["register_failures"] += 1
+                    _LOGGER.warning("SIP re-registration failed: reconnecting now")
+                    ok = await sip.reconnect()
+                    if ok:
+                        self._init_status_sent = False
+                        _LOGGER.info("Registrazione SIP recuperata")
             else:
                 # Fino alla 1.0.5 questo ramo non esisteva: la guardia era
                 # `if sip.registered`, quindi persa la registrazione il loop

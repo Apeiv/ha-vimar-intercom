@@ -104,8 +104,14 @@ class VimarIntercomCamera(Camera):
 
     async def stream_source(self) -> str | None:
         """AV stream URL (MPEG-TS with H264 video + PCMU audio) for HA's stream worker."""
-        base = self._hass.config.internal_url or "http://127.0.0.1:8123"
-        return f"{base}/api/vimar_intercom/av"
+        # Loopback, on Home Assistant's real port and scheme (8123 and http do
+        # not hold everywhere). Not internal_url: it may point at a reverse
+        # proxy (NGINX add-on), whose X-Forwarded-For makes /av refuse the
+        # request (403, _is_local_request).
+        http = getattr(self._hass, "http", None)
+        scheme = "https" if getattr(http, "ssl_certificate", None) else "http"
+        port = getattr(http, "server_port", None) or 8123
+        return f"{scheme}://127.0.0.1:{port}/api/vimar_intercom/av"
 
     async def async_camera_image(
         self, width: int | None = None, height: int | None = None

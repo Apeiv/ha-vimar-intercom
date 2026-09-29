@@ -108,3 +108,89 @@ def test_un_errore_non_ferma_il_loop(hub, monkeypatch):
     monkeypatch.setattr(sip, "do_register", _esplode)
 
     asyncio.run(hub._keepalive_tick())  # non deve sollevare
+
+
+# ─── registered, renewal fails: reconnect at once ────────────────────────────
+
+def test_a_failed_renewal_reconnects_at_once(hub, chiamate, monkeypatch):
+    """Waiting for the next tick left the intercom unreachable for 120 s."""
+    monkeypatch.setattr(sip, "registered", True, raising=False)
+    chiamate["register_ok"] = False
+    hub._init_status_sent = True
+    prima = hub.stats["register_failures"]
+
+    _tick(hub, chiamate, monkeypatch)
+
+    assert chiamate["register"] == 1 and chiamate["reconnect"] == 1
+    assert hub.stats["register_failures"] == prima + 1
+    assert chiamate["init_status"] == 1, "back after an outage: ask for the state again"
+    assert hub.stats["last_register_time"] is not None
+
+
+def test_a_failed_renewal_and_reconnect_both_count(hub, chiamate, monkeypatch):
+    monkeypatch.setattr(sip, "registered", True, raising=False)
+    chiamate["register_ok"] = False
+    chiamate["reconnect_ok"] = False
+    prima = hub.stats["register_failures"]
+
+    _tick(hub, chiamate, monkeypatch)
+
+    assert chiamate["reconnect"] == 1
+    assert hub.stats["register_failures"] == prima + 2
+    assert chiamate["init_status"] == 0
+
+
+def test_the_fast_reconnect_joins_the_running_attempt(monkeypatch):
+    """The keepalive and the reader share one reconnect: never two in parallel."""
+    started = []
+
+    async def _slow():
+        started.append(True)
+        await asyncio.sleep(0.05)
+        return True
+
+    monkeypatch.setattr(sip, "_reconnect", _slow)
+    monkeypatch.setattr(sip, "_reconnect_task", None)
+
+    async def _run():
+        return await asyncio.gather(sip.reconnect(), sip.reconnect())
+
+    assert asyncio.run(_run()) == [True, True]
+    assert started == [True]
+
+
+# ─── the lifetime the registrar grants ───────────────────────────────────────
+
+def _ok200(extra: str) -> str:
+    return ("SIP/2.0 200 OK\r\nVia: SIP/2.0/UDP 192.0.2.5:5070;branch=z9hG4bKx\r\n"
+            "From: <sip:12345@example.test>;tag=a\r\nTo: <sip:12345@example.test>;tag=b\r\n"
+            "Call-ID: reg-1\r\nCSeq: 1 REGISTER\r\n" + extra + "Content-Length: 0\r\n\r\n")
+
+
+@pytest.mark.parametrize("extra, expected", [
+    ('Contact: <sip:12345@192.0.2.9:5070>;+sip.instance="<urn:uuid:other>";expires=30\r\n'
+     'Contact: <sip:12345@192.0.2.5:5070>;+sip.instance="<urn:uuid:ours>";expires=90\r\n', 90),
+    ("Expires: 60\r\n", 60),
+    ("", None),
+])
+def test_the_granted_expiry_prefers_our_own_binding(monkeypatch, extra, expected):
+    monkeypatch.setattr(sip.R, "DEVICE_UUID", "ours")
+    monkeypatch.setattr(sip, "MY_IP", None)
+    _, hdrs, *_ = sip._parse(_ok200(extra))
+    assert sip._granted_expires(hdrs) == expected
+
+
+@pytest.mark.parametrize("expires, warned", [(60, True), (3600, False)])
+def test_a_short_granted_expiry_is_a_warning(monkeypatch, caplog, expires, warned):
+    async def _send_request(_msg, _cid):
+        return [_ok200(f"Expires: {expires}\r\n")]
+
+    monkeypatch.setattr(sip.R, "USE_LOCAL_UDP", True)
+    monkeypatch.setattr(sip, "_udp_sock", object())
+    monkeypatch.setattr(sip, "_my_port", lambda: 5070)
+    monkeypatch.setattr(sip, "_send_request", _send_request)
+    monkeypatch.setattr(sip, "_record_bindings", lambda hdrs: None)
+    monkeypatch.setattr(sip, "_set_registered", lambda v: None)
+    with caplog.at_level("WARNING"):
+        assert asyncio.run(sip.do_register())
+    assert ("granted only" in caplog.text) is warned

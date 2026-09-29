@@ -888,7 +888,9 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 ok, msg = await _test_sip_registration(
                     sip_user      = current["sip_user"],
                     sip_password  = current["sip_password"],
-                    sip_domain    = current["sip_domain"],
+                    # The domain runtime.configure uses in local UDP mode
+                    # (as _local_test_domain in the setup flow).
+                    sip_domain    = current.get(KEY_LOCAL_DOMAIN) or current["sip_domain"],
                     local_proxy   = local_proxy,
                     local_udp_port = local_udp_port,
                     device_imei   = str(current.get("device_imei") or ""),
@@ -978,9 +980,12 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     KEY_PICG_TARGET,
                     default=form.get(KEY_PICG_TARGET) or PICG_TARGET,
                 ): str,
+                # Empty is a valid value: the panel learned from the last ring
+                # with video (hub._camera_fallback), else 55100. Pre-filling 55100
+                # saved it on the first save and the fallback never ran again.
                 vol.Optional(
                     KEY_CAMERA_TARGET,
-                    default=form.get(KEY_CAMERA_TARGET) or CAMERA_TARGET,
+                    default=form.get(KEY_CAMERA_TARGET) or "",
                 ): str,
                 vol.Optional(
                     KEY_INTERNAL_PANEL_TARGET,

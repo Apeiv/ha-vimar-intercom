@@ -1,0 +1,116 @@
+# Supported plants: what changes from one model to another
+
+Vimar plants do not all speak the same way. The differences decide **which path
+calls take** and **whether the media is encrypted**. This document collects what
+has been verified in the field, so the code can adapt instead of assuming a
+single family.
+
+The starting profile lives in `profiles.py`. The probe run during configuration
+(`config_flow._probe_transport`) has the final word.
+
+## Due Fili Plus (`planttype=2F`)
+
+Example: **Elvox Tab 7S, code 40507**. The integration was first built on this
+plant.
+
+| | |
+|---|---|
+| Registration | **local UDP** to the intercom's IP, port 5060 |
+| Calls | delivered over the same local path |
+| Media | **plain RTP**. Offering SRTP does not work: the baresip entrance panel does not answer at all |
+| H.264 | the panel offers and accepts only `packetization-mode=0`; the answer uses the offered parameters |
+| Cloud | not needed |
+
+## Due Fili Plus EVO (`planttype=2FV2`)
+
+Example: **Elvox Tab 7S Up, code 40517**, firmware **2.1.0203** (the `fver` field
+announced over mDNS `_eipvdes._tcp.local.`).
+
+| | |
+|---|---|
+| Registration | **cloud TLS** to the proxy named in the pairing QR |
+| Digest realm | the **cloud domain** from the QR (`cdomain`), not `domain` |
+| Calls | **only** through the cloud relay |
+| Media | **SRTP**, `RTP/SAVP` with `a=crypto AES_CM_128_HMAC_SHA1_80` |
+| Video | H.264 Baseline level 3.1, 320x240 |
+
+### Why the local network is not enough
+
+On this plant the local path is not simply "slower". It does not carry calls.
+
+* **Local UDP**: rejected with `503 You're not allowed to make this operation`,
+  for both `OPTIONS` and `REGISTER`.
+* **Local TCP on 5060**: registration **works**, with a regular Digest challenge
+  and `200 OK`, but only for a client whose `User-Agent` has the format of the
+  Vimar app (any other value gets `503 You must upgrade your app to use it!`).
+* **But calls do not arrive**: with the local registration alive (the intercom
+  answered keepalives), a call to that device produced no packet toward us. A
+  packet capture on the host showed only keepalives, renewals and ARP.
+* **Outbound calls are refused too**: an INVITE over the local registration to
+  any address of the plant (entrance panels, the internal monitor, the
+  controller) is rejected with the same 503 in under a hundredth of a second, a
+  policy rejection rather than a routing failure.
+
+The intercom's PBX routes everything, and it reaches mobile devices through
+their **cloud** binding. The `Via` chain of a message sent by a phone on the
+same LAN shows it: the message goes up to the relay, enters the PBX, and comes
+back down from the relay. The integration therefore registers over the cloud on
+this plant; the local path is not used.
+
+## Consequences for the code
+
+1. **Verify the transport, do not infer it.** `planttype` gives the starting
+   point. If the probe fails, the code tries the other path and saves the one
+   that answers.
+2. **Mirror media encryption from the offer.** One plant requires it, the other
+   does not tolerate it. When answering, each m-line uses the profile and crypto
+   suite the offer used for it. The plant setting applies only to our own
+   offers.
+3. **Answer exactly the offered media lines.** Not every entrance panel has a
+   camera. An audio-only offer gets an audio-only answer, and a video line the
+   offer declined (port 0) stays declined.
+4. **SIP addresses are specific to each installation.** On one plant the
+   calling entrance panel is `55001` and `60001` is the Tab's internal monitor;
+   on another the controller is `61000`. They come from the options or from the
+   phonebook, never from constants. When no video panel is configured, the one
+   learned from the last ring with video is used, else `55100`.
+
+## How to collect this data on a new plant
+
+* The pairing QR carries `planttype`, `pc` (product code), `video`, `domain`
+  and `cdomain`.
+* `avahi-browse -r _eipvdes._tcp` announces the address, model and `fver`.
+* The debug buffer (`/api/vimar_intercom/debug?lines=N`, administrators only)
+  holds the SIP trace with credentials and SRTP keys masked.
+
+## Keyframe requests: the 2FV2 panel ignores them
+
+The entrance panel emits a keyframe every **3.00 seconds**, and there is no way
+to bring it forward. Four channels were tried and measured in the field
+(intervals between IDRs, twenty-five-second calls):
+
+| Request | Result |
+|---|---|
+| SIP `INFO` `picture_fast_update` | ignored |
+| RTCP PSFB **PLI** (RFC 4585) | ignored |
+| RTCP PSFB **FIR** (RFC 5104) | ignored |
+| RTCP **legacy FIR** (RFC 2032, PT=192) | ignored |
+
+At rest: 3.00 s on average. With fourteen requests in twenty-five seconds:
+3.00 s on average. No measurable difference.
+
+This matches what the entrance panel declares. Its SDP offers `RTP/SAVP`
+(**not** `SAVPF`) and contains no `a=rtcp-fb`: RTCP feedback is not negotiated.
+The `a=rtcp-fb:96 ccm fir` and `nack pli` lines seen in the traffic are **ours**,
+not the panel's. The panel runs linphone/oRTP (`s=Talk` in the SDP), which
+handles feedback only if AVPF was agreed.
+
+The three-second cycle does not mean three seconds of wait before the first
+image. As soon as the panel answers the call it sends SPS, PPS and a full
+keyframe within about half a second (measured: answer at +1.0 s, complete
+keyframe at +1.5 s). The cycle applies to the keyframes after that, and matters
+only for a viewer that joins midway. That is why `/av` replays the last group of
+pictures, in RTP sequence order, to a viewer that joins during a call.
+
+The panel also sends RTCP (`SR`, `SDES`, `XR`) every two or three seconds on a
+separate port (`a=rtcp:`, no `a=rtcp-mux`).

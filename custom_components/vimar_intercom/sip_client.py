@@ -898,7 +898,7 @@ async def reader_task():
                 buf = b""
                 continue
             buf += chunk
-            if len(buf) > 1_000_000:  # guard: 1 MB max — evita OOM su messaggi malformati
+            if len(buf) > MAX_SIP_BODY:  # guard: 1 MB max — evita OOM su messaggi malformati
                 _LOGGER.error("SIP TCP buffer overflow (>1 MB); reset connessione")
                 await _reconnect_from_reader()
                 buf = b""
@@ -924,17 +924,32 @@ async def reader_task():
             await asyncio.sleep(2)
             continue
 
-        messages, buf = _split_stream(buf)
+        messages, rest = _split_stream(buf)
         for raw in messages:
             await _dispatch_message(raw)
+        if rest is None:
+            # Broken framing (see _split_stream): nothing after it can be trusted.
+            await _reconnect_from_reader()
+            rest = b""
+        buf = rest
 
 
-def _split_stream(buf: bytes) -> tuple[list[str], bytes]:
+# Largest body the framer accepts: the reader's buffer guard is the same 1 MB.
+MAX_SIP_BODY = 1_000_000
+
+
+def _split_stream(buf: bytes) -> tuple[list[str], bytes | None]:
     """Cut the TLS stream into complete SIP messages; return them and the rest.
 
     CRLFs between messages are keepalive pongs (RFC 5626 §4.4.1). Left in the
     buffer they ended up in front of the next message, which then lost its
     first line and was dropped as unrecognised.
+
+    Content-Length may also come as the compact header `l:` (RFC 3261
+    section 7.3.3). A value that is not a number, or one above MAX_SIP_BODY,
+    means the stream can no longer be framed: waiting for a body that size
+    held every later message forever. The rest is then None, and the reader
+    drops the connection and reconnects. A negative value counts as 0.
     """
     messages: list[str] = []
     while True:
@@ -945,13 +960,19 @@ def _split_stream(buf: bytes) -> tuple[list[str], bytes]:
         hdr_end = end + 4
         cl = 0
         for line in buf[:hdr_end].decode(errors="replace").split("\r\n"):
-            if line.lower().startswith("content-length:"):
-                try:
-                    # max(0): a negative Content-Length did not advance the
-                    # buffer and the loop spun forever on the event loop.
-                    cl = max(0, int(line.split(":", 1)[1].strip()))
-                except ValueError:
-                    pass
+            name, sep, value = line.partition(":")
+            if not sep or name.strip().lower() not in ("content-length", "l"):
+                continue
+            try:
+                # max(0): a negative Content-Length did not advance the
+                # buffer and the loop spun forever on the event loop.
+                cl = max(0, int(value.strip()))
+            except ValueError:
+                cl = None
+            if cl is None or cl > MAX_SIP_BODY:
+                _LOGGER.error("SIP: invalid Content-Length (%r): the stream can no "
+                              "longer be framed, reconnecting", value.strip()[:32])
+                return messages, None
         if len(buf) < hdr_end + cl:
             return messages, buf
         messages.append(buf[:hdr_end + cl].decode(errors="replace"))
@@ -1095,8 +1116,25 @@ _SRTP_SUITES = ("AES_CM_128_HMAC_SHA1_80", "AES_CM_128_HMAC_SHA1_32")
 _DEFAULT_CRYPTO = {"tag": "1", "suite": "AES_CM_128_HMAC_SHA1_80"}
 
 
+def _offered_line(offer: dict | None, kind: str) -> dict | None:
+    """The offer's m=<kind> line, or None when the offer has no such line.
+
+    parse_sdp leaves an empty dict for a section the offer lacks; only a line
+    with a port (0 included) was really offered.
+    """
+    line = (offer or {}).get(kind)
+    return line if line and "port" in line else None
+
+
+def _offered_kinds(offer: dict | None) -> list[str]:
+    """The m-lines of an offer, in its order. With no offer (we make it), both."""
+    kinds = [k for k in ((offer or {}).get("order") or ("audio", "video"))
+             if _offered_line(offer, k) is not None]
+    return kinds or ["audio", "video"]
+
+
 def _line_security(offer: dict | None, kind: str) -> tuple[bool, dict | None]:
-    """(answer this m-line at all, the crypto to answer it with or None).
+    """(answer this m-line with a live port, the crypto to answer it with or None).
 
     When we answer, each m-line mirrors that line of the offer: plants differ
     (a 2F panel wants plain RTP and ignores SRTP, a 2FV2 relay offers
@@ -1104,17 +1142,17 @@ def _line_security(offer: dict | None, kind: str) -> tuple[bool, dict | None]:
     claiming to accept something we will not use: we would receive encrypted
     and send in the clear. An RTP/SAVP line is answered with the tag and suite
     of the offer's first supported a=crypto line; one with no supported suite
-    cannot be used and is refused (port 0, RFC 4568 section 7.1.2). Only when
-    we make the offer does the plant setting (R.MEDIA_ENC) decide.
+    cannot be used and is refused (port 0, RFC 4568 section 7.1.2). A line the
+    offer declined (port 0) stays declined, and a line the offer lacks is not
+    answered at all (build_sdp leaves it out). Only when we make the offer does
+    the plant setting (R.MEDIA_ENC) decide.
     """
-    offered = [m for m in ((offer or {}).get("audio"), (offer or {}).get("video")) if m]
+    offered = [m for m in (_offered_line(offer, "audio"), _offered_line(offer, "video")) if m]
     if not offered:
         return True, (dict(_DEFAULT_CRYPTO) if getattr(R, "MEDIA_ENC", False) else None)
-    line = (offer or {}).get(kind) or {}
-    if not line:
-        # A line the offer lacks: follow the lines it has, as before.
-        secure = any(m.get("secure") or m.get("crypto_key") for m in offered)
-        return True, (dict(_DEFAULT_CRYPTO) if secure else None)
+    line = _offered_line(offer, kind)
+    if line is None or not line.get("port"):
+        return False, None
     if not line.get("secure"):
         return True, None
     if line.get("crypto_key"):
@@ -1166,6 +1204,28 @@ def build_sdp(offer: dict | None = None):
         for pt, fmtp in h264
     )
 
+    blocks = {
+        "audio": (
+            f"m=audio {audio_port} {audio_proto} 0 8 101\r\n"
+            f"a=rtpmap:0 PCMU/8000\r\n"
+            f"a=rtpmap:8 PCMA/8000\r\n"
+            f"a=rtpmap:101 telephone-event/8000\r\n"
+            f"a=fmtp:101 0-15\r\n"
+            f"a=ptime:20\r\n"
+            f"a=sendrecv\r\n"
+            f"{audio_crypto}"
+        ),
+        "video": (
+            f"m=video {video_port} {video_proto} {' '.join(pt for pt, _ in h264)}\r\n"
+            f"b=AS:256\r\n"
+            f"{h264_lines}"
+            f"a=sendrecv\r\n"
+            f"{video_crypto}"
+        ),
+    }
+    # RFC 3264 section 6: the answer has exactly the offer's m-lines, in the
+    # offer's order; a line is refused with port 0, never dropped, and a line
+    # the offer lacks is never added (an audio-only panel got a live m=video).
     return (
         f"v=0\r\n"
         f"o=- {sid} {sid} IN IP4 {MY_IP}\r\n"
@@ -1174,24 +1234,36 @@ def build_sdp(offer: dict | None = None):
         f"b=AS:512\r\n"
         f"t=0 0\r\n"
         f"a=rtcp-xr:rcvr-rtt=all:10000 stat-summary=loss,dup,jitt,TTL voip-metrics\r\n"
-        f"m=audio {audio_port} {audio_proto} 0 8 101\r\n"
-        f"a=rtpmap:0 PCMU/8000\r\n"
-        f"a=rtpmap:8 PCMA/8000\r\n"
-        f"a=rtpmap:101 telephone-event/8000\r\n"
-        f"a=fmtp:101 0-15\r\n"
-        f"a=ptime:20\r\n"
-        f"a=sendrecv\r\n"
-        f"{audio_crypto}"
-        f"m=video {video_port} {video_proto} {' '.join(pt for pt, _ in h264)}\r\n"
-        f"b=AS:256\r\n"
-        f"{h264_lines}"
-        f"a=sendrecv\r\n"
-        f"{video_crypto}"
+        + "".join(blocks[kind] for kind in _offered_kinds(offer))
     )
 
 
+def _answer_fits(answer: str, offer: dict | None) -> bool:
+    """Whether a previous answer still answers `offer`: the same m-lines in
+    the same order, and no live line where the offer has port 0."""
+    if not offer or not offer.get("order"):
+        return True  # no SDP in the re-INVITE: the old session stands
+    ours = _sdp_lines(answer)
+    kinds = _offered_kinds(offer)
+    if [k for k, _ in ours] != kinds:
+        return False
+    return all(offer[k]["port"] or not live for k, live in ours)
+
+
+def _sdp_lines(sdp_text: str) -> list[tuple[str, bool]]:
+    """(kind, live) for each audio/video m-line of an SDP, in order."""
+    lines = []
+    for line in sdp_text.split("\n"):
+        parts = line.strip().split()
+        if parts and parts[0] in ("m=audio", "m=video") and len(parts) > 1:
+            lines.append((parts[0][2:], parts[1] != "0"))
+    return lines
+
+
 def parse_sdp(sdp_text):
-    result = {"audio": {}, "video": {}, "conn": ""}
+    # "order" lists the m-lines as offered. A section the SDP lacks stays an
+    # empty dict (no "port"): it is not a line of this session.
+    result = {"audio": {}, "video": {}, "conn": "", "order": []}
     m = None
     for line in sdp_text.split("\n"):
         line = line.strip()
@@ -1204,6 +1276,7 @@ def parse_sdp(sdp_text):
         elif line.startswith(("m=audio", "m=video")):
             m = line[2:7]
             parts = line.split()
+            result["order"].append(m)
             result[m]["port"] = int(parts[1])
             result[m]["proto"] = parts[2] if len(parts) > 2 else ""
             result[m]["secure"] = "SAVP" in result[m]["proto"].upper()
@@ -1232,7 +1305,9 @@ def parse_sdp(sdp_text):
             line.update(crypto_key=chosen["key"], crypto_tag=chosen["tag"],
                         crypto_suite=chosen["suite"])
     for section in ("audio", "video"):
-        if section in result and "ip" not in result[section]:
+        if "port" not in result[section]:
+            continue
+        if "ip" not in result[section]:
             result[section]["ip"] = result["conn"]
         if session_dir and "dir" not in result[section]:
             result[section]["dir"] = session_dir
@@ -1253,6 +1328,29 @@ def _record_bindings(hdrs) -> None:
             DEVICES.note_binding(contact, own_device_id=R.DEVICE_UUID, own_name=R.DEVICE_NAME)
     except Exception as e:  # noqa: BLE001
         _LOGGER.debug("Device inventory (bindings) skipped: %s", e)
+
+
+# The hub renews the registration every 120 s: a binding shorter than this can
+# lapse between two renewals, and calls stop reaching us until the next one.
+MIN_GRANTED_EXPIRES = 150
+
+
+def _granted_expires(hdrs) -> int | None:
+    """The lifetime the registrar granted our binding, or None if it did not say.
+
+    Our own contact (by +sip.instance, or by our address) first: other devices
+    share this SIP user and their remaining lifetime says nothing about ours.
+    Then the Expires header.
+    """
+    instance = f"urn:uuid:{R.DEVICE_UUID}" if R.DEVICE_UUID else ""
+    ours = f"{MY_IP}:{_my_port()}" if MY_IP else ""
+    for value in _split_contacts(hdrs):
+        if (instance and instance in value) or (ours and ours in value):
+            m = re.search(r";\s*expires\s*=\s*(\d+)", value)
+            if m:
+                return int(m.group(1))
+    raw = str(hdrs.get("expires", "")).strip()
+    return int(raw) if raw.isdigit() else None
 
 
 async def do_register():
@@ -1312,6 +1410,10 @@ async def do_register():
             break
         code, hdrs = final
         if code == 200:
+            granted = _granted_expires(hdrs)
+            if granted is not None and granted < MIN_GRANTED_EXPIRES:
+                _LOGGER.warning("The registrar granted only %d s (Expires): the binding can "
+                                "lapse between two renewals (every 120 s)", granted)
             _record_bindings(hdrs)
             _set_registered(True)
             _LOGGER.info("SIP registered successfully")
@@ -1922,7 +2024,11 @@ async def handle_incoming_invite(raw):
             await send(f"SIP/2.0 488 Not Acceptable Here\r\n{via_block}To: {to_hdr}\r\nFrom: {from_hdr}\r\n"
                        f"Call-ID: {cid}\r\nCSeq: {cseq}\r\nContent-Length: 0\r\n\r\n")
             return
-        sdp = call_state.get("local_sdp") or build_sdp(remote)
+        sdp = call_state.get("local_sdp")
+        if not sdp or not _answer_fits(sdp, remote):
+            # The re-offer adds, drops or declines a line: the old answer no
+            # longer has the offer's m-lines (RFC 3264 section 8).
+            sdp = call_state["local_sdp"] = build_sdp(remote)
         await send(f"SIP/2.0 200 OK\r\n{via_block}To: {to_hdr}\r\nFrom: {from_hdr}\r\n"
                    f"Call-ID: {cid}\r\nCSeq: {cseq}\r\nContact: {_simple_contact()}\r\n"
                    f"Content-Type: application/sdp\r\n"
@@ -2125,7 +2231,10 @@ async def do_answer_incoming():
         call_state["remote_sdp"] = remote
         _LOGGER.info("Answer SDP: audio=%s video=%s", remote.get('audio'), remote.get('video'))
         # Con early media il flusso è già aperto, salvo che qualcosa l'abbia chiuso.
-        if not (p["early"] and media.video_proto and media.video_proto.remote_addr):
+        # The early media may be audio only: either line being open counts.
+        early_open = any(proto is not None and proto.remote_addr
+                         for proto in (media.audio_proto, media.video_proto))
+        if not (p["early"] and early_open):
             await media.setup_media(remote, _local_crypto_key, _local_video_crypto_key)
         else:
             media.enable_tx()  # l'anteprima riceveva soltanto

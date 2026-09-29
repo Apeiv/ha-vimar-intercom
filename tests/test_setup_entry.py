@@ -68,3 +68,17 @@ def test_a_learned_value_already_saved_is_not_written_again(init):
 def test_a_new_learned_value_is_merged_into_the_data(init):
     assert init._learned_data({"sip_user": "1"}, {"learned_camera_target": "55001"}) == {
         "sip_user": "1", "learned_camera_target": "55001"}
+
+
+def test_entry_data_skips_keys_that_are_not_entries(init):
+    """The HTTP views take the first value under DOMAIN: a non-entry key put
+    there first (a flag, a cache) was taken for the active entry (C1)."""
+    hub = object()
+    hass = types.SimpleNamespace(data={init.DOMAIN: {
+        "flag": True, "cache": {"x": 1}, "e1": {"hub": hub}}})
+    assert init._entry_data(hass)["hub"] is hub
+
+
+def test_entry_data_without_an_entry_is_empty(init):
+    hass = types.SimpleNamespace(data={init.DOMAIN: {"cache": {"x": 1}}})
+    assert init._entry_data(hass) == {}

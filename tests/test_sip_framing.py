@@ -28,3 +28,67 @@ def test_pongs_between_messages_are_skipped():
 def test_a_partial_message_waits_for_the_rest():
     out, rest = sip._split_stream(msg(b"0123456789")[:-3])
     assert out == [] and rest.endswith(b"0123456")
+
+
+def test_the_compact_content_length_header_is_honoured():
+    body = b"hello world"
+    compact = b"MESSAGE sip:a SIP/2.0\r\nCall-ID: m\r\nl: 11\r\n\r\n" + body
+    out, rest = sip._split_stream(compact + OPTIONS)
+    assert [m.split(" ", 1)[0] for m in out] == ["MESSAGE", "OPTIONS"]
+    assert out[0].endswith("hello world") and rest == b""
+
+
+def test_a_header_ending_in_l_is_not_content_length():
+    """Only the header named `l` is the compact form, not any name ending in l."""
+    m = b"MESSAGE sip:a SIP/2.0\r\nCall-ID: m\r\nX-Url: 99\r\nContent-Length: 0\r\n\r\n"
+    out, rest = sip._split_stream(m)
+    assert len(out) == 1 and rest == b""
+
+
+@pytest.mark.parametrize("value", [b"abc", b"12x", b"", b"1000001"])
+def test_an_invalid_content_length_breaks_the_stream(value):
+    """Waiting for a body that never comes held every later message forever."""
+    bad = b"MESSAGE sip:a SIP/2.0\r\nCall-ID: m\r\nContent-Length: " + value + b"\r\n\r\n"
+    out, rest = sip._split_stream(OPTIONS + bad + OPTIONS)
+    assert [m.split(" ", 1)[0] for m in out] == ["OPTIONS"]
+    assert rest is None
+
+
+def test_a_negative_content_length_counts_as_zero():
+    neg = b"OPTIONS sip:a SIP/2.0\r\nCall-ID: n\r\nContent-Length: -1000\r\n\r\n"
+    out, rest = sip._split_stream(neg + OPTIONS)
+    assert len(out) == 2 and rest == b""
+
+
+def test_the_reader_reconnects_on_a_broken_stream(monkeypatch):
+    import asyncio
+
+    bad = b"MESSAGE sip:a SIP/2.0\r\nCall-ID: m\r\nContent-Length: nope\r\n\r\n"
+    chunks = [OPTIONS + bad]
+    dispatched, reconnects = [], []
+
+    class _Reader:
+        async def read(self, _n):
+            if chunks:
+                return chunks.pop(0)
+            await asyncio.sleep(3600)
+
+    async def _dispatch(raw):
+        dispatched.append(raw)
+
+    async def _reconnect():
+        reconnects.append(True)
+        raise asyncio.CancelledError  # ends the reader loop for the test
+
+    monkeypatch.setattr(sip.R, "USE_LOCAL_UDP", False)
+    monkeypatch.setattr(sip, "reader", _Reader())
+    monkeypatch.setattr(sip, "_dispatch_message", _dispatch)
+    monkeypatch.setattr(sip, "_reconnect_from_reader", _reconnect)
+
+    async def _run():
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(sip.reader_task(), 5)
+
+    asyncio.run(_run())
+    assert len(dispatched) == 1 and dispatched[0].startswith("OPTIONS")
+    assert reconnects == [True]

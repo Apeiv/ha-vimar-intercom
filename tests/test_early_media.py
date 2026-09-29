@@ -77,6 +77,21 @@ def test_risposta_riusa_lo_stesso_sdp_senza_riaprire_il_video(rete, monkeypatch)
     sip._set_in_call(False)
 
 
+def test_audio_only_early_media_is_not_reopened_on_answer(rete, monkeypatch):
+    """An audio-only ring opens only the audio line: answering must not see
+    "no video open" and restart the media the preview already runs."""
+    inviati, media = rete
+    tx = []
+    monkeypatch.setattr(mh, "audio_proto", SimpleNamespace(remote_addr=("5.6.7.8", 4000)))
+    monkeypatch.setattr(mh, "video_proto", SimpleNamespace(remote_addr=None))
+    monkeypatch.setattr(mh, "enable_tx", lambda: tx.append(True))
+    asyncio.run(sip.handle_incoming_invite(INVITE.split("m=video")[0]))
+    ok, _ = asyncio.run(sip.do_answer_incoming())
+    assert ok
+    assert media == ["setup"] and tx == [True]
+    sip._set_in_call(False)
+
+
 def test_durante_una_nostra_chiamata_niente_early_media(rete, monkeypatch):
     inviati, media = rete
     monkeypatch.setattr(sip, "calling", True)  # l'eco della nostra chiamata
@@ -234,7 +249,8 @@ def test_udp_locale_niente_media_verso_indirizzi_fuori_lan(rete, monkeypatch):
 def _in_dialogo(monkeypatch, cid="nostra"):
     monkeypatch.setattr(sip, "in_call", True)
     monkeypatch.setitem(sip.call_state, "call_id", cid)
-    monkeypatch.setitem(sip.call_state, "local_sdp", "v=0\r\nSDP-DELLA-CHIAMATA\r\n")
+    monkeypatch.setitem(sip.call_state, "local_sdp",
+                        "v=0\r\nSDP-DELLA-CHIAMATA\r\nm=audio 9100 RTP/AVP 0\r\nm=video 9200 RTP/AVP 96\r\n")
     monkeypatch.setitem(sip.call_state, "remote_sdp", sip.parse_sdp(INVITE.split("\r\n\r\n", 1)[1]))
 
 

@@ -17,6 +17,32 @@ _LOGGER = logging.getLogger(__name__)
 
 av_ffmpeg_proc = None
 _stderr_task: asyncio.Task | None = None
+# Set by _stop_av_ffmpeg_locked: from then on ffmpeg's lines are about the exit
+# we asked for (muxer, trailer, "Immediate exit requested"), not faults.
+_av_stopping = False
+
+# ffmpeg lines that are not faults: the decoder concealing a packet the relay
+# lost, the jitter buffer giving up on a late one, and the input timing out
+# when the call ends and RTP stops arriving.
+_HARMLESS_STDERR = (
+    "error while decoding mb", "invalid level prefix", "concealing",
+    "left block unavailable", "top block unavailable", "cbp too large",
+    "negative number of zero coeffs", "out of range intra chroma",
+    "corrupt decoded frame", "ac-tex damaged", "dquant out of range",
+    "mb_type", "rtp: missed", "max delay reached", "no frame!",
+    "non-existing pps", "decode_slice_header error", "dropping old packet",
+    "error during demuxing: operation timed out", "no filtered frames",
+    "immediate exit requested", "poorly interleaved",
+)
+_FAULT_WORDS = ("error", "failed", "invalid", "bind", "unable")
+
+
+def _stderr_is_fault(text: str) -> bool:
+    """Whether an ffmpeg stderr line is a real fault, worth a WARNING."""
+    low = text.lower()
+    if any(h in low for h in _HARMLESS_STDERR):
+        return False
+    return any(w in low for w in _FAULT_WORDS)
 
 
 class AvRtp:
@@ -104,8 +130,9 @@ async def _start_av_ffmpeg_locked():
     nuovo bind), scrive l'SDP in executor, poi abilita il forward RTP verso
     ffmpeg SOLO dopo lo start.
     """
-    global av_ffmpeg_proc, _stderr_task
+    global av_ffmpeg_proc, _stderr_task, _av_stopping
     await _stop_av_ffmpeg_locked()
+    _av_stopping = False
 
     loop = asyncio.get_running_loop()
     try:
@@ -267,7 +294,8 @@ def _close_av_pipes(proc) -> None:
 
 async def _stop_av_ffmpeg_locked():
     """Actual stop — caller must hold _av_lock."""
-    global av_ffmpeg_proc
+    global av_ffmpeg_proc, _av_stopping
+    _av_stopping = True
     # Stop forwarding first so no more packets hit the (closing) ffmpeg.
     if media.video_proto:
         media.video_proto.forward_av = False
@@ -312,4 +340,11 @@ async def _read_av_ffmpeg_stderr(proc, tail: collections.deque[str]):
         text = line.decode(errors="replace").strip()
         if text:
             tail.append(text)
-            _LOGGER.debug("AV ffmpeg: %s", text)
+            # A fault at WARNING, so it reaches the Home Assistant log; the
+            # rest at DEBUG. Once we asked it to stop (or started another),
+            # everything this process says is about that exit.
+            stopping = _av_stopping or proc is not av_ffmpeg_proc
+            if not stopping and _stderr_is_fault(text):
+                _LOGGER.warning("AV ffmpeg: %s", text)
+            else:
+                _LOGGER.debug("AV ffmpeg: %s", text)

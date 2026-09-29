@@ -348,3 +348,61 @@ def test_a_status_refresh_is_not_recorded_as_the_users_command(hub, monkeypatch)
     asyncio.run(hub.async_request_status())
     assert sent == [("sip:55001@d", hub_mod.C.GET_INIT_STATUS, {"Panda": "blue"})]
     assert hub.stats["last_command_body"] == "VOICEMAIL;ON"
+
+
+def test_a_spawned_task_is_held_until_it_is_done(hub):
+    """asyncio keeps only weak references to tasks: a bare create_task() for the
+    ring webhook or the auto-call could be collected before it finished."""
+    async def _run():
+        gate = asyncio.Event()
+
+        async def _work():
+            await gate.wait()
+            return "done"
+
+        task = hub._spawn(_work(), "test")
+        assert task in hub._background
+        await asyncio.sleep(0)
+        assert task in hub._background
+        gate.set()
+        await task
+        await asyncio.sleep(0)
+        assert task not in hub._background
+
+    asyncio.run(_run())
+
+
+def test_a_spawned_task_that_fails_is_logged(hub, caplog):
+    async def _run():
+        async def _boom():
+            raise RuntimeError("boom")
+
+        task = hub._spawn(_boom(), "ring webhook")
+        with pytest.raises(RuntimeError):
+            await task
+        await asyncio.sleep(0)
+        assert not hub._background
+
+    with caplog.at_level("ERROR"):
+        asyncio.run(_run())
+    assert "ring webhook failed: boom" in caplog.text
+
+
+def test_the_ring_webhook_task_is_held(hub, monkeypatch):
+    monkeypatch.setattr(hub_mod.R, "RING_WEBHOOK_URL", "http://192.0.2.1/hook")
+
+    async def _run():
+        gate = asyncio.Event()
+
+        async def _fire(url):
+            await gate.wait()
+
+        monkeypatch.setattr(hub_mod.webhook, "fire", _fire)
+        hub.fire_ring_callbacks()
+        assert len(hub._background) == 1
+        gate.set()
+        await asyncio.gather(*hub._background)
+        await asyncio.sleep(0)
+        assert not hub._background
+
+    asyncio.run(_run())

@@ -396,9 +396,30 @@ class RTPVideoProtocol(asyncio.DatagramProtocol):
             if len(self._gop) > 1500:  # mai un IDR: inutile tenerlo (~30 s)
                 self._gop = None
 
+    def gop_in_sequence_order(self) -> list[bytes]:
+        """The cached GOP in RTP sequence order.
+
+        _cache_gop runs before the reorder buffer, so _gop is in arrival
+        order. Replayed as is, ffmpeg takes the first packet as its reference
+        and drops every one before it ("RTP: dropping old packet received too
+        late"): an incomplete IDR and nothing decodable until the next
+        keyframe. The order is rebuilt around the first packet with a signed
+        16-bit distance, so a sequence wrap inside the group does not upset it.
+        """
+        packets = [p for p in self._gop or () if len(p) >= 12]
+        if len(packets) < 2:
+            return packets
+        base = struct.unpack_from("!H", packets[0], 2)[0]
+
+        def distance(pkt: bytes) -> int:
+            delta = (struct.unpack_from("!H", pkt, 2)[0] - base) & 0xFFFF
+            return delta - 0x10000 if delta >= 0x8000 else delta
+
+        return sorted(packets, key=distance)
+
     def replay_gop(self):
         """Rimanda a ffmpeg il GOP corrente, dall'IDR in poi: decodifica subito."""
-        for rtp in self._gop or ():
+        for rtp in self.gop_in_sequence_order():
             self._forward_av(rtp)
 
     def _reorder(self, seq, ssrc, payload, rtp=b""):
@@ -506,7 +527,9 @@ class RTPVideoProtocol(asyncio.DatagramProtocol):
             elif not self._fua_started:
                 # FU-A continuation without start — dropped start packet
                 if self.pkt_count <= 20:
-                    _LOGGER.warning("FU-A middle/end without start: seq=%d nalType=%d end=%s",
+                    # DEBUG: a lost start packet at the beginning of a call is
+                    # routine on the relay, and the NAL is dropped anyway.
+                    _LOGGER.debug("FU-A middle/end without start: seq=%d nalType=%d end=%s",
                                     seq, nal_unit_type, end)
                 return
             else:
@@ -822,6 +845,11 @@ async def setup_media(remote_sdp, local_crypto_key=None, local_video_crypto_key=
         video_proto.send_stun()
         _vmode = "SRTP" if video_proto.srtp_rx else "RTP"
         await broadcast("log", f"Video {_vmode} → {vip}:{video['port']} (direct)")
+    elif video_proto and video_proto.remote_addr:
+        # No video in this session (an audio-only panel, or a re-INVITE that
+        # declined it): stop sending STUN and keyframe requests to the old one.
+        video_proto.remote_addr = None
+        frame_grabber.stop(video_proto)
 
     if _stun_task:
         _stun_task.cancel()

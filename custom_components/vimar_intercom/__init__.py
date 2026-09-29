@@ -126,7 +126,10 @@ def _entry_data(hass: HomeAssistant) -> dict:
     """Dati dell'entry attiva. Le view HTTP restano registrate anche dopo aver
     tolto e riaggiunto l'integrazione (entry_id nuovo), e la prima registrata
     vince: legate al vecchio entry_id rispondevano 503 fino al riavvio di HA."""
-    return next(iter(hass.data.get(DOMAIN, {}).values()), {})
+    # Only an entry's own dict (it has a "hub"): any other key under DOMAIN
+    # (a flag, a cache) must never be taken for the active entry.
+    return next((v for v in hass.data.get(DOMAIN, {}).values()
+                 if isinstance(v, dict) and "hub" in v), {})
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

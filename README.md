@@ -30,6 +30,7 @@ reported so far.
 | Elvox Tab 7S 2F+ WiFi | 40507 | 2F | — | local UDP | Development platform: ring, call, answer/hang up, door open, on-demand video, actuators |
 | Elvox Tab 5S UP 2 Wire WiFi | 40515 | 2FV2 | 2.1.0203 | cloud TLS | Working, reported by @CPietro — see the notes below |
 | Elvox Tab 5S UP 2 Wire WiFi | 40515 | — | — | cloud TLS | Cloud registration working after the 1.0.1 fix, reported by @gtarraran992 ([#1](../../issues/1)) |
+| Elvox Tab 7S Up | 40517 | Due Fili Plus EVO (2FV2) | 2.1.0203 | cloud TLS | Working over the cloud relay, media in SRTP: ring, two-way audio, video, door. Local UDP is refused by the Tab with 503 |
 
 **What differs between plants.** Both Tab 5S reports, plus the development plant, point at the same
 practical conclusion: *what matters is the address you send to, and how much the Tab tells you back*.
@@ -60,7 +61,8 @@ everything just worked are as useful as the ones where something broke.
 - ffmpeg on the Home Assistant host (declared in the manifest) for the camera.
 - The plant's **pairing QR code** (from the VIEW app) **or** the SIP parameters entered by hand
   (id, password, domain, cloud proxy).
-- Python requirements: only `pycryptodome` and `requests` — no external SIP library, the stack is custom.
+- Python requirements, installed by Home Assistant: `pycryptodome` and `requests`, plus `HAP-python`
+  and `PyQRCode` for the optional HomeKit doorbell. There is no external SIP library; the stack is custom.
 
 ---
 
@@ -74,10 +76,6 @@ everything just worked are as useful as the ones where something broke.
 ### Manual
 Copy `custom_components/vimar_intercom/` into your Home Assistant `config/custom_components/` folder
 and restart.
-
-> **If you reinstall or update by hand**: `__init__.py` and `sip_client.py` carry local logging
-> patches (not present upstream — see the *Logging* section below). If you overwrite those files with
-> a copy from somewhere else, reapply the patches: outside HACS nothing preserves them for you.
 
 ---
 
@@ -426,38 +424,29 @@ The video pane shows live video while a call or a ring is up. For voice, use the
 
 ## Logging
 
-The component keeps an internal circular buffer (`_debug_log`, in `__init__.py`) for its own
-diagnostics, and raises its logger to `DEBUG` to fill it. By default that would propagate every
-`DEBUG` line to the Home Assistant log too, overriding the level set in `logger:` in
-`configuration.yaml` (Python loggers propagate to the root).
+The component keeps its own circular buffer (`log_buffer.py`, the last 3000 lines, `DEBUG`
+included), readable by administrators at `/api/vimar_intercom/debug?lines=N` (100 lines by default).
 
-The patch: the `custom_components.vimar_intercom` logger stays at `DEBUG` for the internal buffer, but
-with `propagate = False`; a dedicated handler forwards only `WARNING` and above to the HA log. Result:
-internal diagnostics intact, HA log clean.
+The Home Assistant log receives the component's records from the level set for
+`custom_components.vimar_intercom` under `logger:` in `configuration.yaml` (or with the
+`logger.set_level` service), and `WARNING` and above when no level is set. To see everything there:
 
-**"Stale response 407" on the SIP keepalive**: the periodic OPTIONS (`_send_options_ping` in
-`sip_client.py`) did not register its own Call-ID among the expected responses, so the proxy's reply
-(typically a `407`) was logged as `WARNING "Stale response ..."` even though it is the normal outcome
-of the keepalive. `_dispatch_message` now recognises Call-IDs prefixed with `ping-` and logs them at
-`DEBUG` instead. With this fix and the one above, **no** `logger:` filter in `configuration.yaml` is
-needed any more to silence these messages.
+```yaml
+logger:
+  logs:
+    custom_components.vimar_intercom: debug
+```
 
-**Known limitation**: the trade-off cuts both ways. Because the component keeps its own logger at
-`DEBUG` and forwards only `WARNING` and above, setting
-`logger: logs: custom_components.vimar_intercom: debug` in `configuration.yaml` will *not* put this
-component's `DEBUG` lines in the Home Assistant log — read them from
-`/api/vimar_intercom/debug` instead. Making the forwarded level configurable is on the list.
-
-If you update `__init__.py` or `sip_client.py` from an external source (not HACS, not versioned for
-this component), check that both patches are still in place — see the note under
-*Installation → Manual*.
+Both destinations mask passwords, digest responses, phonebook tokens and SRTP keys before writing.
+The SIP keepalive's expected replies (the periodic OPTIONS) are logged at `DEBUG`, so no `logger:`
+filter is needed to keep the log quiet.
 
 ---
 
 ## Security
 
-- SIP credentials (password / `ha1`) are stored **encrypted** in the Home Assistant config entry, never
-  in plain text in the repo.
+- SIP credentials (password and `ha1`) are stored in the Home Assistant config entry under
+  `.storage`, in plain text like every other integration's secrets. They are never logged.
 - Internal HTTP endpoint: `/av` is **LAN-only** (`_is_local_request`); the `/audio_ws`
   WebSocket requires Home Assistant authentication, and its debug actions (`command`, `probe`,
   `scan`, `register`, `reconnect`) are admin-only. The QR payload is never logged at INFO level.
@@ -475,6 +464,8 @@ this component), check that both patches are still in place — see the note und
   even a clip still being written); the folder is never exposed under `/local`.
 - In local UDP mode, SIP packets from any host other than the intercom are dropped, so another
   device on the LAN can't fake a ring.
+- Plain RTP (no SRTP) is accepted only from the other end of the current call.
+- The HomeKit pairing code (optional HomeKit doorbell) is stored in a file with mode 0600.
 - No mandatory cloud dependency when running in local UDP mode.
 
 ---

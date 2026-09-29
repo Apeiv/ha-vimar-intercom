@@ -25,6 +25,18 @@ Call and media:
   state reset when the integration is unloaded.
 - An audio WebSocket open anywhere (the card, the app) no longer stops a view from calling.
 - The echo of our own call gets 486 Busy Here instead of a decline that ended the ring everywhere.
+- The SDP answer has exactly the offer's media lines, in the offer's order (RFC 3264): an
+  audio-only panel no longer gets a live `m=video` it never asked for, and a video line offered
+  with port 0 is answered with port 0. Our own offers keep both lines. A re-INVITE whose lines
+  differ from the running call gets a new answer, and a session without video closes the video
+  side.
+- `/av` replays the cached group of pictures in RTP sequence order, not arrival order: ffmpeg
+  dropped every packet older than the first one it saw.
+- The `/av` ffmpeg's real errors reach the Home Assistant log at WARNING; known harmless lines
+  (concealment, "max delay reached", "RTP: missed", "dropping old packet") and everything after
+  we asked it to stop stay at DEBUG. "FU-A middle/end without start" is logged at DEBUG.
+- The camera's stream source is a loopback URL on Home Assistant's own HTTP port and scheme, not
+  `internal_url`, which may point at a reverse proxy that `/av` refuses (403).
 
 SIP:
 
@@ -32,6 +44,14 @@ SIP:
   Proxy-Authorization.
 - The framer handles the CRLF keepalive pongs; the request processor survives a reply that cannot
   be sent.
+- The framer also reads the compact `l:` header. A Content-Length that is not a number or is over
+  1 MB breaks the stream: the connection is dropped and reconnected instead of holding every later
+  message. A negative value still counts as 0.
+- When the periodic REGISTER fails while registered, the reconnection starts at once instead of at
+  the next keepalive; it joins a reconnection already running. A registrar granting less than
+  150 s is logged at WARNING.
+- Background tasks of the hub (ring webhooks, auto-call, ring log, echo decline, WebSocket state)
+  are held until they finish, and their errors are logged.
 - SIP tags, branches and Call-IDs come from `secrets`.
 - MESSAGE and NOTIFY requests delivered twice by the relay are answered but broadcast once.
 - Commands sent to a whole SIP URI are accepted only as `sip:<digits>@<plant domain>`.
@@ -50,6 +70,11 @@ Setup and configuration:
   cloud and local, storing what worked. The plant profile only sets the transport default; media
   encryption keeps following the plant's own declaration (`media_enc` auto).
 - Only one config entry is allowed.
+- The options form no longer pre-fills `camera_target` with 55100: saved once, it counted as a
+  user choice and the panel learned from the last ring was never used. Empty stays empty.
+- The SIP test in the options uses the local domain when the plant has one, as setup does.
+- The HTTP views pick the active entry only among entries (a dict with a hub), never another key
+  under the integration's data.
 - Saving values into the entry data (detected model, learned panel) no longer reloads the
   integration; only a change of the options does.
 
@@ -65,6 +90,16 @@ Entities and diagnostics:
 - The voicemail and DND switches warn when the plant's state contradicts a command it accepted
   with 200 OK (usually a wrong `sga_target`).
 - SRTP keys are masked in the logs, and the debug log buffer is bigger.
+
+Documentation:
+
+- Security: SIP credentials are stored in plain text in `.storage` like every integration's
+  secrets (the README said encrypted); the HomeKit pairing code file is 0600; plain RTP is
+  accepted only from the call's address.
+- Logging rewritten to match `log_buffer.py`; `HAP-python` and `PyQRCode` listed among the
+  requirements; the Tab 7S Up 40517 added to the compatibility table.
+- New `docs/HARDWARE.md` (what differs between plants) and `docs/TEST_PLAN.md` (field test round).
+  The Italian README inside the component folder is now a pointer to the root README.
 
 ## [1.0.14] - 2026-09-30
 

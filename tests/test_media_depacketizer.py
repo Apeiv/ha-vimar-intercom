@@ -374,3 +374,30 @@ def test_keyframe_vecchio_rimandato_non_azzera_il_gop_per_il_replay(monkeypatch)
         assert [g[12:] for g in vp._gop] == [sps, pps, idr, pf, pf, pf]
         await mh.stop_media()
     asyncio.run(s())
+
+
+def _seq_of(rtp: bytes) -> int:
+    return struct.unpack_from("!H", rtp, 2)[0]
+
+
+def test_the_gop_is_replayed_in_sequence_order():
+    """_gop fills in arrival order; ffmpeg drops every packet older than the
+    first one it sees ("RTP: dropping old packet received too late")."""
+    p = RTPVideoProtocol()
+    p._gop = [_pkt(seq) for seq in (101, 100, 103, 102)]
+    forwarded = []
+    p._forward_av = forwarded.append
+    p.replay_gop()
+    assert [_seq_of(r) for r in forwarded] == [100, 101, 102, 103]
+
+
+def test_the_gop_order_survives_a_sequence_wrap():
+    p = RTPVideoProtocol()
+    p._gop = [_pkt(seq) for seq in (65535, 1, 65534, 0)]
+    assert [_seq_of(r) for r in p.gop_in_sequence_order()] == [65534, 65535, 0, 1]
+
+
+def test_an_empty_gop_replays_nothing():
+    p = RTPVideoProtocol()
+    p._gop = None
+    assert p.gop_in_sequence_order() == []
