@@ -29,6 +29,10 @@ Italian and are kept as they were written.
 - Between calls the camera image is the last ring photo, when there is one (the latest, or
   `ultimo_squillo.jpg` in the snapshot folder after a restart), instead of the error Home
   Assistant made of an empty image. A thumbnail still never calls the panel.
+- An RTCP probe for debugging (`rtcp.py`): with the integration's logger set to DEBUG, the RTCP
+  ports (RTP + 1) listen during a call, the path to the panel's RTCP port is opened, and what
+  arrives is logged (type and SSRC; every record for plain RTCP). Off by default: nothing is
+  bound and nothing is sent.
 
 ### Fixed
 
@@ -89,6 +93,15 @@ Call and media:
 - μ-law audio is decoded through two byte tables instead of a loop per sample (about 20 times
   faster per packet, same output), and the debug log buffer is a bounded deque that no longer
   moves every line when it drops the oldest one.
+- No periodic keyframe request (SIP INFO every 5 s) during a call: the panel ignores it and sends
+  a keyframe about every 3 s on its own, and each INFO crossed the cloud relay. The burst at call
+  start and the request after a lost video packet stay.
+- `/av`: ffmpeg's RTP input gets a 640 KB receive buffer (`-buffer_size 655360`; loopback bursts
+  lost packets, "RTP: missed N packets", and broke the H.264 stream) and `-muxpreload 0`. The RTP
+  forwarding starts as soon as ffmpeg's ports are bound (read from `/proc/net/udp`, at most
+  0.5 s) instead of after a fixed 0.3 s. When the last client leaves while the call's video goes
+  on, ffmpeg is kept for 10 s for a client that reconnects; the end of the call still stops it at
+  once.
 
 SIP:
 
@@ -102,6 +115,10 @@ SIP:
 - When the periodic REGISTER fails while registered, the reconnection starts at once instead of at
   the next keepalive; it joins a reconnection already running. A registrar granting less than
   150 s is logged at WARNING.
+- The registration is renewed before the lifetime the registrar grants runs out: at the grant
+  minus min(60 s, 20 %), at least 5 s, and never later than the 120 s keepalive, which stays
+  the cadence for grants of 150 s or more. This includes the grant of the first REGISTER at
+  startup.
 - Background tasks of the hub (ring webhooks, auto-call, ring log, echo decline, WebSocket state)
   are held until they finish, and their errors are logged.
 - SIP tags, branches and Call-IDs come from `secrets`.

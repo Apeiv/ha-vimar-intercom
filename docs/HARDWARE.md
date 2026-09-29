@@ -110,7 +110,12 @@ image. As soon as the panel answers the call it sends SPS, PPS and a full
 keyframe within about half a second (measured: answer at +1.0 s, complete
 keyframe at +1.5 s). The cycle applies to the keyframes after that, and matters
 only for a viewer that joins midway. That is why `/av` replays the last group of
-pictures, in RTP sequence order, to a viewer that joins during a call.
+pictures, in RTP sequence order, when it starts its ffmpeg during a call. A viewer
+that joins an ffmpeg already running (another viewer is connected, or the last one
+left less than 10 seconds ago) starts at the panel's next keyframe. For the same
+reason the integration asks for a keyframe only in a short burst when the call
+starts and after a lost video packet, never periodically.
 
 The panel also sends RTCP (`SR`, `SDES`, `XR`) every two or three seconds on a
-separate port (`a=rtcp:`, no `a=rtcp-mux`).
+separate port (`a=rtcp:`, no `a=rtcp-mux`). The integration does not use it; with
+its logger at DEBUG it listens on its RTCP ports and logs what arrives (`rtcp.py`).
