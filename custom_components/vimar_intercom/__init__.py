@@ -833,6 +833,22 @@ class VimarRingPhotoView(HomeAssistantView):
         return web.FileResponse(path)
 
 
+async def _pump_response(request: web.Request, queue: asyncio.Queue, unsubscribe) -> web.StreamResponse:
+    """MPEG-TS in streaming dalla coda finché non arriva None (client via, o l'ffmpeg è
+    uscito): stessa pompa per /av (chiamata vera, av_stream) e /av?idle=image (av_passive)."""
+    response = web.StreamResponse()
+    response.content_type = "video/mp2t"
+    try:
+        await response.prepare(request)
+        while (chunk := await queue.get()) is not None:
+            await response.write(chunk)
+    except ConnectionResetError:
+        pass
+    finally:
+        await unsubscribe(queue)
+    return response
+
+
 class VimarAVStreamView(HomeAssistantView):
     """Serve MPEG-TS stream (H264 video + PCMU audio) at /api/vimar_intercom/av."""
 
@@ -862,9 +878,6 @@ class VimarAVStreamView(HomeAssistantView):
             return web.Response(status=503, text="No call (passive)")
         _LOGGER.info("AV stream requested%s", " (passive)" if passive else "")
         wait = passive or await hub.stream_opened()
-        queue = None
-        response = web.StreamResponse()
-        response.content_type = "video/mp2t"
         try:  # tutto dentro: se il client se ne va prima, lo spettatore va comunque tolto
             if not wait:
                 return web.Response(status=503, text="No call")
@@ -886,18 +899,10 @@ class VimarAVStreamView(HomeAssistantView):
             # (con eventuale 407) può durare secondi e ritarderebbe gli header.
             self._hass.async_create_background_task(
                 sip.send_keyframe_request(), "vimar_intercom keyframe")
-
-            await response.prepare(request)
-            while (chunk := await queue.get()) is not None:
-                await response.write(chunk)
-        except ConnectionResetError:
-            pass
+            return await _pump_response(request, queue, av_stream.av_unsubscribe)
         finally:
-            if queue is not None:
-                await av_stream.av_unsubscribe(queue)
             if not passive:
                 await hub.stream_closed()
-        return response
 
     async def _idle_image(self, request: web.Request, hub) -> web.StreamResponse:
         """`&idle=image`: stream continuo, standby a riposo e video della targa durante
@@ -909,14 +914,4 @@ class VimarAVStreamView(HomeAssistantView):
                 sip.send_keyframe_request(), "vimar_intercom keyframe"))
         if queue is None:
             return web.Response(status=503, text="ffmpeg failed to start")
-        response = web.StreamResponse()
-        response.content_type = "video/mp2t"
-        try:
-            await response.prepare(request)
-            while (chunk := await queue.get()) is not None:
-                await response.write(chunk)
-        except ConnectionResetError:
-            pass
-        finally:
-            await av_passive.unsubscribe(queue)
-        return response
+        return await _pump_response(request, queue, av_passive.unsubscribe)
