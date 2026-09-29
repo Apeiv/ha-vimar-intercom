@@ -273,15 +273,16 @@ class RTPVideoProtocol(asyncio.DatagramProtocol):
         self._nal_count = 0
         self._nal_types = {}  # type -> count
 
-    def sps_pps(self) -> tuple[bytes, bytes] | None:
+    def sps_pps(self, own_only: bool = False) -> tuple[bytes, bytes] | None:
         """Gli ultimi SPS e PPS di questa targa (anche dalla chiamata prima), se ci sono
         entrambi: con quelli ffmpeg (/av, foto) decodifica dal primo IDR. Se questa targa
         non ne ha ancora mai mandati (mai chiamata prima, o cache persa a un aggiornamento),
         quelli di un'altra: la risoluzione cambia raramente, meglio una foto con quelli
-        che nessuna foto ad aspettare l'SPS in banda (fino a 6 s sulla 40515)."""
+        che nessuna foto ad aspettare l'SPS in banda (fino a 6 s sulla 40515).
+        own_only: mai quelli di un'altra targa (il clip li userebbe per tutta la durata)."""
         if self._last_sps and self._last_pps:
             return self._last_sps, self._last_pps
-        return next((ps for ps in self._ps_by_panel.values() if all(ps)), None)
+        return None if own_only else next((ps for ps in self._ps_by_panel.values() if all(ps)), None)
 
     def set_panel(self, panel: str | None) -> None:
         """Chiamata (o anteprima) con questa targa: si riparte dai suoi SPS/PPS."""

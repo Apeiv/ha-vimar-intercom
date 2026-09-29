@@ -103,7 +103,9 @@ def _start_clip() -> None:
     path, max_s, on_done = _clip_req
     _clip_req = None
     _clip_q = asyncio.Queue(maxsize=600)
-    asyncio.create_task(_record(_clip_q, _proto.sps_pps(), path, max_s, on_done))
+    # Solo gli SPS/PPS di questa targa: quelli di un'altra (risoluzione diversa) resterebbero
+    # nell'avcC per tutto il clip. Senza, _record aspetta quelli in banda prima di partire.
+    asyncio.create_task(_record(_clip_q, _proto.sps_pps(own_only=True), path, max_s, on_done))
 
 
 def _end_clip() -> None:

@@ -40,7 +40,7 @@ def _nals() -> list[bytes]:
 @ffmpeg_vero[0]
 @ffmpeg_vero[1]
 def test_grabber_tiene_l_ultimo_jpeg(monkeypatch):
-    proto = SimpleNamespace(frame_sink=None, sps_pps=lambda: None)
+    proto = SimpleNamespace(frame_sink=None, sps_pps=lambda own_only=False: None)
 
     async def run():
         frame_grabber.start(proto)
@@ -99,7 +99,7 @@ def _finto_ffmpeg(monkeypatch, jpegs: list[bytes]):
 def test_il_primo_idr_e_la_foto_finche_non_ne_arriva_un_altro(monkeypatch):
     """Con un IDR ogni ~3 s (di notte >8 s) scartare il primo lasciava una vista da ~10 s
     senza foto; il secondo, quando arriva, lo sostituisce."""
-    proto = SimpleNamespace(frame_sink=None, sps_pps=lambda: None)
+    proto = SimpleNamespace(frame_sink=None, sps_pps=lambda own_only=False: None)
 
     async def run(jpegs):
         _finto_ffmpeg(monkeypatch, jpegs)
@@ -116,7 +116,7 @@ def test_il_primo_idr_e_la_foto_finche_non_ne_arriva_un_altro(monkeypatch):
 def test_reinvite_riavvia_il_grabber_senza_perdere_la_foto(monkeypatch):
     """Un re-INVITE con SDP nuovo rifà setup_media → frame_grabber.start a metà chiamata:
     la foto già presa resta finché non ne esce una nuova; stop() (fine chiamata) la toglie."""
-    proto = SimpleNamespace(frame_sink=None, sps_pps=lambda: None)
+    proto = SimpleNamespace(frame_sink=None, sps_pps=lambda own_only=False: None)
 
     async def run():
         _finto_ffmpeg(monkeypatch, [JPEG])
@@ -159,7 +159,7 @@ def test_clip_mp4_dal_primo_idr_con_durata_reale(tmp_path):
     stop() chiude il file: MP4 con moov in testa, H.264 copiato (tutti i 40 fotogrammi),
     durata quella dell'orologio (i 40 a 25 fps = 1,6 s; l'H.264 grezzo non ha tempi). Col
     PCM della targa tappato durante la registrazione, il clip esce anche con l'audio (AAC)."""
-    proto = SimpleNamespace(frame_sink=None, sps_pps=lambda: None)
+    proto = SimpleNamespace(frame_sink=None, sps_pps=lambda own_only=False: None)
     path = str(tmp_path / "squillo_20260927_101500_001.mp4")
 
     async def run():
@@ -187,7 +187,7 @@ def test_clip_parte_dal_primo_idr_senza_niente_prima(tmp_path):
     nals = _nals()
     sps, pps = nals[0], nals[1]
     assert (sps[0] & 0x1F, pps[0] & 0x1F) == (7, 8)
-    proto = SimpleNamespace(frame_sink=None, sps_pps=lambda: (sps, pps))
+    proto = SimpleNamespace(frame_sink=None, sps_pps=lambda own_only=False: (sps, pps))
     path = str(tmp_path / "squillo_20260927_101500_002.mp4")
     idr0 = next(i for i, n in enumerate(nals) if n[0] & 0x1F == 5)
 
@@ -206,7 +206,7 @@ def test_clip_parte_dal_primo_idr_senza_niente_prima(tmp_path):
 
 @ffmpeg_vero[0]
 def test_clip_finisce_da_solo_al_tetto_e_senza_video_niente_file(tmp_path):
-    proto = SimpleNamespace(frame_sink=None, sps_pps=lambda: None)
+    proto = SimpleNamespace(frame_sink=None, sps_pps=lambda own_only=False: None)
     path = str(tmp_path / "squillo_20260927_101500_003.mp4")
     nals = _nals()
 
@@ -325,7 +325,7 @@ def test_clip_audio_non_muto_con_passivo_attivo(tmp_path, monkeypatch):
     proprio durante uno squillo), l'audio vero arrivato via RTP finiva solo nel buffer
     del passivo e il clip restava silenzioso."""
     _finto_encoder_passivo(monkeypatch)
-    proto = SimpleNamespace(frame_sink=None, sps_pps=lambda: None)
+    proto = SimpleNamespace(frame_sink=None, sps_pps=lambda own_only=False: None)
     path = str(tmp_path / "squillo_20260928_204023_323.mp4")
     audio_proto = media_handler.RTPAudioProtocol()
     audio_proto.remote_addr = ("127.0.0.1", 4000)

@@ -162,3 +162,55 @@ def test_storage_rotto_o_vuoto_non_ferma_l_avvio(monkeypatch):
             assert vp.sps_pps() is None, data
 
     asyncio.run(s())
+
+
+def test_clip_non_usa_gli_sps_pps_di_un_altra_targa(monkeypatch, tmp_path):
+    """Recensione PR #30: con la coppia di un'altra targa (risoluzione diversa) il clip
+    finiva con avcC sbagliato per tutta la durata. Il clip aspetta quelli in banda; la
+    foto invece parte subito col fallback (sps_pps() senza own_only)."""
+    async def s():
+        vp = media.RTPVideoProtocol()
+        monkeypatch.setattr(media, "video_proto", vp)
+        vp._ps_by_panel = {"55001": (SPS, PPS)}
+        vp.set_panel("60002")
+        assert vp.sps_pps() == (SPS, PPS) and vp.sps_pps(own_only=True) is None
+
+        clip = bytearray()
+
+        class _Stdin:
+            def write(self, b):
+                clip.extend(b)
+
+            async def drain(self):
+                pass
+
+            def close(self):
+                pass
+
+        class _Proc:
+            returncode = 0
+            stdin = _Stdin()
+
+            async def wait(self):
+                return 0
+
+        async def _exec(*a, **k):
+            return _Proc()
+
+        monkeypatch.setattr(frame_grabber.asyncio, "create_subprocess_exec", _exec)
+        frame_grabber._proto = vp
+        frame_grabber._clip_req = (str(tmp_path / "c.mp4"), 60, lambda p: None)
+        frame_grabber._start_clip()
+        q = frame_grabber._clip_q
+        q.put_nowait(IDR)
+        await asyncio.sleep(0.05)
+        assert not clip, "IDR senza SPS/PPS della targa: il clip non parte"
+        SPS2, PPS2 = SPS + b"\x10", PPS + b"\x20"
+        for n in (SPS2, PPS2, IDR):
+            q.put_nowait(n)
+        await asyncio.sleep(0.05)
+        assert bytes(clip).startswith(b"\x00\x00\x00\x01" + SPS2)
+        frame_grabber._end_clip()
+        await asyncio.sleep(0.05)
+
+    asyncio.run(s())
