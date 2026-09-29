@@ -821,6 +821,20 @@ class VimarIntercomCard extends HTMLElement {
     }
   }
 
+  // Crea un AudioContext e prova a sbloccarlo (resume): se iOS lo tiene sospeso per
+  // mancanza di un gesto vero, lo chiude, segnala _audioBlocked ("Microfono"/"Ascolta"
+  // → "Audio") e torna null. Usato da _startTalk (solo per `auto`, senza un tocco
+  // davanti) e da _startListen (mai un tocco davanti).
+  async _unlockedContext() {
+    const ctx = new AudioContext();
+    await ctx.resume().catch(() => {});
+    if (ctx.state === "running") return ctx;
+    ctx.close();
+    this._audioBlocked = true;
+    this._render();
+    return null;
+  }
+
   // `auto`: chiamata da sola all'arrivo sull'ancora già "in_call" (vedi _render), non da
   // un tocco. Niente "Rispondi" in HTTP (aprire la pagina non risponde da sola) e, se
   // Safari/iOS tiene l'AudioContext sospeso senza un gesto vero, si rinuncia in silenzio
@@ -839,16 +853,10 @@ class VimarIntercomCard extends HTMLElement {
     const answering = this._state === "ringing";
     // Nel gesto, prima di ogni await: creato dopo, Safari/iOS lo lascia sospeso
     // (niente voce del visitatore e onaudioprocess fermo, quindi niente microfono).
-    const ctx = new AudioContext();
-    if (auto) {
-      await ctx.resume().catch(() => {});
-      if (ctx.state !== "running") {  // niente gesto vero: non si chiede nemmeno il microfono
-        ctx.close();
-        this._starting = false;
-        this._audioBlocked = true;  // "Microfono" → "Audio": un tocco resta a vista
-        this._render();
-        return;
-      }
+    const ctx = auto ? await this._unlockedContext() : new AudioContext();
+    if (auto && !ctx) {  // niente gesto vero: non si chiede nemmeno il microfono
+      this._starting = false;
+      return;
     }
     let mic;
     try {
@@ -899,14 +907,8 @@ class VimarIntercomCard extends HTMLElement {
     if (!window.isSecureContext) return;
     this._listenStarting = true;
     try {
-      const ctx = new AudioContext();
-      await ctx.resume().catch(() => {});
-      if (ctx.state !== "running") {
-        ctx.close();
-        this._audioBlocked = true;
-        this._render();
-        return;
-      }
+      const ctx = await this._unlockedContext();
+      if (!ctx) return;
       const { path } = await this._hass.callWS({ type: "auth/sign_path", path: "/api/vimar_intercom/audio_ws" });
       if (!this.isConnected || !this._cfg.listen_on_ring) return ctx.close();  // stato cambiato nell'attesa
       const ws = new WebSocket(location.origin.replace(/^http/, "ws") + path);
