@@ -4,6 +4,126 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [semver](ht
 Newest entries on top. **Entries are written in English from 1.0.1 onwards**; earlier ones are in
 Italian and are kept as they were written.
 
+## [1.0.14] - Unreleased
+
+### Added
+
+- Ring webhooks: optional options `ring_webhook_url` and `ring_end_webhook_url`, a GET
+  (fire-and-forget, 5 s timeout) fired when a ring starts and when it ends (answered, cancelled
+  or missed) — e.g. the `turnOn`/`turnOff` URLs of a Scrypted Dummy Switch linked via a Custom
+  Doorbell Button (see `docs/EXTERNAL.md`). A failed request only logs a warning and never
+  blocks or interrupts the ring; the URL (it may carry a secret token) is never logged in full,
+  only scheme and host. Empty = off.
+- The panel's last SPS/PPS are kept in HA storage (`.storage/vimar_intercom.<entry>.sps_pps`,
+  a few bytes, rewritten only when the panel sends different ones). The first `/av` after an HA
+  restart gets `sprop-parameter-sets` in its SDP right away, instead of waiting for the in-band
+  SPS (~6 s on the 40515 when the keyframe request is not answered quickly); the card, the
+  WebSocket and the ring photo start from the first IDR as on every later call. One pair per
+  calling panel (SIP id): with two panels of different resolution the SDP `sprop`, the ring
+  photo and the clip use the pair of the panel that is ringing or being called, never the
+  other one's.
+- Away message from text: options `away_message_text` (multiline) and `away_message_tts` (a
+  `tts.*` entity; empty = HA's default engine). When `away_message_file` is empty, the text is
+  synthesised by Home Assistant's TTS in HA's language, decoded to 8 kHz PCM through the same
+  ffmpeg path as a file (same 30 s cap) and cached per (text, engine, language): generated once
+  HA has started (and again when the options change), so the ring never waits for the network.
+  If TTS fails (no engine, network) a warning is logged and the doorbell keeps ringing.
+- Ring clip, Ring-like: with `snapshot_dir` set, every ring also records the panel's video
+  (the preview, and the call if answered from HA) as `squillo_YYYYMMDD_HHMMSS_mmm.mp4` next to
+  the photo, from the first keyframe until the ring or call ends, 60 s at most. The H.264 is
+  copied, not re-encoded (one extra ffmpeg per ring, `-c copy`, wall-clock timestamps,
+  faststart MP4). The panel's audio (the same PCM tap `av_passive` uses) is muxed in as AAC
+  once the video is closed, when there was any; otherwise the clip stays silent as before. The
+  clip is listed in `squillo.json` (`clip`), deleted with the
+  photo when the entry leaves the log, served by `GET /api/vimar_intercom/rings/<name>.mp4`
+  (`video/mp4`, HTTP ranges) and exposed by the "Intercom Ultimo Squillo" sensor as `clip`
+  (path) and `clip_url` (relative URL, HA authentication) once the file is closed. In the card's
+  history a ring with a clip shows a play icon on its thumbnail; a tap plays it in the dialog
+  (`<video controls playsinline>`) instead of the photo. A clip cut short (HA reload) is
+  discarded rather than left unplayable.
+- Keyframe request (SIP INFO `picture_fast_update`) also during the ring preview (early
+  dialog of our 183): sent as soon as the doorbell rings, and when a packet is lost during the
+  preview, instead of only inside a call.
+- Passive AV stream for external tools: `/api/vimar_intercom/av?autocall=0` (or `?mode=passive`)
+  never places a call. During a ring or a call it attaches to the same MPEG-TS fan-out as `/av`;
+  otherwise it answers 503 at once, so Scrypted, go2rtc or Frigate reconnecting in a loop never
+  touch the panel. It is not counted as a viewer: a call started for Home Assistant's camera
+  still ends when that viewer leaves. Plain `/av` is unchanged (it still starts a "view" call
+  when idle).
+- Continuous passive stream: `/api/vimar_intercom/av?autocall=0&idle=image` never ends. A dark
+  standby frame (`standby.png`: intercom icon, "Standby") while idle, the panel's live video
+  during a ring or a call on the same connection, standby again afterwards. One re-encoded
+  H.264 stream with constant parameters (640x480, 10 fps, keyframe every second, baseline) and
+  an AAC track (48 kHz mono as `/av`: the panel's audio during a ring or a call, silence while
+  idle, fed 100 ms per frame from the same clock so audio and video stay in step), a single
+  ffmpeg shared by all clients (started with the first, stopped with the last), plus a decoder
+  alive only while there is video; nothing changes for the card, plain
+  `/av` or the frame grabber. Recommended for Frigate, Scrypted and go2rtc: one stream that is
+  always up, so no reconnect loops and Echo Show opens instantly. Needs ffmpeg with `libx264`.
+- `docs/EXTERNAL.md`: Scrypted (Alexa chime + Echo Show live view via a Doorbell Button and a
+  webhook fed by the doorbell `event`), go2rtc and Frigate (record on the doorbell event, no
+  detection on a standby frame).
+- Talking on `/audio_ws` while the doorbell rings answers the call: mic PCM whose RMS stays
+  above a threshold for 200 ms takes the same path as the card's "Answer", then the audio is
+  forwarded as usual. Below the threshold (or while idle) the frames are dropped. For Scrypted
+  (Echo Show, HomeKit through the scrypted-vimar-intercom mixin), where there is no button.
+  The card's explicit "Answer" is unchanged.
+- New option `allowed_users` (multi-select of Home Assistant users): only they can read
+  `GET /api/vimar_intercom/rings` and `/rings/<name>`, open the card's live video and voice on
+  `/audio_ws`, or use `/av` with an HA token. Admins are always allowed; empty = every
+  logged-in user (the previous behaviour). `/av` without a token (HA's own camera stream,
+  go2rtc on the LAN) is unchanged.
+- Card option `confirm_open` (default true) keeps the two-tap **Apri**; false opens the door on
+  the first tap. Toggle in the visual editor.
+- Card option `listen_on_ring` (default false): when on, plays the panel's voice already during
+  the ringing/calling/in-call preview, over the same playback path as the talk mode, with no
+  microphone and without answering or calling. Stops itself when the ring ends or when real
+  two-way audio takes over. Same iOS fallback as the talk button: if the browser keeps the
+  `AudioContext` suspended for lack of a real gesture, it gives up silently and shows the
+  "Audio" tap instead.
+
+### Fixed
+
+- Ring photo: a panel calling for the first time since the HA restart that shipped the
+  per-panel SPS/PPS cache (or after an update from the older, single-pair storage format)
+  had nothing cached for it, and its first IDR often arrives without in-band SPS/PPS (the
+  40515 sends those only every ~6 s): the photo failed with "anteprima video non arrivata"
+  even though video was flowing. The old single-pair storage is now migrated instead of
+  discarded, and a cache miss for the calling panel falls back to any other panel's cached
+  SPS/PPS (the resolution rarely differs) instead of none. The ring photo also keeps waiting
+  for a decodable frame for as long as the ring lasts, not just 6 s.
+- Card: arriving on the `#citofono` anchor while the call was already `in_call` (e.g.
+  **Rispondi** pressed on the ring notification, answered by an automation before the anchor
+  scroll ran) never joined the call's audio — the video was already state-driven, but the
+  anchor's `hashchange`/`location-changed` handler never re-ran the render that starts
+  playback. It now joins (receive + mic) by itself, without ever answering or calling on its
+  own.
+
+### Changed
+
+- `/av` audio is AAC-LC (48 kHz mono, 32 kb/s) instead of the panel's raw G.711. In MPEG-TS
+  PCMU ends up as private data (`bin_data`), so HA's stream worker (HLS, `camera.record`) and
+  HomeKit had no audio. Transcoding and low-latency mux flags as in #21 by @m4r1k; 48 kHz
+  instead of 24 because the muxer holds the first video packet until the first AAC frame
+  (measured +10 ms vs +60 ms). Video is still copied.
+- Ring photo as soon as possible: the first decoded frame is saved about a second after the ring
+  (`squillo_...jpg` + `ultimo_squillo.jpg`) and the "Intercom Ultimo Squillo" sensor gets `foto`
+  (path) and `foto_url` (relative URL with `?v=`, HA authentication) for notifications right
+  away. `snapshot_delay` now means "replace it with a better frame after N s" (the panel's
+  first keyframe is dark while the camera adjusts): same file name, new `photo_v` in
+  `/api/vimar_intercom/rings` so the card refreshes its cache; 0 keeps the first photo only. The
+  card reloads its history when the photo or the clip arrive. `camera.snapshot` still skips
+  the first keyframe.
+
+### Removed
+
+- The iOS push code, as in #21 by @m4r1k: `push_sender.py` (APNs VoIP over aiohttp, which
+  speaks HTTP/1.1 while APNs needs HTTP/2, so it could never deliver), the
+  `/api/vimar_intercom/push_token` view that stored device tokens inside the integration's
+  folder, its call on ring and the `APNS_*` constants. With `APNS_KEY_ID` empty none of it ever
+  ran; the "APNs push not configured" warning at every start is gone. The Vimar-cloud FCM
+  parameters (`PN_*`, `connectProfiles`) are unchanged.
+
 ## [1.0.13] - 2026-09-28
 
 ### Added
