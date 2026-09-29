@@ -73,6 +73,7 @@ call_state = {
     "remote_contact": None, "remote_sdp": None, "original_target": None,
     "route_set": None,   # Record-Route del dialogo, già nell'ordine per il nostro Route
     "local_sdp": None,   # il nostro SDP: riusato nel 200 a un re-INVITE
+    "silence_limit": None,  # s di silenzio verso la targa (solo "Vedi esterno"); None = senza limite
 }
 
 pending_responses: dict[str, asyncio.Queue] = {}
@@ -1246,8 +1247,10 @@ async def do_system_message(target_uri, body_text, extra_headers=None, timeout=1
     return False, "Timeout"
 
 
-async def do_call(target=None):
-    """INVITE a SIP target (default: intercom targa 55001)."""
+async def do_call(target=None, silence_limit=None):
+    """INVITE a SIP target (default: intercom targa 55001).
+
+    silence_limit: solo per la vista in uscita ("Vedi esterno"), vedi media.setup_media."""
     if not registered:
         _LOGGER.error("do_call: NOT registered")
         return False, "Non registrato"
@@ -1268,6 +1271,7 @@ async def do_call(target=None):
     call_state["from_tag"] = ftag
     call_state["original_target"] = target_uri
     call_state["local_sdp"] = sdp
+    call_state["silence_limit"] = silence_limit
 
     vimar_callid = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
     inv_branch = ""
@@ -1442,7 +1446,8 @@ async def do_call(target=None):
                 if remote:
                     call_state["remote_sdp"] = remote
                     _LOGGER.info("SDP: audio=%s video=%s", remote.get('audio', {}), remote.get('video', {}))
-                    await media.setup_media(remote, _local_crypto_key, _local_video_crypto_key)
+                    await media.setup_media(remote, _local_crypto_key, _local_video_crypto_key,
+                                            silence_limit=call_state["silence_limit"])
                     if not calling:
                         return await _annullata(acked=True)
 
@@ -1645,7 +1650,8 @@ async def do_hangup():
 
 def _clear_call_state() -> None:
     call_state.update(call_id=None, from_tag=None, to_tag=None, remote_contact=None,
-                      remote_sdp=None, original_target=None, route_set=None, local_sdp=None)
+                      remote_sdp=None, original_target=None, route_set=None, local_sdp=None,
+                      silence_limit=None)
 
 
 async def do_options(target=None):
@@ -1767,7 +1773,8 @@ async def handle_incoming_invite(raw):
                    f"Content-Length: {_clen(sdp)}\r\n\r\n{sdp}")
         if remote and remote != call_state["remote_sdp"]:
             call_state["remote_sdp"] = remote
-            await media.setup_media(remote, _local_crypto_key, _local_video_crypto_key)
+            await media.setup_media(remote, _local_crypto_key, _local_video_crypto_key,
+                                    silence_limit=call_state["silence_limit"])
         return
 
     if cid == pending_incoming["cid"]:

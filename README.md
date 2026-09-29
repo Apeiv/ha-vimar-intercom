@@ -116,16 +116,22 @@ Settings → Vimar Intercom → **Configure**:
 | **Entrance panel that opens the door** (`door_target`) | Recipient of the door command (lock, *Open Door*, `open_door` without `target`, actuators with target `AUTO`): the `GID_PE` of the door actuator in the phonebook. **Not always the SGA**: on a 2FV2 the SGA is `61000` and the door is opened by panel `55001`. Empty = the saved door actuator's panel, otherwise the SGA |
 | **Ring snapshot folder** (`snapshot_dir`) | Where the visitor's photo (`squillo_YYYYMMDD_HHMMSS_mmm.jpg` + `ultimo_squillo.jpg`) and the ring clip (`squillo_YYYYMMDD_HHMMSS_mmm.mp4`: the preview video, and the call if answered from HA, up to 60 s, no audio) are saved on every ring, e.g. `/config/media/citofono`. Must be writable by HA. Empty = off |
 | **Seconds for the better photo** (`snapshot_delay`) | The first photo is saved as soon as the first frame arrives (~1 s after the ring); after this many seconds it is replaced by a frame with the exposure settled (the panel's first keyframe is dark). Default 3 (Tab 5S Up 40515), 0 = keep the first |
+| **View silence** (`view_keepalive`) | Seconds of audio silence sent during "Vedi esterno" (0 = none). Over the cloud the panel closes the view after ~10 s without it; on the 2-wire plant in local mode it keeps the apartment busy (up to 300 s). Default: 120 over the cloud, 0 in local mode; on a 2-wire plant use 0 or 30 |
 | **Allowed users** (`allowed_users`) | Limits the card, the ring history (`GET /api/vimar_intercom/rings`, photos and clips) and `/audio_ws` to these HA users. Admins are always allowed. Empty = every logged-in user (default). It is **not** per user for the camera entity nor for `/av` from the local network (HA's own camera stream, go2rtc: no token, local network only): anyone who can open the camera sees and hears the stream. If the photo folder is under an HA media directory (e.g. `/config/media/citofono`), photos and clips also show up in the media browser for every user |
-| **Away message** (`away_message_file`, `away_message_delay`) | Audio file (mp3, wav…) played to the visitor if nobody answers within N seconds (0 = off, max 60); then the integration hangs up |
+| **Away message** (`away_message_file`, `away_message_delay`) | Audio file (mp3, wav…) played to the visitor if nobody answers within N seconds; then the integration hangs up. If the Tab exposes the voicemail delay, that one is used instead (*Voicemail · delay*) |
 | **Away message from text** (`away_message_text`, `away_message_tts`) | If the file field is empty, this text is read by Home Assistant's text-to-speech (`away_message_tts` = a `tts.*` entity; empty = HA's default engine) in HA's language, max 30 s. The audio is generated at startup and cached; if TTS fails the doorbell keeps ringing as usual |
 | **Media encryption (SRTP)** (`media_enc`) | **Automatic** (default since 1.0.11): follows the `media_enc` the plant declares in its `GET_INIT_STATUS` reply (`"srtp"` on a cloud 40515); plants with the short reply (the 40507) stay on plain RTP. **On** / **Off** force it. Entries saved as "on" by 1.0.10 or earlier stay on; "off" becomes automatic. Try **On** if the camera stays black or the call fails with `488` |
 | **Voice answer** (`voice_answer`) | Who can answer a ringing call by talking on `/audio_ws`: **Declared** (default, only with `?voice_answer=1`), **Off** (never), **Any** (any connection with a mic; a wall tablet with its mic left open can answer by itself on household noise) |
 | **Ring webhooks** (`ring_webhook_url`, `ring_end_webhook_url`) | Optional GET (fire-and-forget, 5 s timeout) fired when a ring starts and when it ends (answered, cancelled or missed) — e.g. the `turnOn`/`turnOff` URLs of a Scrypted Dummy Switch (see [docs/EXTERNAL.md](docs/EXTERNAL.md)). A failure only logs a warning, never blocks the ring. Empty = off |
 
-**Tab voicemail and Home Assistant's away message: one or the other.** The *Away message* and
-*Voicemail* switches exclude each other: turning one on turns the other off (also when the Tab's
-voicemail is switched on from the Tab itself). The away message switch is only available when the message is configured.
+**Voicemail.** There is one *Voicemail* switch (Configuration, device page). Turned on, it uses Home
+Assistant's away message if a text or an audio file is set (and turns the Tab's own voicemail off);
+otherwise it turns the Tab's voicemail on. Turned off, both are off. If the Tab switches its voicemail
+on by itself, the Tab's wins. There is a single delay, *Voicemail · delay* (from the Tab; if the Tab does
+not expose it, the `away_message_delay` option, 0 = 20 s): the away message starts after that many seconds.
+The message is set from the same page: *Voicemail · message text* and *Voicemail · audio file* (a pick-list of the files in
+`<first HA media folder>/citofono/messaggi`, created on demand; upload from Media > Local media; refreshed every minute).
+These are the integration's options, applied at once without a reload. The card's settings dialog hides the text and file rows from non-admin users; this is a UI limitation only, the entities themselves are not restricted.
 
 Example, Tab 5S Up 40515 (Due Fili Plus, cloud): SGA `61000`, PICG `60001`, video and door panel
 `55001`. These values come from the VIEW app's phonebook, not from the defaults.
@@ -155,7 +161,7 @@ already know your plant's SGA or want to tweak the imported actuator list.
 | *Dynamic actuators* | `button` | One per entry in `options["actuators"]` (F1/F2, stair lights, relays…); sends `MSG` with `Panda: command` |
 | Voicemail | `switch` | `VOICEMAIL;ON/OFF` (Panda: blue) to the SGA; state read from the Tab's announcements and from `GET_INIT_STATUS`, asked after every command. The commanded value is shown for 10 s at most: with no confirmation the state becomes *unknown* ([#9](../../issues/9)) |
 | Do Not Disturb | `switch` | `DND;ON/OFF` (Panda: blue) to the SGA; same rules as Voicemail |
-| Voicemail delay | `select` | Only on plants that send the long `GET_INIT_STATUS` reply: `vm_timeout`, one of the plant's own `vm_timeout_values`, written with `SET_APT_PARAMS` ([#4](../../issues/4)). It does not appear on plants with the short reply |
+| Voicemail · delay | `select` | Only on plants that send the long `GET_INIT_STATUS` reply: `vm_timeout`, one of the plant's own `vm_timeout_values`, written with `SET_APT_PARAMS` ([#4](../../issues/4)). It does not appear on plants with the short reply |
 | Intercom SIP | `binary_sensor` | SIP registration active (connectivity) |
 | Intercom In Call | `binary_sensor` | A call is up |
 | Intercom Ringing | `binary_sensor` | ON while an outdoor unit is calling (attribute: caller) |

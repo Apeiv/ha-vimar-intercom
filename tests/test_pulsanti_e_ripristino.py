@@ -204,6 +204,11 @@ def test_la_camera_dice_alla_card_le_entita_vere(monkeypatch):
         ("sensor", "e1_status"): "sensor.ufficio_vimar_intercom_intercom_stato",
         ("sensor", "e1_last_ring"): "sensor.ufficio_vimar_intercom_intercom_ultimo_squillo",
         ("lock", "e1_lock"): "lock.vimar_intercom_street_gate",
+        ("switch", "e1_dnd"): "switch.non_disturbare",
+        ("switch", "e1_segreteria"): "switch.segreteria",
+        ("select", "e1_vm_timeout"): "select.ritardo",
+        ("select", "e1_away_file"): "select.file",
+        ("text", "e1_away_text"): "text.testo",
     }
 
     class _Reg:
@@ -217,6 +222,8 @@ def test_la_camera_dice_alla_card_le_entita_vere(monkeypatch):
         "status": "sensor.ufficio_vimar_intercom_intercom_stato",
         "last_ring": "sensor.ufficio_vimar_intercom_intercom_ultimo_squillo",
         "lock": "lock.vimar_intercom_street_gate",
+        "dnd": "switch.non_disturbare", "segreteria": "switch.segreteria",
+        "delay": "select.ritardo", "file": "select.file", "text": "text.testo",
     }}
 
 

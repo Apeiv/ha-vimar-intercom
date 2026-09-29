@@ -124,6 +124,13 @@ CAMERA_TARGET = "55100"
 # Secondi fra lo squillo e la foto migliore (la prima si salva subito): la telecamera
 # della targa regola l'esposizione (Tab 5S Up 40515). 0 = solo la prima.
 DEFAULT_SNAPSHOT_DELAY = 3
+# Ritardo del messaggio di assenza se né il Tab né le opzioni ne danno uno: mai rispondere subito.
+DEFAULT_AWAY_DELAY = 20
+# Lunghezza massima del testo del messaggio di assenza (limite di un'entità text di HA).
+AWAY_TEXT_MAX = 255
+# Secondi di silenzio PCMU a "Vedi esterno" (0 = nessuno): via cloud la targa chiude la vista a ~10 s
+# senza audio; sul 2 fili in locale (UDP) il silenzio tiene l'appartamento occupato fino a 300 s.
+DEFAULT_VIEW_KEEPALIVE_CLOUD = 120
 
 # ─── Comandi di stato (in USCITA, Panda: blue) ───────────────────────────────
 GET_INIT_STATUS = "GET_INIT_STATUS"   # → PICG_TARGET; risposta GET_INIT_STATUS_REPLY

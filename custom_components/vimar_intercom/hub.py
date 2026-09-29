@@ -87,6 +87,8 @@ class VimarIntercomHub:
         self._stream_viewers = 0
         self._hangup_task: asyncio.Task | None = None
         self._away_task: asyncio.Task | None = None
+        # Registro squilli: aggiornamenti in ordine di richiesta (l'executor non lo garantisce).
+        self._ring_log_lock = asyncio.Lock()
         self._auto_ended_at = -1e9  # monotonic: fine dell'ultima chiamata
         self._viewers_left_at = -1e9  # monotonic: l'ultimo spettatore di /av se n'è andato
         self._was_busy = False      # in_call or calling, all'ultimo cambio di stato
@@ -144,8 +146,8 @@ class VimarIntercomHub:
         }
         self._call_started_mono: float | None = None
         self._ring_answered = False
-        # Interruttore «Messaggio di assenza» (switch.py): spento, _away_message non parte.
-        # Acceso di default; niente VOICEMAIL;OFF da soli, solo su azione dell'utente.
+        # Segreteria di HA (switch Segreteria): spenta, _away_message non parte.
+        # Niente VOICEMAIL;OFF da soli, solo su azione dell'utente.
         self._away_enabled = True
         self._ring_declined = False  # rifiutato da noi (603): non è uno squillo perso
         self._was_ringing = False  # per il webhook di fine squillo, vedi _handle_broadcast
@@ -168,6 +170,10 @@ class VimarIntercomHub:
     @staticmethod
     def _now():
         return datetime.now(timezone.utc)
+
+    def notify(self) -> None:
+        """Rinfresca le entità (es. dopo una modifica delle opzioni fuori dall'hub)."""
+        self._touch()
 
     def _touch(self):
         """Notifica le entità HA che le statistiche sono cambiate."""
@@ -422,7 +428,7 @@ class VimarIntercomHub:
         """Background auto-call when video stream opens without active call."""
         try:
             # Default di do_call: R.INTERCOM, cioè la targa video (camera_target).
-            ok, msg = await sip.do_call()
+            ok, msg = await sip.do_call(silence_limit=R.VIEW_KEEPALIVE)
         except Exception as e:  # noqa: BLE001
             ok, msg = False, str(e)
         if not ok:
@@ -583,6 +589,7 @@ class VimarIntercomHub:
         quando lo stream video si chiude."""
         self._cancel_away()
         self._auto_called = False
+        media.claim_voice()
 
     async def async_answer(self) -> tuple[bool, str]:
         if self._away_task and not self._away_task.done() and sip.in_call:
@@ -842,8 +849,9 @@ class VimarIntercomHub:
 
     async def _ring_log(self, change: Callable[[list], None]) -> None:
         try:
-            await asyncio.get_running_loop().run_in_executor(
-                None, ring_log.update_ring_log, R.SNAPSHOT_DIR, change)
+            async with self._ring_log_lock:  # FIFO: stesso ordine delle richieste
+                await asyncio.get_running_loop().run_in_executor(
+                    None, ring_log.update_ring_log, R.SNAPSHOT_DIR, change)
         except OSError as e:
             _LOGGER.warning("Registro squilli non aggiornato in %s: %s", R.SNAPSHOT_DIR, e)
 
@@ -908,7 +916,8 @@ class VimarIntercomHub:
         """Se dopo AWAY_MESSAGE_DELAY s QUESTO squillo suona ancora (nessuno ha
         risposto: Tab, telefono o HA), risponde, fa sentire il file (o il testo
         letto dal TTS, se non c'è un file) e riaggancia."""
-        await asyncio.sleep(R.AWAY_MESSAGE_DELAY)
+        # Un solo ritardo: quello della segreteria del Tab, se il Tab lo ha dichiarato.
+        await asyncio.sleep(self.stats.get("vm_timeout") or R.AWAY_MESSAGE_DELAY or C.DEFAULT_AWAY_DELAY)
         if not sip.ringing(ring_cid) or sip.in_call:
             return
         pcm = await (media.load_pcm(R.AWAY_MESSAGE_FILE) if R.AWAY_MESSAGE_FILE

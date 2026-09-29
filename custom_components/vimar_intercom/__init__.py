@@ -18,10 +18,12 @@ from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse, cal
 import homeassistant.helpers.config_validation as cv
 from homeassistant.exceptions import ConfigEntryNotReady, Unauthorized
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.service import async_register_admin_service
 from homeassistant.helpers.storage import Store
 
 from .const import DOMAIN
+from . import away_config
 from . import away_tts
 from . import log_buffer as _log_buffer
 from . import validate
@@ -40,7 +42,8 @@ _LOGGER = logging.getLogger(__name__)
 _debug_log = _log_buffer.debug_log
 _log_buffer.install()
 
-PLATFORMS = ["camera", "lock", "button", "event", "binary_sensor", "sensor", "switch", "select"]
+PLATFORMS = ["camera", "lock", "button", "event", "binary_sensor", "sensor", "switch", "select",
+             "text"]
 
 # ─── Servizi ──────────────────────────────────────────────────────────────────
 SERVICE_SEND_COMMAND = "send_command"
@@ -159,7 +162,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     audio_ws_clients: set[web.WebSocketResponse] = set()
 
     hass.data.setdefault(DOMAIN, {})
-    hass.data[DOMAIN][entry.entry_id] = {"hub": hub, "audio_ws_clients": audio_ws_clients}
+    hass.data[DOMAIN][entry.entry_id] = {"hub": hub, "audio_ws_clients": audio_ws_clients,
+                                         "applied": dict(entry.options)}
+    # Il messaggio di assenza si è unito a Segreteria: via l'entità separata rimasta orfana.
+    reg = er.async_get(hass)
+    if orphan := reg.async_get_entity_id("switch", DOMAIN, f"{entry.entry_id}_away_message"):
+        reg.async_remove(orphan)
 
     @callback
     def _on_model_detected(model: str, fw: str, ua: str, priority: int) -> None:
@@ -257,7 +265,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Ricarica l'integrazione al salvataggio delle options."""
+    """Ricarica l'integrazione al salvataggio delle options, tranne quando cambiano
+    solo le chiavi del messaggio di assenza: quelle si applicano in memoria."""
+    data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if data is not None and away_config.apply_options(data, entry.options):
+        return
     await hass.config_entries.async_reload(entry.entry_id)
 
 

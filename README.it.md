@@ -118,16 +118,22 @@ Impostazioni → Vimar Intercom → **Configura**:
 | **Targa che apre la porta** (`door_target`) | destinatario del comando di apertura (serratura, *Apri Porta*, `open_door` senza `target`, attuatori con target `AUTO`): il `GID_PE` dell'attuatore porta nella rubrica. **Non sempre è l'SGA**: su un 2FV2 l'SGA è `61000` e la porta la apre la targa `55001`. Vuoto = la targa dell'attuatore porta salvato, altrimenti l'SGA |
 | **Cartella foto squillo** (`snapshot_dir`) | dove salvare, a ogni squillo, la foto di chi suona (`squillo_AAAAMMGG_HHMMSS_mmm.jpg` + `ultimo_squillo.jpg`) e il clip dello squillo (`squillo_AAAAMMGG_HHMMSS_mmm.mp4`: il video dell'anteprima, e della chiamata se si risponde da HA, fino a 60 s, senza audio), es. `/config/media/citofono`. Deve essere scrivibile da HA. Vuoto = disattivato |
 | **Secondi per la foto migliore** (`snapshot_delay`) | la prima foto si salva appena arriva il primo fotogramma (~1 s dallo squillo); dopo questi secondi la sostituisce un fotogramma con l'esposizione regolata (il primo keyframe della targa è scuro). Default 3 (Tab 5S Up 40515), 0 = resta la prima |
+| **Silenzio della vista** (`view_keepalive`) | secondi di silenzio audio mandati durante «Vedi esterno» (0 = nessuno). Via cloud senza silenzio la targa chiude la vista a ~10 s; sul 2 fili in locale tiene occupato l'appartamento (fino a 300 s). Default: 120 via cloud, 0 in locale; sul 2 fili metti 0 o 30 |
 | **Utenti ammessi** (`allowed_users`) | Limita la card, lo storico squilli (`GET /api/vimar_intercom/rings`, foto e clip) e `/audio_ws` a questi utenti HA. Gli amministratori sempre. Vuoto = ogni utente autenticato (default). **Non** è per utente per l'entità camera né per `/av` dalla rete locale (la camera di HA, go2rtc: senza token, solo rete locale): chi può aprire la camera vede e sente lo stream. Se la cartella foto è sotto una cartella media di HA (es. `/config/media/citofono`), foto e clip compaiono nel browser media per tutti gli utenti |
-| **Messaggio di assenza** (`away_message_file`, `away_message_delay`) | file audio (mp3, wav…) fatto sentire al visitatore se nessuno risponde entro N secondi (0 = mai, max 60); poi l'integrazione riaggancia |
+| **Messaggio di assenza** (`away_message_file`, `away_message_delay`) | file audio (mp3, wav…) fatto sentire al visitatore se nessuno risponde entro N secondi; poi l'integrazione riaggancia. Se il Tab espone il ritardo della segreteria si usa quello (*Segreteria · ritardo*) |
 | **Messaggio di assenza da testo** (`away_message_text`, `away_message_tts`) | se il campo file è vuoto, questo testo lo legge la sintesi vocale di Home Assistant (`away_message_tts` = un'entità `tts.*`; vuoto = il motore predefinito di HA) nella lingua di HA, max 30 s. L'audio si genera all'avvio e resta in cache; se il TTS fallisce il citofono squilla come sempre |
 | **Cifratura del media (SRTP)** (`media_enc`) | **Automatico** (default dalla 1.0.11): segue il `media_enc` che l'impianto dichiara nella risposta a `GET_INIT_STATUS` (`"srtp"` su un 40515 in cloud); gli impianti con la risposta corta (il 40507) restano in RTP chiaro. **Attivo** / **Disattivo** lo forzano. Chi aveva salvato «attivo» con la 1.0.10 o prima resta attivo; «spento» diventa automatico. Prova **Attivo** se la camera resta nera o la chiamata fallisce con `488` |
 | **Risposta a voce** (`voice_answer`) | Chi può rispondere a uno squillo parlando su `/audio_ws`: **Solo dichiarato** (default, solo con `?voice_answer=1`), **Mai**, **Chiunque** (qualsiasi connessione con microfono; un tablet a muro col microfono rimasto aperto può rispondere da solo coi rumori di casa) |
 | **Webhook squillo** (`ring_webhook_url`, `ring_end_webhook_url`) | GET opzionale (fire-and-forget, timeout 5 s) inviata quando inizia uno squillo e quando finisce (risposto, annullato o non risposto) — es. gli URL `turnOn`/`turnOff` di un Dummy Switch Scrypted (vedi [docs/EXTERNAL.md](docs/EXTERNAL.md)). Un fallimento logga solo un warning, mai blocca lo squillo. Vuoto = disattivato |
 
-**Segreteria del Tab e messaggio di assenza di HA: uno o l'altro.** Gli switch *Messaggio di assenza*
-e *Segreteria* si escludono a vicenda: accendere uno spegne l'altro (anche se la segreteria del Tab
-viene accesa dal Tab stesso). Lo switch del messaggio di assenza è disponibile solo se il messaggio è configurato.
+**Segreteria.** C'è un solo switch *Segreteria* (Configurazione, pagina del dispositivo). Acceso, usa il
+messaggio di assenza di Home Assistant se c'è un testo o un file audio (e spegne la segreteria del Tab);
+altrimenti accende quella del Tab. Spento, sono spente entrambe. Se il Tab accende da solo la propria
+segreteria, vale quella del Tab. Il ritardo è uno solo, *Segreteria · ritardo* (quello del Tab; se il Tab non lo
+espone, l'opzione `away_message_delay`, 0 = 20 s): il messaggio di HA parte dopo quei secondi.
+Il messaggio si imposta dalla stessa pagina: *Segreteria · testo del messaggio* e *Segreteria · file audio* (elenco dei file in
+`<prima cartella media di HA>/citofono/messaggi`, creata se manca; si carica da Media > Local media; l'elenco si aggiorna ogni minuto).
+Sono le stesse opzioni dell'integrazione, applicate subito senza ricaricarla. Il dialog delle impostazioni della card nasconde le righe di testo e file a chi non è admin: è solo una limitazione della UI, le entità non sono limitate.
 
 Esempio, Tab 5S Up 40515 (Due Fili Plus, cloud): SGA `61000`, PICG `60001`, targa video e apri‑porta
 `55001`. Sono i valori della rubrica dell'app VIEW, non i default.
@@ -156,7 +162,7 @@ tuo impianto o vuoi modificare la lista attuatori prodotta dall'import).
 | *Attuatori dinamici* | `button` | Uno per voce in `options["actuators"]` (F1/F2, luci scala, relè…); invia `MSG` con `Panda: command` |
 | Segreteria | `switch` | `VOICEMAIL;ON/OFF` (Panda: blue) verso l'SGA; stato letto dagli annunci del Tab e da `GET_INIT_STATUS`, chiesto dopo ogni comando. Il valore comandato si vede per 10 s al massimo: senza conferma lo stato diventa *sconosciuto* ([#9](../../issues/9)) |
 | Non Disturbare | `switch` | `DND;ON/OFF` (Panda: blue) verso l'SGA; stesse regole della Segreteria |
-| Ritardo segreteria | `select` | Solo sugli impianti con la risposta lunga di `GET_INIT_STATUS`: `vm_timeout`, uno dei `vm_timeout_values` dichiarati dall'impianto, scritto con `SET_APT_PARAMS` ([#4](../../issues/4)). Sugli impianti con la risposta corta non compare |
+| Segreteria · ritardo | `select` | Solo sugli impianti con la risposta lunga di `GET_INIT_STATUS`: `vm_timeout`, uno dei `vm_timeout_values` dichiarati dall'impianto, scritto con `SET_APT_PARAMS` ([#4](../../issues/4)). Sugli impianti con la risposta corta non compare |
 | Intercom SIP | `binary_sensor` | Registrazione SIP attiva (connectivity) |
 | Intercom In Call | `binary_sensor` | Chiamata attiva |
 | Intercom Squillo | `binary_sensor` | ON mentre una targa chiama (attr: chiamante) |

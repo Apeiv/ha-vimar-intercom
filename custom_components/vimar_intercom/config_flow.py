@@ -21,6 +21,7 @@ from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import selector
 
 from .const import (
+    AWAY_TEXT_MAX,
     CAMERA_TARGET,
     DEFAULT_SNAPSHOT_DELAY,
     DOMAIN,
@@ -34,7 +35,9 @@ from . import qr_decoder
 from . import rest_client
 from . import rubrica_import
 from . import validate
-from .runtime import MEDIA_ENC_MODES, VOICE_ANSWER_MODES, media_enc_mode, voice_answer_mode
+from .runtime import (
+    MEDIA_ENC_MODES, VOICE_ANSWER_MODES, media_enc_mode, view_keepalive_default, voice_answer_mode,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -66,6 +69,7 @@ KEY_AWAY_TTS       = "away_message_tts"
 KEY_AWAY_DELAY     = "away_message_delay"
 KEY_SNAP_DIR       = "snapshot_dir"
 KEY_SNAP_DELAY     = "snapshot_delay"
+KEY_VIEW_KA        = "view_keepalive"
 KEY_ALLOWED_USERS  = "allowed_users"
 KEY_RING_WEBHOOK_URL     = "ring_webhook_url"
 KEY_RING_END_WEBHOOK_URL = "ring_end_webhook_url"
@@ -613,6 +617,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             away_text  = str(user_input.get(KEY_AWAY_TEXT, "")).strip()
             away_tts   = str(user_input.get(KEY_AWAY_TTS) or "").strip()
             away_delay = user_input.get(KEY_AWAY_DELAY, 0)
+            if len(away_text) > AWAY_TEXT_MAX:
+                errors[KEY_AWAY_TEXT] = "text_too_long"
             # Come snapshot_dir: solo cartelle che HA può leggere (allowlist_external_dirs,
             # media). Il percorso va dritto a `ffmpeg -i`.
             if away_file and not self.hass.config.is_allowed_path(away_file):
@@ -622,6 +628,10 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
             snap_dir   = str(user_input.get(KEY_SNAP_DIR, "")).strip()
             snap_delay = user_input.get(KEY_SNAP_DELAY, DEFAULT_SNAPSHOT_DELAY)
+            view_ka    = user_input.get(KEY_VIEW_KA, view_keepalive_default(use_local_udp))
+            if (use_local_udp != current.get(KEY_USE_LOCAL_UDP, True)
+                    and view_ka == view_keepalive_default(current.get(KEY_USE_LOCAL_UDP, True))):
+                view_ka = view_keepalive_default(use_local_udp)  # era il predefinito: segue la modalità
             allowed_users = [str(u) for u in user_input.get(KEY_ALLOWED_USERS) or []]
             ring_webhook_url     = str(user_input.get(KEY_RING_WEBHOOK_URL) or "").strip()
             ring_end_webhook_url = str(user_input.get(KEY_RING_END_WEBHOOK_URL) or "").strip()
@@ -683,6 +693,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                         KEY_AWAY_DELAY:     away_delay,
                         KEY_SNAP_DIR:       snap_dir,
                         KEY_SNAP_DELAY:     snap_delay,
+                        KEY_VIEW_KA:        view_ka,
                         KEY_ALLOWED_USERS:  allowed_users,
                         KEY_RING_WEBHOOK_URL:     ring_webhook_url,
                         KEY_RING_END_WEBHOOK_URL: ring_end_webhook_url,
@@ -785,6 +796,11 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     KEY_SNAP_DELAY,
                     default=form.get(KEY_SNAP_DELAY, DEFAULT_SNAPSHOT_DELAY),
                 ): vol.All(vol.Coerce(int), vol.Range(min=0, max=30)),
+                vol.Optional(
+                    KEY_VIEW_KA,
+                    default=form.get(KEY_VIEW_KA, view_keepalive_default(
+                        form.get(KEY_USE_LOCAL_UDP, True))),
+                ): vol.All(vol.Coerce(int), vol.Range(min=0, max=3600)),
                 vol.Optional(
                     KEY_ALLOWED_USERS,
                     default=[u for u in form.get(KEY_ALLOWED_USERS) or [] if any(u == x["value"] for x in users)],

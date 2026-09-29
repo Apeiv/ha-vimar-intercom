@@ -119,3 +119,24 @@ def test_messaggio_di_assenza_fuori_dalle_cartelle_lette_da_ha(cf, tmp_path):
     result = asyncio.run(flow.async_step_settings({
         "local_proxy": "192.0.2.1", "use_local_udp": False, "away_message_file": str(f)}))
     assert result["type"] == "form" and result["errors"]["away_message_file"] == "file_not_allowed"
+
+
+def test_testo_del_messaggio_oltre_255_rifiutato(cf):
+    flow = _flow(cf, _base_entry_data())
+    result = asyncio.run(flow.async_step_settings({
+        "local_proxy": "192.0.2.1", "use_local_udp": False, "away_message_text": "x" * 256}))
+    assert result["errors"]["away_message_text"] == "text_too_long"
+
+
+def test_view_keepalive_predefinito_segue_il_cambio_di_modalita(cf):
+    flow = _flow(cf, {**_base_entry_data(), "use_local_udp": False})
+    async def _ok(**kw): return True, ""
+    cf._test_sip_registration = _ok
+    # cloud -> locale con il 120 della vecchia modalità: diventa il 0 della nuova
+    r = asyncio.run(flow.async_step_settings({
+        "local_proxy": "192.0.2.1", "use_local_udp": True, "view_keepalive": 120}))
+    assert r["type"] == "create_entry" and r["data"]["view_keepalive"] == 0
+    # un valore scelto dall'utente resta
+    r = asyncio.run(flow.async_step_settings({
+        "local_proxy": "192.0.2.1", "use_local_udp": True, "view_keepalive": 30}))
+    assert r["data"]["view_keepalive"] == 30

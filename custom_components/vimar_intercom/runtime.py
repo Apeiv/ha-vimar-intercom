@@ -116,13 +116,27 @@ AWAY_MESSAGE_TTS: str = ""
 AWAY_MESSAGE_DELAY: int = 0
 
 
+AWAY_KEYS = ("away_message_file", "away_message_text", "away_message_delay")
+
+
+def set_away_option(key: str, value) -> None:
+    """Applica in memoria una delle AWAY_KEYS (senza ricaricare l'integrazione)."""
+    globals()[key.upper()] = int(value or 0) if key == "away_message_delay" else str(value or "").strip()
+
+
 def away_message_configured() -> bool:
-    return bool(AWAY_MESSAGE_DELAY and (AWAY_MESSAGE_FILE or AWAY_MESSAGE_TEXT))
+    return bool(AWAY_MESSAGE_FILE or AWAY_MESSAGE_TEXT)
 
 
 # Foto di chi suona: cartella (vuoto = non salvare) e secondi dopo lo squillo.
 SNAPSHOT_DIR: str = ""
 SNAPSHOT_DELAY: int = _const.DEFAULT_SNAPSHOT_DELAY
+VIEW_KEEPALIVE: float = _const.DEFAULT_VIEW_KEEPALIVE_CLOUD   # s di silenzio a "Vedi esterno", 0 = nessuno
+
+
+def view_keepalive_default(use_local_udp: bool) -> int:
+    """Locale (UDP, il 2 fili): niente silenzio, occuperebbe l'appartamento; cloud: 120 s."""
+    return 0 if use_local_udp else _const.DEFAULT_VIEW_KEEPALIVE_CLOUD
 # Id degli utenti HA ammessi a squilli, foto, clip e media live (vuoto = tutti).
 ALLOWED_USERS: list[str] = []
 
@@ -206,7 +220,7 @@ def configure(data: dict) -> None:
     global SGA_TARGET, PICG_TARGET
     global CAMERA_TARGET, INTERNAL_PANEL_TARGET, DOOR_TARGET
     global AWAY_MESSAGE_FILE, AWAY_MESSAGE_TEXT, AWAY_MESSAGE_TTS, AWAY_MESSAGE_DELAY
-    global SNAPSHOT_DIR, SNAPSHOT_DELAY, ALLOWED_USERS
+    global SNAPSHOT_DIR, SNAPSHOT_DELAY, VIEW_KEEPALIVE, ALLOWED_USERS
     global RING_WEBHOOK_URL, RING_END_WEBHOOK_URL
     global DEVICE_IMEI, DEVICE_UUID
 
@@ -290,6 +304,8 @@ def configure(data: dict) -> None:
     AWAY_MESSAGE_DELAY = int(data.get("away_message_delay") or 0)
     SNAPSHOT_DIR   = str(data.get("snapshot_dir") or "").strip()
     SNAPSHOT_DELAY = int(data.get("snapshot_delay", _const.DEFAULT_SNAPSHOT_DELAY))
+    _ka = data.get("view_keepalive")
+    VIEW_KEEPALIVE = int(_ka) if _ka is not None else view_keepalive_default(USE_LOCAL_UDP)
     ALLOWED_USERS  = [str(u) for u in data.get("allowed_users") or []]
     RING_WEBHOOK_URL     = str(data.get("ring_webhook_url") or "").strip()
     RING_END_WEBHOOK_URL = str(data.get("ring_end_webhook_url") or "").strip()

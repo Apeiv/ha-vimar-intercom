@@ -107,6 +107,19 @@ Italian and are kept as they were written.
 
 ### Changed
 
+- **Breaking:** the "Messaggio di assenza" switch is merged into *Segreteria* (the orphaned entity is removed
+  on update). HA's away message no longer needs a delay above 0: a text or file is enough, and it only
+  answers rings after you turn *Segreteria* on (on update it starts off, so nothing answers by itself).
+  Do Not Disturb and Segreteria are now in the Configuration category: they are no longer in auto-generated
+  dashboards and are not exposed to voice assistants by default.
+- The audio silence sent during "Vedi esterno" (only the outgoing view, not answered calls) now stops after
+  `view_keepalive` seconds (option; default 120 over the cloud, 0 = none in local/UDP mode), so on the
+  2-wire 40507 it no longer keeps the apartment busy for up to 300 s.
+- Voicemail and away message merged: one *Segreteria* switch (on = HA's away message if a text or file
+  is set, otherwise the Tab's voicemail; attribute `modo`) and one delay, *Segreteria · ritardo*, which
+  also drives the away message (the `away_message_delay` option is the fallback when the Tab does not
+  expose it). The "Messaggio di assenza" switch and the "Ritardo messaggio di assenza" number are removed;
+  the message text and file entities are renamed *Segreteria · testo del messaggio* / *Segreteria · file audio*.
 - `/av` audio is AAC-LC (48 kHz mono, 32 kb/s) instead of the panel's raw G.711. In MPEG-TS
   PCMU ends up as private data (`bin_data`), so HA's stream worker (HLS, `camera.record`) and
   HomeKit had no audio. Transcoding and low-latency mux flags as in #21 by @m4r1k; 48 kHz

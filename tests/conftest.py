@@ -68,15 +68,17 @@ def _stub_ha() -> None:
     ha = _mod("homeassistant", _is_stub=True)
     for sub in [
         "core", "config_entries", "const", "exceptions", "helpers", "helpers.entity", "helpers.entity_platform",
-        "helpers.restore_state", "helpers.device_registry", "helpers.storage", "helpers.event", "helpers.aiohttp_client",
+        "helpers.restore_state", "helpers.device_registry", "helpers.entity_registry", "helpers.storage", "helpers.event", "helpers.aiohttp_client",
         "helpers.config_validation", "helpers.selector", "helpers.start", "components", "components.http", "components.camera",
         "components.sensor", "components.binary_sensor", "components.switch", "components.button", "components.event",
-        "components.lock", "components.select", "components.ffmpeg", "components.tts", "util", "util.dt",
+        "components.lock", "components.select", "components.text", "components.number", "components.ffmpeg", "components.tts", "util", "util.dt",
     ]:
         m = _mod(f"homeassistant.{sub}")
         m.__getattr__ = lambda name, _m=m: _Any  # type: ignore[attr-defined]
         parent, _, child = f"homeassistant.{sub}".rpartition(".")
         setattr(sys.modules[parent], child, m)
+    sys.modules["homeassistant.const"].EntityCategory = types.SimpleNamespace(CONFIG="config", DIAGNOSTIC="diagnostic")
+    sys.modules["homeassistant.helpers.entity_registry"].async_get = lambda hass: _Any()
     ha.core.HomeAssistant = _Any
     ha.core.ServiceCall = _Any
     ha.core.callback = lambda f: f
@@ -130,7 +132,7 @@ def hub(monkeypatch):
     monkeypatch.setitem(sip.pending_incoming, "active", False)
     h.chiamate = []
 
-    async def _fake_do_call(target=None):
+    async def _fake_do_call(target=None, silence_limit=None):
         h.chiamate.append(target)
         return True, "200"
 

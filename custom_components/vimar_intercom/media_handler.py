@@ -708,12 +708,16 @@ def _current_panel() -> str | None:
 
 
 async def setup_media(remote_sdp, local_crypto_key=None, local_video_crypto_key=None,
-                      early=False):
+                      early=False, silence_limit=None):
     """Start media after SIP call established. Called by sip.py.
 
     early: anteprima dello squillo (183): si riceve soltanto, la voce parte
-    con enable_tx() alla risposta."""
-    global _stun_task, _audio_task, _tx_task
+    con enable_tx() alla risposta.
+    silence_limit: secondi di silenzio PCMU dopo cui il pacer smette di mandarlo
+    (vista in uscita "Vedi esterno", 0 = mai silenzio); None = senza limite, come
+    in ogni chiamata risposta (la targa chiude se non riceve RTP)."""
+    global _stun_task, _audio_task, _tx_task, _silence_limit
+    _silence_limit = silence_limit
     audio = remote_sdp.get("audio", {})
     video = remote_sdp.get("video", {})
     remote_ip = remote_sdp.get("conn", "")
@@ -794,6 +798,12 @@ async def setup_media(remote_sdp, local_crypto_key=None, local_video_crypto_key=
     _tx_task = asyncio.create_task(_tx_loop())
 
 
+def claim_voice() -> None:
+    """Parla una persona: la chiamata non è più una semplice vista, silenzio senza limite."""
+    global _silence_limit
+    _silence_limit = None
+
+
 def enable_tx():
     """Risposta a uno squillo con anteprima: da qui si manda anche la voce."""
     if audio_proto and audio_proto.remote_addr:
@@ -862,6 +872,7 @@ _TX_MAX = 8000  # 1 s di μ-law
 # dura i 20+ s configurati; senza RTP in uscita HA veniva chiuso dalla
 # targa a ~10 s indipendentemente dal timer di autoaccensione.
 SILENCE_ULAW = ulaw_encode(bytes(320))
+_silence_limit: float | None = None  # vedi setup_media
 
 
 def send_audio(pcm_data: bytes):
@@ -907,6 +918,7 @@ async def _tx_loop():
     audio muto durante una chiamata."""
     loop = asyncio.get_running_loop()
     nxt = loop.time()
+    t_view = None  # da quando si può trasmettere: il silenzio dura _silence_limit s da qui
     try:
         while True:
             nxt += 0.02
@@ -916,10 +928,14 @@ async def _tx_loop():
             ap = audio_proto
             if not ap or not ap.remote_addr or not ap.tx_enabled:
                 continue
+            if t_view is None:
+                t_view = loop.time()
             if len(ap.tx_buf) >= 160:
                 frame = bytes(ap.tx_buf[:160])
                 del ap.tx_buf[:160]
             else:
+                if _silence_limit is not None and loop.time() - t_view >= _silence_limit:
+                    continue  # solo la vista: 0 = mai silenzio; poi si chiude da sola, come prima
                 frame = SILENCE_ULAW
             ap.send_rtp(frame)
     except asyncio.CancelledError:

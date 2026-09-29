@@ -28,6 +28,7 @@ def audio(monkeypatch):
     ap.remote_addr = ("192.0.2.1", 4000)
     ap.tx_enabled = True
     monkeypatch.setattr(mh, "audio_proto", ap)
+    monkeypatch.setattr(mh, "_silence_limit", None)  # chiamata risposta: silenzio senza limite
     return ap
 
 
@@ -140,3 +141,36 @@ def test_audio_ricevuto_con_header_extension():
 def test_silence_ulaw_is_shared_and_0xff():
     from custom_components.vimar_intercom import media_handler as m
     assert m.SILENCE_ULAW == b"\xff" * 160
+
+
+def test_silenzio_della_vista_si_ferma_dopo_view_keepalive(audio, monkeypatch):
+    monkeypatch.setattr(mh, "_silence_limit", 0.2)
+    _run_tx(0.6)
+    n = len(audio.transport.out)
+    assert 8 <= n <= 14, n  # ~0,2 s / 20 ms, non i ~30 di 0,6 s
+
+
+def test_chiamata_risposta_il_silenzio_non_si_ferma(audio):
+    _run_tx(0.6)
+    assert len(audio.transport.out) >= 25
+
+
+def test_voce_vera_toglie_il_limite_della_vista(audio, monkeypatch):
+    monkeypatch.setattr(mh, "_silence_limit", 0.1)
+    mh.claim_voice()
+    _run_tx(0.4)
+    assert len(audio.transport.out) >= 15
+
+
+def test_view_keepalive_zero_niente_silenzio_ma_la_voce_passa(audio, monkeypatch):
+    monkeypatch.setattr(mh, "_silence_limit", 0)
+    _run_tx(0.2)
+    assert audio.transport.out == []
+    mh.send_audio(b"\x10\x00" * 320)
+    _run_tx(0.2)
+    assert audio.transport.out and all(p[12:] != mh.SILENCE_ULAW for p in audio.transport.out[:1])
+
+
+def test_view_keepalive_predefinito_locale_zero_cloud_120():
+    from custom_components.vimar_intercom import runtime as R
+    assert R.view_keepalive_default(True) == 0 and R.view_keepalive_default(False) == 120

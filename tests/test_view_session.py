@@ -50,7 +50,7 @@ def test_auto_call_fallito_e_retry_non_chiamano(hub, monkeypatch):
     t = [1000.0]
     monkeypatch.setattr(hub_mod.time, "monotonic", lambda: t[0])
 
-    async def _occupata(target=None):
+    async def _occupata(target=None, silence_limit=None):
         hub.chiamate.append(target)
         return False, "486 Busy Here"  # fallito prima ancora di `calling`
 

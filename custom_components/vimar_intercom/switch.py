@@ -27,6 +27,7 @@ import time
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -60,24 +61,24 @@ async def async_setup_entry(
     # runtime.configure() è già stato chiamato da async_setup_entry() prima
     # di avviare le piattaforme, quindi il valore qui è già quello corrente.
     async_add_entities([
-        VimarModeSwitch(
+        VimarVoicemailSwitch(
             hub, entry.entry_id, key="segreteria", name="Segreteria",
             icon="mdi:voicemail", target=R.SGA_TARGET,
             cmd_on=SEGRETERIA_ON, cmd_off=SEGRETERIA_OFF,
             state_attr="voicemail",
             hname=SEGRETERIA_HEADER_NAME, hvalue=SEGRETERIA_HEADER_VALUE),
         VimarModeSwitch(
-            hub, entry.entry_id, key="dnd", name="Non Disturbare",
+            hub, entry.entry_id, key="dnd", name="Non disturbare",
             icon="mdi:bell-off", target=R.SGA_TARGET,
             cmd_on=DND_ON, cmd_off=DND_OFF, state_attr="dnd",
             hname="Panda", hvalue="blue"),
-        VimarAwaySwitch(hub, entry.entry_id),
     ])
 
 
 class VimarModeSwitch(SwitchEntity, RestoreEntity):
     """Switch per una modalità del Tab (segreteria / non disturbare)."""
 
+    _attr_entity_category = EntityCategory.CONFIG
     _attr_has_entity_name = False
 
     def __init__(self, hub, entry_id: str, *, key: str, name: str, icon: str,
@@ -204,8 +205,6 @@ class VimarModeSwitch(SwitchEntity, RestoreEntity):
             self._cancel_expire()
             self._expire_handle = asyncio.get_running_loop().call_later(CONFIRM_S, self._expire)
             self._on_state_change()  # annuncio già arrivato durante l'invio: niente attesa
-        if ok and new_state and self._key == "segreteria":
-            self._hub.on_voicemail_on()
         _LOGGER.info("%s %s → ok=%s msg=%s", self._attr_name,
                      "ON" if new_state else "OFF", ok, msg)
         self.async_write_ha_state()
@@ -216,48 +215,47 @@ class VimarModeSwitch(SwitchEntity, RestoreEntity):
         await self._hub.async_request_status()
 
 
-class VimarAwaySwitch(SwitchEntity, RestoreEntity):
-    """Messaggio di assenza di HA (opzioni away_message_*), escluso a vicenda con la
-    segreteria del Tab: acceso questo, VOICEMAIL;OFF al Tab; accesa quella, questo si spegne.
+class VimarVoicemailSwitch(VimarModeSwitch):
+    """Segreteria: risponde il messaggio di HA (se configurato e attivo) o quella del Tab."""
 
-    Disponibile solo se il messaggio è configurato. Di default acceso, ma senza mandare
-    VOICEMAIL;OFF all'avvio: il comando parte solo su azione dell'utente."""
-
-    _attr_has_entity_name = False
-    _attr_name = "Messaggio di assenza"
-    _attr_icon = "mdi:message-voice"
-    _attr_should_poll = False
-
-    def __init__(self, hub, entry_id: str) -> None:
-        self._hub = hub
-        self._attr_unique_id = f"{entry_id}_away_message"
-        self._attr_device_info = device_info(entry_id)
+    def _uses_ha(self) -> bool:
+        return self._hub.away_enabled and R.away_message_configured()
 
     @property
-    def available(self) -> bool:
-        return R.away_message_configured()
+    def is_on(self) -> bool | None:
+        return True if self._uses_ha() else super().is_on
 
     @property
-    def is_on(self) -> bool:
-        return self._hub.away_enabled
+    def assumed_state(self) -> bool:
+        return not self._uses_ha() and super().assumed_state
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        return {"modo": "Home Assistant" if self._uses_ha() else "Tab", **super().extra_state_attributes}
 
     async def async_added_to_hass(self) -> None:
         last = await self.async_get_last_state()
-        if last is not None and last.state in ("on", "off"):
-            # Segreteria del Tab già accesa: il messaggio resta spento.
-            self._hub.set_away_enabled(last.state == "on" and not self._hub.stats.get("voicemail"))
-        self._hub.register_state_callback(self.async_write_ha_state)
-
-    async def async_will_remove_from_hass(self) -> None:
-        self._hub.unregister_state_callback(self.async_write_ha_state)
+        if last is not None and "modo" in last.attributes:
+            # Nessun comando all'avvio: si riprende solo se il messaggio di HA era quello in uso.
+            self._hub.set_away_enabled(last.attributes["modo"] == "Home Assistant"
+                                       and not self._hub.stats.get("voicemail"))
+        else:
+            # Prima volta (o aggiornamento da prima che il messaggio di assenza fosse unito a
+            # Segreteria, quando bastava averlo configurato): il messaggio di HA parte solo
+            # quando l'utente accende Segreteria, non a ogni squillo.
+            self._hub.set_away_enabled(False)
+        await super().async_added_to_hass()
 
     async def async_turn_on(self, **kwargs) -> None:
-        ok, msg = await self._hub.async_send_command(
-            body=SEGRETERIA_OFF, target=R.SGA_TARGET,
-            header_name=SEGRETERIA_HEADER_NAME, header_value=SEGRETERIA_HEADER_VALUE)
-        if not ok:
-            raise HomeAssistantError(f"{self._attr_name}: segreteria del Tab non spenta ({msg})")
-        self._hub.set_away_enabled(True)
+        if R.away_message_configured():
+            # Messaggio di HA: la segreteria del Tab va spenta, poi si attiva il nostro.
+            await self._send(self._cmd_off, False)
+            self._hub.set_away_enabled(True)
+            self.async_write_ha_state()
+            return
+        await super().async_turn_on(**kwargs)
+        self._hub.on_voicemail_on()
 
     async def async_turn_off(self, **kwargs) -> None:
         self._hub.set_away_enabled(False)
+        await super().async_turn_off(**kwargs)

@@ -47,7 +47,7 @@ answer:
 
 decline:
   name: Rifiuta
-  description: Rifiuta la chiamata in arrivo (603): smette di suonare tutta la casa, come l'app.
+  description: "Rifiuta la chiamata in arrivo (603): smette di suonare tutta la casa, come l'app."
 
 simulate_ring:
   name: Squillo di prova
