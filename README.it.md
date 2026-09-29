@@ -440,8 +440,9 @@ questo componente), ricontrolla che entrambe le patch siano ancora presenti (ved
   `/audio_ws` richiede autenticazione HA, e le sue azioni di debug (`command`, `probe`, `scan`,
   `register`, `reconnect`) sono riservate agli amministratori. Il payload del QR non viene loggato
   a livello INFO.
-- Parlare su `/audio_ws` mentre squilla risponde alla chiamata (RMS del microfono sopra soglia
-  per 200 ms): così rispondono Echo Show e HomeKit via Scrypted. A riposo l'audio si butta.
+- Parlare su `/audio_ws?voice_answer=1` mentre squilla risponde alla chiamata (RMS del microfono sopra soglia
+  per 200 ms): così rispondono Echo Show e HomeKit via Scrypted. Senza il flag, o su una connessione
+  che era in chiamata finché non torna a riposo, la voce non risponde mai. A riposo l'audio si butta.
 - Ultimi squilli per la card: `GET /api/vimar_intercom/rings` (elenco, `?limit=` fino a 50) e
   `GET /api/vimar_intercom/rings/<nome>` (la foto o il clip, anche a pezzi con Range) richiedono
   l'autenticazione HA (la card li carica con percorsi firmati). Il secondo serve solo file
