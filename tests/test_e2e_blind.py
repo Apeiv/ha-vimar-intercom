@@ -680,3 +680,63 @@ def test_clip_dello_squillo_e_foto_subito_poi_migliore(monkeypatch, tmp_path):
                     part = await resp.read()
                     assert len(part) == 100 and part[4:8] == b"ftyp"
     run(s())
+
+
+# ─── risposta a voce (/audio_ws): solo se dichiarata, mai con un mic rimasto aperto ──
+
+LOUD_FRAME = b"\x02" + b"\x00\x40" * 341   # RMS ~16000, ben sopra VOICE_RMS
+
+
+def _voice_answer(monkeypatch, query, before=None, ring="ring-v", frames=10):
+    """Squilla, il WS manda voce forte: True se l'hub ha risposto da solo."""
+    async def s():
+        async with Rig(monkeypatch) as rig:
+            await rig.register()
+            views = load_views(monkeypatch)
+            view = views.VimarAudioWSView(make_hass(rig))
+            ws = views.web.WebSocketResponse()
+            monkeypatch.setattr(views.web, "WebSocketResponse", lambda: ws)
+            wst = asyncio.create_task(view.get(Request(admin=False, query=query)))
+            if before:
+                await before(rig, ws)
+            rig.ring(ring)
+            await wait_until(lambda: rig.hub.is_ringing)
+            for _ in range(frames):
+                ws.inbox.put_nowait(types.SimpleNamespace(type="binary", data=LOUD_FRAME))
+                await asyncio.sleep(0.02)
+            answered = rig.hub.in_call
+            ws.inbox.put_nowait(None)
+            await wst
+            return answered
+    return run(s())
+
+
+def test_voce_non_risponde_senza_flag(monkeypatch):
+    assert _voice_answer(monkeypatch, {}) is False
+
+
+def test_voce_risponde_con_flag(monkeypatch):
+    assert _voice_answer(monkeypatch, {"voice_answer": "1"}) is True
+
+
+def test_voce_da_connessione_gia_in_chiamata_non_risponde_al_giro_dopo(monkeypatch):
+    async def before(rig, ws):
+        # la connessione ha parlato in una chiamata precedente, poi l'hub e' tornato a riposo
+        rig.ring("ring-0")
+        await wait_until(lambda: rig.hub.is_ringing)
+        assert (await rig.hub.async_answer())[0]
+        ws.inbox.put_nowait(types.SimpleNamespace(type="binary", data=MIC_FRAME))
+        await asyncio.sleep(0.1)
+        await rig.hub.async_hangup()
+        await wait_until(lambda: rig.hub.status == "idle")
+    # mai un frame a riposo: e' ancora "in chiamata" per il server, quindi tace
+    assert _voice_answer(monkeypatch, {"voice_answer": "1"}, before, ring="ring-v") is False
+
+
+def test_voce_a_riposo_non_si_accumula_per_lo_squillo_dopo(monkeypatch):
+    async def before(rig, ws):  # 3 frame forti a riposo (~127 ms)
+        for _ in range(3):
+            ws.inbox.put_nowait(types.SimpleNamespace(type="binary", data=LOUD_FRAME))
+        await asyncio.sleep(0.2)
+    # altri 3 allo squillo: da soli (127 ms) sotto VOICE_ANSWER_MS, insieme (254) no
+    assert _voice_answer(monkeypatch, {"voice_answer": "1"}, before, frames=3) is False

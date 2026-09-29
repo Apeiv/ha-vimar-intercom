@@ -558,6 +558,10 @@ class VimarAudioWSView(HomeAssistantView):
         }))
 
         loud_ms = 0.0  # voce di fila sopra soglia mentre squilla
+        # Risposta a voce solo se il client l'ha dichiarata (?voice_answer=1): un microfono
+        # lasciato aperto non deve rispondere allo squillo dopo.
+        voice_answer = request.query.get("voice_answer") == "1"
+        was_in_call = False  # questa connessione era in chiamata: niente voce finché non torna idle
         try:
             async for msg in ws:
                 if msg.type == web.WSMsgType.TEXT:
@@ -568,9 +572,13 @@ class VimarAudioWSView(HomeAssistantView):
                         continue
                     pcm = msg.data[1:]
                     if hub.in_call:
+                        was_in_call = True
                         hub.claim_call()
                         media.send_audio(pcm)
-                    elif hub.is_ringing:
+                    elif not hub.is_ringing:
+                        loud_ms = 0.0
+                        was_in_call = False
+                    elif voice_answer and not was_in_call:
                         # Parlare mentre squilla risponde (stessa strada di "Rispondi");
                         # sotto soglia, o a riposo, il PCM si butta.
                         loud_ms = loud_ms + len(pcm) / 16 if media.rms(pcm) >= media.VOICE_RMS else 0.0
