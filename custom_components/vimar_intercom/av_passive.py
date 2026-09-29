@@ -221,7 +221,10 @@ async def _decode(is_live, on_live) -> None:
                     await asyncio.gather(feeder, return_exceptions=True)
                     if dec.returncode is None:
                         dec.kill()
-                        await dec.wait()
+                        try:  # come frame_grabber._record: kill() non basta se ffmpeg è impuntato
+                            await asyncio.wait_for(dec.wait(), 15)
+                        except asyncio.TimeoutError:
+                            pass
             finally:
                 await av_stream.av_unsubscribe(q)
     finally:
