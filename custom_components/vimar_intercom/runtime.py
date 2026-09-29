@@ -52,7 +52,12 @@ MEDIA_ENC: bool = False
 # Risposta a voce su /audio_ws: "declared" (default) solo chi manda ?voice_answer=1,
 # "off" mai, "any" qualsiasi connessione con microfono.
 VOICE_ANSWER_MODES = ("declared", "off", "any")
-VOICE_ANSWER: str = "declared"
+VOICE_ANSWER_DEFAULT = "declared"
+VOICE_ANSWER: str = VOICE_ANSWER_DEFAULT
+
+
+def voice_answer_mode(value) -> str:
+    return value if value in VOICE_ANSWER_MODES else VOICE_ANSWER_DEFAULT
 
 
 def media_enc_mode(value) -> str:
@@ -212,7 +217,7 @@ def configure(data: dict) -> None:
     USE_LOCAL_UDP  = bool(data.get("use_local_udp", True))
     LOCAL_UDP_PORT = int(data.get("local_udp_port", 5060))
     MEDIA_ENC_OPTION = media_enc_mode(data.get("media_enc"))
-    VOICE_ANSWER = data.get("voice_answer") if data.get("voice_answer") in VOICE_ANSWER_MODES else "declared"
+    VOICE_ANSWER = voice_answer_mode(data.get("voice_answer"))
     MEDIA_ENC_PLANT  = None   # lo ridice l'impianto al prossimo GET_INIT_STATUS_REPLY
     _recompute_media_enc()
 

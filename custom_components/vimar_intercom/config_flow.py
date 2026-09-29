@@ -34,7 +34,7 @@ from . import qr_decoder
 from . import rest_client
 from . import rubrica_import
 from . import validate
-from .runtime import MEDIA_ENC_MODES, VOICE_ANSWER_MODES, media_enc_mode
+from .runtime import MEDIA_ENC_MODES, VOICE_ANSWER_MODES, media_enc_mode, voice_answer_mode
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -595,7 +595,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             use_local_udp  = user_input.get("use_local_udp", True)
             local_udp_port = int(user_input.get("local_udp_port", DEFAULT_LOCAL_UDP_PORT))
             media_enc      = media_enc_mode(user_input.get(KEY_MEDIA_ENC))
-            voice_answer   = user_input.get(KEY_VOICE_ANSWER, "declared")
+            voice_answer   = voice_answer_mode(user_input.get(KEY_VOICE_ANSWER))
             actuators_raw  = user_input.get(KEY_ACTUATORS, "")
             actuators_default = actuators_raw  # rimostra ciò che l'utente ha scritto
 
@@ -727,7 +727,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 # Chi può rispondere a voce su /audio_ws: dichiarato / mai / chiunque.
                 vol.Optional(
                     KEY_VOICE_ANSWER,
-                    default=form.get(KEY_VOICE_ANSWER, "declared"),
+                    default=voice_answer_mode(form.get(KEY_VOICE_ANSWER)),
                 ): selector.SelectSelector(selector.SelectSelectorConfig(
                     options=list(VOICE_ANSWER_MODES),
                     translation_key="voice_answer",

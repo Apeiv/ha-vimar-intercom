@@ -52,8 +52,8 @@ def test_blocchi_del_browser_diventano_pacchetti_da_20ms(audio):
     assert all((b - a) & 0xFFFF == 1 for a, b in zip(seq, seq[1:]))
     assert all(p[1] == 0 for p in pkts)  # PT 0, PCMU
     # 1023 campioni: 6 pacchetti pieni di voce vera, poi silenzio di keepalive.
-    assert pkts[5][12:] != mh._SILENCE_ULAW
-    assert pkts[6][12:] == mh._SILENCE_ULAW
+    assert pkts[5][12:] != mh.SILENCE_ULAW
+    assert pkts[6][12:] == mh.SILENCE_ULAW
 
 
 def test_senza_voce_rtp_di_silenzio(audio):
@@ -63,7 +63,7 @@ def test_senza_voce_rtp_di_silenzio(audio):
     _run_tx(0.25)
     pkts = audio.transport.out
     assert pkts and all(len(p) == 12 + 160 for p in pkts)
-    assert all(p[12:] == mh._SILENCE_ULAW for p in pkts)
+    assert all(p[12:] == mh.SILENCE_ULAW for p in pkts)
 
 
 def test_anteprima_dello_squillo_non_trasmette(audio):
@@ -135,3 +135,8 @@ def test_audio_ricevuto_con_header_extension():
     pkt = struct.pack("!BBHII", 0x90, 0, 1, 0, 5) + ext + b"\xff" * 160
     ap.datagram_received(pkt, None)
     assert ap.audio_buffer.get_nowait() == b"\x00\x00" * 160
+
+
+def test_silence_ulaw_is_shared_and_0xff():
+    from custom_components.vimar_intercom import media_handler as m
+    assert m.SILENCE_ULAW == b"\xff" * 160

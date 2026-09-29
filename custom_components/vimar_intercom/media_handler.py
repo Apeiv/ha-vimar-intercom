@@ -861,7 +861,7 @@ _TX_MAX = 8000  # 1 s di μ-law
 # ufficiale (linphone) manda audio in continuo, muto o no, e la chiamata
 # dura i 20+ s configurati; senza RTP in uscita HA veniva chiuso dalla
 # targa a ~10 s indipendentemente dal timer di autoaccensione.
-_SILENCE_ULAW = ulaw_encode(bytes(320))
+SILENCE_ULAW = ulaw_encode(bytes(320))
 
 
 def send_audio(pcm_data: bytes):
@@ -902,7 +902,7 @@ def _note_tx_level(pcm_data: bytes) -> None:
 
 async def _tx_loop():
     """Un pacchetto da 20 ms (160 B) ogni 20 ms: voce in coda (microfono o
-    messaggio di assenza) se c'è, altrimenti silenzio PCMU (_SILENCE_ULAW)
+    messaggio di assenza) se c'è, altrimenti silenzio PCMU (SILENCE_ULAW)
     come keepalive — come fa l'app ufficiale, che non lascia mai il canale
     audio muto durante una chiamata."""
     loop = asyncio.get_running_loop()
@@ -920,7 +920,7 @@ async def _tx_loop():
                 frame = bytes(ap.tx_buf[:160])
                 del ap.tx_buf[:160]
             else:
-                frame = _SILENCE_ULAW
+                frame = SILENCE_ULAW
             ap.send_rtp(frame)
     except asyncio.CancelledError:
         pass

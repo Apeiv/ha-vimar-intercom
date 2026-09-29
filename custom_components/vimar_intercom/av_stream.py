@@ -88,7 +88,7 @@ def _seed_silence(audio_proto) -> None:
     targa non ne manda (anteprima 183 muta, SRTP audio che fallisce) /av restava a
     0 byte. Passano da av_rtp: l'audio vero poi continua da qui (SSRC nuovo)."""
     for i in range(3):
-        rtp = struct.pack("!BBHII", 0x80, 0, i, i * 160, 0) + b"\xff" * 160
+        rtp = struct.pack("!BBHII", 0x80, 0, i, i * 160, 0) + media.SILENCE_ULAW
         try:
             audio_proto.ffmpeg_av_sock.sendto(
                 audio_proto.av_rtp.fix(rtp, 0), ("127.0.0.1", FFMPEG_AV_AUDIO_PORT))

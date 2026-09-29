@@ -1897,7 +1897,7 @@ def early_media() -> bool:
 async def _ring_timeout(cid) -> None:
     if ringing(cid) and not in_call:
         # Risposta finale anche qui: se il CANCEL si è solo perso, la targa smette.
-        await do_decline_incoming("480 Temporarily Unavailable", "Squillo scaduto")
+        await do_decline_incoming("480 Temporarily Unavailable", msg="Squillo scaduto")
 
 
 async def do_answer_incoming():
@@ -1973,7 +1973,7 @@ async def do_answer_incoming():
     return True, "Risposto!"
 
 
-async def do_decline_incoming(reason: str = "603 Decline", msg: str = "Squillo rifiutato") -> bool:
+async def do_decline_incoming(reason: str = "603 Decline", *, msg: str = "Squillo rifiutato") -> bool:
     """True se c'era uno squillo da rifiutare."""
     if not ringing():
         return False
