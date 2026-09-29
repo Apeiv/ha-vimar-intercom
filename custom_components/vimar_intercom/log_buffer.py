@@ -29,7 +29,9 @@ from .log_redact import redact
 
 LOGGER_NAME = "custom_components.vimar_intercom"
 LEVEL_PIN = 1
-MAX_LINES = 200
+# A whole call at debug level (ring, answer, media, hang-up) is about two
+# thousand lines: 200 kept only its last seconds.
+MAX_LINES = 3000
 
 debug_log: list[str] = []
 

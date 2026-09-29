@@ -111,7 +111,7 @@ Settings → Vimar Intercom → **Configure**:
 | **Actuators (JSON)** (`actuators`) | JSON list of `{name, msg, target, icon}`; creates dynamic buttons. Empty = no buttons |
 | **SGA** (`sga_target`) | Recipient of `VOICEMAIL;`/`DND;`, and of the door command when `door_target` is empty. Empty = default `55001` |
 | **PICG** (`picg_target`) | Recipient of `GET_INIT_STATUS`. On the development plant it matches the SGA; on others it does not (60001 on a 40515). Empty = default `55001` |
-| **Video entrance panel** (`camera_target`) | Panel called by the camera, *Call* and *Call Video (outdoor)*: the `PHONEBOOK` row with `TYPE='PE'`. **Not the SGA.** Empty = default `55100` |
+| **Video entrance panel** (`camera_target`) | Panel called by the camera, *Call* and *Call Video (outdoor)*: the `PHONEBOOK` row with `TYPE='PE'`. **Not the SGA.** Empty = the panel learned from the last ring (a panel that rang with video, used when `55100` does not exist on the plant), otherwise the default `55100` |
 | **Internal panel** (`internal_panel_target`) | Target of *Call Home (indoor)*. The phonebook does not say which one it is: set it by hand. Empty = default `55002` |
 | **Entrance panel that opens the door** (`door_target`) | Recipient of the door command (lock, *Open Door*, `open_door` without `target`, actuators with target `AUTO`): the `GID_PE` of the door actuator in the phonebook. **Not always the SGA**: on a 2FV2 the SGA is `61000` and the door is opened by panel `55001`. Empty = the saved door actuator's panel, otherwise the SGA |
 | **Ring snapshot folder** (`snapshot_dir`) | Where the visitor's photo (`squillo_YYYYMMDD_HHMMSS_mmm.jpg` + `ultimo_squillo.jpg`) and the ring clip (`squillo_YYYYMMDD_HHMMSS_mmm.mp4`: the preview video, and the call if answered from HA, up to 60 s, no audio) are saved on every ring, e.g. `/config/media/citofono`. Must be writable by HA. Empty = off |
@@ -166,6 +166,7 @@ already know your plant's SGA or want to tweak the imported actuator list.
 | Intercom In Call | `binary_sensor` | A call is up |
 | Intercom Ringing | `binary_sensor` | ON while an outdoor unit is calling (attribute: caller) |
 | Intercom Outgoing Call | `binary_sensor` | ON while Home Assistant is calling |
+| Intercom Dispositivi | `sensor` | Number of devices seen on the plant (phones sharing the SIP account, panels); attribute `dispositivi` lists them with the identifier masked, kept across restarts |
 | Intercom State | `sensor` (enum) | offline / idle / ringing / in_call / calling (plus network attributes, and on plants with the long reply the apartment `GID`, `apt_names` and the declared `media_enc`) |
 | Intercom Last Caller | `sensor` | Outdoor unit or monitor of the last ring |
 | Intercom Last Ring | `sensor` (timestamp) | Time of the last ring |
@@ -224,7 +225,7 @@ where the buttons go while it is live:
 
 After a hang-up the last picture stays 1.5 s with the buttons off, so a second tap does not land
 on whatever moves in below when the card shrinks. **Vedi esterno** calls the video panel; the
-view lasts as long as the panel allows (about 10 s on the Tab 5S Up 40515), then the video ends
+view lasts as long as the panel allows (about 30 s with the silence frames the integration sends; measured 30.1 s on a 2FV2), then the video ends
 and the card closes. To look again, press **Vedi esterno** again, as on the in-home monitor.
 The buttons change with the state:
 

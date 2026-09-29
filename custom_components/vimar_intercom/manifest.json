@@ -14,6 +14,7 @@
   "documentation": "https://github.com/lollox80/ha-vimar-intercom/blob/main/README.md",
   "integration_type": "hub",
   "iot_class": "local_push",
+  "single_config_entry": true,
   "issue_tracker": "https://github.com/lollox80/ha-vimar-intercom/issues",
   "requirements": [
     "pycryptodome>=3.19.0",

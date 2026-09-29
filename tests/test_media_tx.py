@@ -103,7 +103,7 @@ def test_inoltro_video_a_ffmpeg_col_pt_96(monkeypatch):
     vp.forward_av = True
     vp.frame_sink = lambda nal: None
     pkt = struct.pack("!BBHII", 0x80, 0x80 | 99, 1, 0, 7) + b"\x41\x00"
-    vp.datagram_received(pkt, None)
+    vp.datagram_received(pkt, vp.remote_addr)
     assert sent[0][1] == 0x80 | 96 and sent[0][2:] == pkt[2:]
 
 
@@ -134,7 +134,7 @@ def test_audio_ricevuto_con_header_extension():
     ap.remote_addr = ("192.0.2.1", 4000)
     ext = b"\xbe\xde\x00\x01" + b"\x10\xaa\x00\x00"  # 1 parola di estensione
     pkt = struct.pack("!BBHII", 0x90, 0, 1, 0, 5) + ext + b"\xff" * 160
-    ap.datagram_received(pkt, None)
+    ap.datagram_received(pkt, ap.remote_addr)
     assert ap.audio_buffer.get_nowait() == b"\x00\x00" * 160
 
 
@@ -174,3 +174,36 @@ def test_view_keepalive_zero_niente_silenzio_ma_la_voce_passa(audio, monkeypatch
 def test_view_keepalive_predefinito_locale_zero_cloud_120():
     from custom_components.vimar_intercom import runtime as R
     assert R.view_keepalive_default(True) == 0 and R.view_keepalive_default(False) == 120
+def test_setup_media_uses_the_negotiated_suite_on_each_line(audio, monkeypatch):
+    """A line negotiated with AES_CM_128_HMAC_SHA1_32 gets a 32-bit tag both ways;
+    a plain RTP line next to it stays in the clear."""
+    vp = mh.RTPVideoProtocol()
+    for k, v in dict(video_proto=vp, _stun_task=None, _audio_task=None, _tx_task=None).items():
+        monkeypatch.setattr(mh, k, v)
+    monkeypatch.setattr(mh.frame_grabber, "start", lambda vp: None)
+    monkeypatch.setattr(mh.frame_grabber, "stop", lambda vp: None)
+    key = base64.b64encode(os.urandom(30)).decode()
+
+    async def go():
+        await mh.setup_media({"conn": "192.0.2.1", "audio": {
+            "port": 4000, "fmts": ["0"], "crypto_key": key,
+            "crypto_suite": "AES_CM_128_HMAC_SHA1_32"}, "video": {"port": 4002}},
+            local_crypto_key=key)
+        tags = (audio.srtp_rx.AUTH_TAG_LEN, audio.srtp_tx.AUTH_TAG_LEN, vp.srtp_rx)
+        await mh.stop_media()
+        return tags
+    assert asyncio.run(go()) == (4, 4, None)
+
+
+def test_voice_resumes_only_with_two_packets_queued(audio):
+    """One packet of voice alone after an underrun would play as voice, silence,
+    voice: it waits for a second one."""
+    mh.send_audio(b"\x10\x00" * 160)          # one packet: not enough
+    _run_tx(0.1)
+    assert all(p[12:] == mh.SILENCE_ULAW for p in audio.transport.out)
+    assert len(audio.tx_buf) == 160
+    audio.transport.out.clear()
+    mh.send_audio(b"\x10\x00" * 160)          # the second arrives
+    _run_tx(0.1)
+    voice = [p for p in audio.transport.out if p[12:] != mh.SILENCE_ULAW]
+    assert len(voice) == 2 and audio.transport.out[:2] == voice

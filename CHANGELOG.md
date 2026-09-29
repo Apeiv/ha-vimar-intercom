@@ -4,6 +4,68 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [semver](ht
 Newest entries on top. **Entries are written in English from 1.0.1 onwards**; earlier ones are in
 Italian and are kept as they were written.
 
+## [Unreleased]
+
+### Fixes and improvements
+
+Call and media:
+
+- The talk queue is capped at 200 ms, oldest audio dropped first: a network hiccup no longer
+  leaves the rest of the call late. After an underrun voice resumes once two packets are queued.
+- The SDP answer mirrors the offer's encryption per media line: RTP/SAVP with the crypto tag and
+  suite the offer chose for that line (AES_CM_128_HMAC_SHA1_80 or _32), RTP/AVP for a plain line.
+  A line whose suites are all unsupported is refused. Our own offers still follow the plant
+  setting.
+- Plain RTP is accepted only from the call's address (SRTP is authenticated by its key).
+- A viewer that opens the camera during an automatic hang-up waits for the call to end locally
+  (at most about 0.5 s more), not for the answer to the BYE that the cloud never sends. The
+  hang-up is shielded from the new view, bounded by a timeout, and its errors are logged. A
+  viewer that leaves during that wait no longer gets a call dialled.
+- Stale `call_ended` events from a previous call are ignored; the call is hung up and the SIP
+  state reset when the integration is unloaded.
+- An audio WebSocket open anywhere (the card, the app) no longer stops a view from calling.
+- The echo of our own call gets 486 Busy Here instead of a decline that ended the ring everywhere.
+
+SIP:
+
+- REGISTER retries once more when the registrar rotates its nonce, and answers a 407 with
+  Proxy-Authorization.
+- The framer handles the CRLF keepalive pongs; the request processor survives a reply that cannot
+  be sent.
+- SIP tags, branches and Call-IDs come from `secrets`.
+- MESSAGE and NOTIFY requests delivered twice by the relay are answered but broadcast once.
+- Commands sent to a whole SIP URI are accepted only as `sip:<digits>@<plant domain>`.
+- The RTP sockets ask for a 1 MB receive buffer (SO_RCVBUF), so a video burst is not dropped.
+- Every connection made through the unverified TLS fallback to the cloud proxy is logged at
+  WARNING.
+
+Setup and configuration:
+
+- Entries from the m4r1k fork keep working: `sip_cloud_domain` is read as the cloud domain, and a
+  legacy `device_id` becomes both device identifiers.
+- HA1 is always recomputed from the password on the domain in use.
+- The device name the integration pairs with (MyName) is configurable, and validated: 1 to 64
+  printable characters.
+- Setup probes the transport: it tries the path the plant profile suggests and falls back between
+  cloud and local, storing what worked. The plant profile only sets the transport default; media
+  encryption keeps following the plant's own declaration (`media_enc` auto).
+- Only one config entry is allowed.
+- Saving values into the entry data (detected model, learned panel) no longer reloads the
+  integration; only a change of the options does.
+
+Entities and diagnostics:
+
+- New "Intercom Dispositivi" sensor: the devices seen on the plant (phones sharing the SIP
+  account, panels). The list is kept across restarts, identifiers are masked and ports dropped in
+  the attribute, and the attributes are kept out of the recorder.
+- The video panel can be learned: when `camera_target` is empty and the default panel does not
+  exist (404), the panel that last rang with video is tried and saved. A choice in the options
+  always wins; a busy (486) or unavailable (480) panel is not replaced. The learning is logged at
+  WARNING.
+- The voicemail and DND switches warn when the plant's state contradicts a command it accepted
+  with 200 OK (usually a wrong `sga_target`).
+- SRTP keys are masked in the logs, and the debug log buffer is bigger.
+
 ## [1.0.14] - 2026-09-30
 
 ### Added

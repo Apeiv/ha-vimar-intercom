@@ -113,7 +113,7 @@ Impostazioni → Vimar Intercom → **Configura**:
 | **Attuatori (JSON)** (`actuators`) | lista JSON `{name, msg, target, icon}`; crea bottoni dinamici. Vuoto = nessun bottone |
 | **SGA** (`sga_target`) | destinatario di `VOICEMAIL;`/`DND;`, e del comando di apertura se `door_target` è vuota. Vuoto = default `55001` |
 | **PICG** (`picg_target`) | destinatario di `GET_INIT_STATUS`. Sull'impianto di sviluppo coincide con l'SGA, su altri no (60001 su un 40515). Vuoto = default `55001` |
-| **Targa video** (`camera_target`) | targa chiamata dalla camera, da *Chiama* e da *Chiama Video (esterno)*: la riga `PHONEBOOK` con `TYPE='PE'`. **Non è l'SGA.** Vuoto = default `55100` |
+| **Targa video** (`camera_target`) | targa chiamata dalla camera, da *Chiama* e da *Chiama Video (esterno)*: la riga `PHONEBOOK` con `TYPE='PE'`. **Non è l'SGA.** Vuoto = la targa imparata dall'ultimo squillo (una targa che ha suonato con il video, usata quando `55100` non esiste sull'impianto), altrimenti il default `55100` |
 | **Pannello interno** (`internal_panel_target`) | destinatario di *Chiama Casa (interno)*. La rubrica non lo dice: va inserito a mano. Vuoto = default `55002` |
 | **Targa che apre la porta** (`door_target`) | destinatario del comando di apertura (serratura, *Apri Porta*, `open_door` senza `target`, attuatori con target `AUTO`): il `GID_PE` dell'attuatore porta nella rubrica. **Non sempre è l'SGA**: su un 2FV2 l'SGA è `61000` e la porta la apre la targa `55001`. Vuoto = la targa dell'attuatore porta salvato, altrimenti l'SGA |
 | **Cartella foto squillo** (`snapshot_dir`) | dove salvare, a ogni squillo, la foto di chi suona (`squillo_AAAAMMGG_HHMMSS_mmm.jpg` + `ultimo_squillo.jpg`) e il clip dello squillo (`squillo_AAAAMMGG_HHMMSS_mmm.mp4`: il video dell'anteprima, e della chiamata se si risponde da HA, fino a 60 s, senza audio), es. `/config/media/citofono`. Deve essere scrivibile da HA. Vuoto = disattivato |
@@ -167,6 +167,7 @@ tuo impianto o vuoi modificare la lista attuatori prodotta dall'import).
 | Intercom In Call | `binary_sensor` | Chiamata attiva |
 | Intercom Squillo | `binary_sensor` | ON mentre una targa chiama (attr: chiamante) |
 | Intercom Chiamata In Uscita | `binary_sensor` | ON mentre HA chiama |
+| Intercom Dispositivi | `sensor` | numero di dispositivi visti sull'impianto (telefoni che condividono l'account SIP, targhe); l'attributo `dispositivi` li elenca con l'identificativo mascherato, e resta dopo un riavvio |
 | Intercom Stato | `sensor` (enum) | offline / idle / ringing / in_call / calling (+ attributi rete; sugli impianti con la risposta lunga anche il `GID` dell'appartamento, `apt_names` e il `media_enc` dichiarato) |
 | Intercom Ultimo Chiamante | `sensor` | targa/monitor dell'ultimo squillo |
 | Intercom Ultimo Squillo | `sensor` (timestamp) | ora dell'ultimo squillo (attr: chiamante, foto/foto_url e clip/clip_url con `snapshot_dir`) |
@@ -225,7 +226,7 @@ stanno i pulsanti durante la diretta:
 
 Dopo il riaggancio l'ultima immagine resta 1,5 s con i pulsanti spenti, così un secondo tocco
 non finisce su quello che risale quando la card si restringe. **Vedi esterno** chiama la targa
-video; la visione dura quanto la concede la targa (circa 10 s sul Tab 5S Up 40515), poi il video
+video; la visione dura quanto la concede la targa (circa 30 s con i pacchetti di silenzio che manda l'integrazione; misurati 30,1 s su un 2FV2), poi il video
 finisce e la card si richiude. Per guardare di nuovo si ripreme **Vedi esterno**, come sul
 monitor di casa. I pulsanti cambiano con lo stato:
 

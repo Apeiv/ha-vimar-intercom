@@ -128,11 +128,23 @@ class VimarModeSwitch(SwitchEntity, RestoreEntity):
     @callback
     def _on_state_change(self) -> None:
         if self._pending is not None:
-            _, _, seq_at_send = self._pending
+            wanted, _, seq_at_send = self._pending
             # Il Tab ha detto come stanno le cose dopo il comando (conferma o smentita).
-            if self._real() is not None and self._hub.stats.get("mode_seq", 0) != seq_at_send:
+            real = self._real()
+            if real is not None and self._hub.stats.get("mode_seq", 0) != seq_at_send:
                 self._pending = None
                 self._cancel_expire()
+                if real != wanted:
+                    # A 200 OK says the MESSAGE was delivered, not that anyone
+                    # acted on it: a wrong recipient answers 200 and ignores it.
+                    _LOGGER.warning(
+                        "%s: %s accepted %r (200 OK) but the state stayed %s. This "
+                        "usually means the wrong recipient: these commands go to the "
+                        "apartment's SGA, which is not the entrance panel on every "
+                        "plant. Check \"sga_target\" in the integration options.",
+                        self._attr_name, self._target,
+                        self._cmd_on if wanted else self._cmd_off,
+                        "ON" if real else "OFF")
         self.async_write_ha_state()
 
     @callback

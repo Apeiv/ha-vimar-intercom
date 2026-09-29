@@ -11,10 +11,13 @@ L'inizializzazione avviene in __init__.py → async_setup_entry():
 from __future__ import annotations
 
 import hashlib as _hashlib
+import logging as _logging
 import secrets as _secrets
 import uuid as _uuid
 
 from . import const as _const
+
+_LOGGER = _logging.getLogger(__name__)
 
 # ─── Valori di default (vuoti) ───────────────────────────────────────────────
 SIP_USER:     str = ""
@@ -152,6 +155,8 @@ RING_END_WEBHOOK_URL: str = ""
 # «Chiama Video (esterno)». INTERNAL_PANEL_TARGET = «Chiama Casa (interno)».
 # Vuoto in options → default storico in const.py.
 CAMERA_TARGET:         str = _const.CAMERA_TARGET
+# True when the user chose the video panel: a learned one never replaces it.
+CAMERA_TARGET_CONFIGURED: bool = False
 INTERNAL_PANEL_TARGET: str = _const.INTERNAL_PANEL_TARGET
 # La targa che apre la porta: il GID_PE dell'attuatore porta nella rubrica.
 # Non è per forza l'SGA: su un 2FV2 l'SGA è il 61000 e la porta la apre la
@@ -168,6 +173,9 @@ DOOR_ESTERNO: str = ""   # sip:<DOOR_TARGET>@<domain> — destinatario dell'apri
 # al primo avvio se mancano. Mai costanti: vedi nota in const.py.
 DEVICE_IMEI: str = ""
 DEVICE_UUID: str = ""
+# The MyName header. A local pairing binds (identifier, name) to the credential
+# and refuses any change with a 503, so it is stored rather than hard-coded.
+DEVICE_NAME: str = _const.MY_NAME
 
 # ─── Modello rilevato via SIP (vedi model_detect.py) ─────────────────────────
 # Popolato all'avvio dal config entry (ultimo valore rilevato) e aggiornato a
@@ -218,11 +226,11 @@ def configure(data: dict) -> None:
     global DETECTED_MODEL, DETECTED_FW, DETECTED_UA, DETECTED_PRIORITY
     global ACTUATORS
     global SGA_TARGET, PICG_TARGET
-    global CAMERA_TARGET, INTERNAL_PANEL_TARGET, DOOR_TARGET
+    global CAMERA_TARGET, INTERNAL_PANEL_TARGET, DOOR_TARGET, CAMERA_TARGET_CONFIGURED
     global AWAY_MESSAGE_FILE, AWAY_MESSAGE_TEXT, AWAY_MESSAGE_TTS, AWAY_MESSAGE_DELAY
     global SNAPSHOT_DIR, SNAPSHOT_DELAY, VIEW_KEEPALIVE, ALLOWED_USERS
     global RING_WEBHOOK_URL, RING_END_WEBHOOK_URL
-    global DEVICE_IMEI, DEVICE_UUID
+    global DEVICE_IMEI, DEVICE_UUID, DEVICE_NAME
 
     SIP_USER     = data.get("sip_user", "")
     SIP_PASSWORD = data.get("sip_password", "")
@@ -248,23 +256,31 @@ def configure(data: dict) -> None:
     # sip_domain resta il valore salvato dal config flow (o inserito a mano)
     # ed è il fallback quando il dominio della modalità attiva non è noto.
     LOCAL_DOMAIN = (data.get("local_domain") or "").strip()
-    CLOUD_DOMAIN = (data.get("cloud_domain") or "").strip()
+    # "sip_cloud_domain": the same value, under the name the m4r1k fork used
+    # before 1.0.7 introduced "cloud_domain"; entries saved then still have it.
+    CLOUD_DOMAIN = (data.get("cloud_domain") or data.get("sip_cloud_domain")
+                    or "").strip()
 
     if USE_LOCAL_UDP:
         SIP_DOMAIN = LOCAL_DOMAIN or SIP_DOMAIN
     else:
         SIP_DOMAIN = CLOUD_DOMAIN or SIP_DOMAIN
+        if not CLOUD_DOMAIN:
+            _LOGGER.warning(
+                "Cloud mode without a cloud domain in the credentials: using %r, "
+                "which the relay does not recognise. Set the integration up "
+                "again from the pairing QR.", SIP_DOMAIN)
 
-    # HA1 è precalcolato sul dominio salvato: se la modalità attiva ne usa uno
-    # diverso va ricalcolato, altrimenti il digest fallisce. sip_client sa già
-    # rifare HA1 sul realm del challenge, ma solo se ha la password in chiaro.
-    if SIP_DOMAIN != (data.get("sip_domain") or "").strip():
-        if SIP_PASSWORD:
-            SIP_HA1 = _hashlib.md5(
-                f"{SIP_USER}:{SIP_DOMAIN}:{SIP_PASSWORD}".encode()
-            ).hexdigest()
-        else:
-            SIP_HA1 = ""
+    # HA1 only holds for the domain it was computed on. With the password it
+    # is always recomputed on the domain in use: an entry saved before the
+    # domain choice can hold an HA1 for the wrong realm even when sip_domain
+    # matches. Without the password it is kept only for the saved domain.
+    if SIP_PASSWORD and SIP_USER and SIP_DOMAIN:
+        SIP_HA1 = _hashlib.md5(
+            f"{SIP_USER}:{SIP_DOMAIN}:{SIP_PASSWORD}".encode()
+        ).hexdigest()
+    elif SIP_DOMAIN != (data.get("sip_domain") or "").strip():
+        SIP_HA1 = ""
 
     # Attuatori dinamici: lista già validata dall'options flow (o default vuoto).
     acts = data.get("actuators", [])
@@ -275,9 +291,13 @@ def configure(data: dict) -> None:
     SGA_TARGET  = (str(data.get("sga_target") or "").strip()) or _const.SGA_TARGET
     PICG_TARGET = (str(data.get("picg_target") or "").strip()) or _const.PICG_TARGET
 
-    CAMERA_TARGET = (
-        (str(data.get("camera_target") or "").strip()) or _const.CAMERA_TARGET
-    )
+    # A panel chosen by the user, else one learned from the plant (see
+    # hub._camera_fallback), else the historical default.
+    configured = str(data.get("camera_target") or "").strip()
+    CAMERA_TARGET_CONFIGURED = bool(configured)
+    CAMERA_TARGET = (configured
+                     or str(data.get("learned_camera_target") or "").strip()
+                     or _const.CAMERA_TARGET)
     INTERNAL_PANEL_TARGET = (
         (str(data.get("internal_panel_target") or "").strip())
         or _const.INTERNAL_PANEL_TARGET
@@ -314,6 +334,7 @@ def configure(data: dict) -> None:
     # creato da una versione precedente, o probe/test senza entry) se ne genera
     # una effimera valida per questa sessione, così nessun percorso finisce per
     # usare un valore condiviso fra installazioni diverse.
+    DEVICE_NAME = str(data.get("device_name") or "").strip() or _const.MY_NAME
     DEVICE_IMEI = (str(data.get("device_imei") or "")).strip()
     DEVICE_UUID = (str(data.get("device_uuid") or "")).strip()
     if not DEVICE_IMEI or not DEVICE_UUID:

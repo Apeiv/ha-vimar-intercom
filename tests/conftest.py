@@ -11,6 +11,7 @@ import importlib.util
 import shutil
 import sys
 import types
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -62,6 +63,25 @@ class _Any:
         return iter(())
 
 
+class _ConfigFlow:
+    """`class VimarIntercomConfigFlow(ConfigFlow, domain=DOMAIN)`: the base must
+    accept the class argument, which the generic jolly does not."""
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__()
+
+
+@dataclass(frozen=True, kw_only=True)
+class _SensorEntityDescription:
+    key: str
+    name: str | None = None
+    icon: str | None = None
+    device_class: str | None = None
+    options: list | None = None
+    state_class: str | None = None
+    native_unit_of_measurement: str | None = None
+
+
 def _stub_ha() -> None:
     if "homeassistant" in sys.modules and not getattr(sys.modules["homeassistant"], "_is_stub", False):
         return  # HA vero installato
@@ -72,6 +92,7 @@ def _stub_ha() -> None:
         "helpers.config_validation", "helpers.selector", "helpers.start", "components", "components.http", "components.camera",
         "components.sensor", "components.binary_sensor", "components.switch", "components.button", "components.event",
         "components.lock", "components.select", "components.text", "components.number", "components.ffmpeg", "components.tts", "util", "util.dt",
+        "components.file_upload", "data_entry_flow",
     ]:
         m = _mod(f"homeassistant.{sub}")
         m.__getattr__ = lambda name, _m=m: _Any  # type: ignore[attr-defined]
@@ -83,7 +104,7 @@ def _stub_ha() -> None:
     ha.core.ServiceCall = _Any
     ha.core.callback = lambda f: f
     ha.config_entries.ConfigEntry = _Any
-    ha.config_entries.ConfigFlow = _Any
+    ha.config_entries.ConfigFlow = _ConfigFlow
     ha.config_entries.OptionsFlow = _Any
     ha.const.Platform = _Any()
     # selector: il config flow ne usa classi e attributi (SelectSelectorMode.DROPDOWN)
@@ -92,6 +113,19 @@ def _stub_ha() -> None:
                SelectSelector=_Any, SelectSelectorConfig=_Any, SelectSelectorMode=_Any(),
                FileSelector=_Any, FileSelectorConfig=_Any)
     ha.helpers.selector = sel
+    ha.components.file_upload.process_uploaded_file = None
+    ha.data_entry_flow.FlowResult = dict
+    # switch.py derives from both: two distinct classes, not the same jolly twice.
+    ha.components.switch.SwitchEntity = type("SwitchEntity", (), {})
+    ha.helpers.restore_state.RestoreEntity = type("RestoreEntity", (), {})
+    # sensor.py builds dataclasses and enums from these at import time.
+    s = ha.components.sensor
+    s.SensorEntityDescription = _SensorEntityDescription
+    s.RestoreSensor = type("RestoreSensor", (), {})
+    s.SensorDeviceClass = types.SimpleNamespace(ENUM="enum", TIMESTAMP="timestamp", DURATION="duration")
+    s.SensorStateClass = types.SimpleNamespace(TOTAL_INCREASING="total_increasing",
+                                               MEASUREMENT="measurement")
+    ha.const.UnitOfTime = types.SimpleNamespace(SECONDS="s")
     _mod("voluptuous", Schema=_Any, Required=_Any, Optional=_Any, All=_Any, Coerce=_Any, In=_Any, Range=_Any)
 
 
@@ -117,6 +151,16 @@ def pytest_collection_modifyitems(config, items):
         for marker, reason in _MISSING.items():
             if reason and marker in item.keywords:
                 item.add_marker(pytest.mark.skip(reason=reason))
+
+
+@pytest.fixture(autouse=True)
+def _keep_runtime(monkeypatch):
+    """runtime.configure() rewrites module globals (SIP_USER, SIP_DOMAIN, ...):
+    restore every uppercase attribute after each test so none leaks into the next."""
+    from custom_components.vimar_intercom import runtime as R
+    for name in dir(R):
+        if name.isupper():
+            monkeypatch.setattr(R, name, getattr(R, name))
 
 
 @pytest.fixture

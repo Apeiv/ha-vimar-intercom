@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -22,6 +23,8 @@ from .device import device_info
 from .hub import sip_id_name
 from . import runtime as R
 
+_LOGGER = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True, kw_only=True)
 class VimarSensorDescription(SensorEntityDescription):
@@ -32,6 +35,11 @@ class VimarSensorDescription(SensorEntityDescription):
     # "Ultimo ..." che l'hub riempie solo quando succede: senza, un riavvio di HA lo
     # riporta a "Sconosciuto" fino al prossimo evento (l'apertura di stamattina sparisce).
     restore: bool = False
+    # Called with the last saved attributes, to seed the hub before its first
+    # update (the device list, which otherwise starts empty after a restart).
+    restore_fn: Callable[[Any, dict], None] | None = None
+    # Attributes kept out of the recorder (large or changing often).
+    unrecorded_attrs: frozenset[str] = frozenset()
 
 
 def _status_attrs(hub) -> dict:
@@ -60,6 +68,23 @@ def _status_attrs(hub) -> dict:
 
 
 SENSORS: tuple[VimarSensorDescription, ...] = (
+    VimarSensorDescription(
+        key="devices",
+        name="Intercom Dispositivi",
+        icon="mdi:devices",
+        # Every mobile device shares one SIP user: without this list there is
+        # no way to tell which phones are paired, and generating a new QR
+        # rotates the shared credential and unpairs them.
+        value_fn=lambda hub: len(hub.devices),
+        # Identifiers masked, addresses without the port: the full values
+        # stay in the hub, where devices are merged.
+        attrs_fn=lambda hub: {
+            "dispositivi": hub.devices_public,
+            "riepilogo": hub.devices_summary,
+        },
+        restore_fn=lambda hub, attrs: hub.restore_devices(attrs.get("dispositivi")),
+        unrecorded_attrs=frozenset({"dispositivi", "riepilogo"}),
+    ),
     VimarSensorDescription(
         key="status",
         name="Intercom Stato",
@@ -206,7 +231,28 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     hub = hass.data[DOMAIN][entry.entry_id]["hub"]
-    async_add_entities(VimarStatSensor(hub, entry.entry_id, d) for d in SENSORS)
+    async_add_entities(sensor_class(d)(hub, entry.entry_id, d) for d in SENSORS)
+
+
+_CLASSES: dict[frozenset, type] = {}
+
+
+def sensor_class(description: VimarSensorDescription) -> type:
+    """The entity class for a description.
+
+    Home Assistant reads _unrecorded_attributes from the class (it combines
+    them when the class is created), and VimarStatSensor is shared by every
+    sensor: a description with unrecorded attributes gets its own subclass.
+    """
+    attrs = description.unrecorded_attrs
+    if not attrs:
+        return VimarStatSensor
+    if attrs not in _CLASSES:
+        _CLASSES[attrs] = type("VimarStatSensor", (VimarStatSensor,), {
+            "_unrecorded_attributes": frozenset(
+                getattr(VimarStatSensor, "_unrecorded_attributes", frozenset()) | attrs),
+        })
+    return _CLASSES[attrs]
 
 
 class VimarStatSensor(RestoreSensor):
@@ -261,6 +307,13 @@ class VimarStatSensor(RestoreSensor):
     async def async_added_to_hass(self) -> None:
         if self.entity_description.restore:
             await self._async_restore()
+        if self.entity_description.restore_fn:
+            last = await self.async_get_last_state()
+            if last is not None:
+                try:
+                    self.entity_description.restore_fn(self._hub, dict(last.attributes))
+                except Exception:  # noqa: BLE001
+                    _LOGGER.debug("Restoring %s failed", self.entity_id, exc_info=True)
         self._hub.register_state_callback(self._on_state_change)
 
     async def _async_restore(self) -> None:

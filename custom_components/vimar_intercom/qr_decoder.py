@@ -163,6 +163,7 @@ def extract_sip_credentials(fields: dict[str, str]) -> dict[str, str]:
         "cloud_proxy":  cloud_proxy,
         "gid":          fields.get(QR_GID, ""),
         "plant_type":   fields.get(QR_PLANTTYPE, ""),
+        "product_code": fields.get(QR_PC, ""),
         "mac":          fields.get(QR_MAC, ""),
     }
 

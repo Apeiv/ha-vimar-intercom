@@ -3,6 +3,7 @@
 import array
 import asyncio
 import base64
+import contextlib
 import logging
 import math
 import os
@@ -96,6 +97,26 @@ def rms(pcm: bytes) -> float:
 # Le porte dell'ffmpeg di /av si leggono da av_stream (non da const) a ogni
 # pacchetto: il banco di prova (tests/harness/rig.py) le sostituisce lì.
 
+def _from_the_call(proto, addr) -> bool:
+    """Plain RTP only from the other end of the current call.
+
+    SRTP is authenticated by its key. Plain RTP is not: without this check any
+    host that can reach the port could inject audio or video into the call, and
+    an injected SPS would be kept for the next calls. Only the IP is compared:
+    the relay sends from other ports than the ones in the SDP.
+    """
+    remote = proto.remote_addr
+    if bool(remote) and addr[0] == remote[0]:
+        return True
+    # Once per call (setup_media assigns a new remote_addr tuple): enough to
+    # explain a silent stream without flooding the log.
+    if remote and getattr(proto, "_foreign_logged", None) is not remote:
+        proto._foreign_logged = remote
+        _LOGGER.debug("Plain RTP from %s dropped: the call's media is at %s",
+                      addr[0], remote[0])
+    return False
+
+
 class RTPAudioProtocol(asyncio.DatagramProtocol):
     """Audio: receive (S)RTP PCMU → [decrypt] → decode → buffer. Send as (S)RTP.
 
@@ -116,6 +137,7 @@ class RTPAudioProtocol(asyncio.DatagramProtocol):
         self.srtp_tx: SRTPContext | None = None
         # Voce in uscita: μ-law in attesa del pacer (_tx_loop, 160 B ogni 20 ms).
         self.tx_buf = bytearray()
+        self.tx_primed = False  # voice resumes only with _TX_PREBUFFER queued
         self.tx_enabled = False   # False durante l'anteprima dello squillo
         self.tx_count = 0
         # Forward decrypted RTP to the AV ffmpeg, only while it's running.
@@ -144,8 +166,10 @@ class RTPAudioProtocol(asyncio.DatagramProtocol):
                 if self.pkt_count == 0:
                     _LOGGER.warning("SRTP audio auth failed from %s (%dB)", addr, len(data))
                 return
-        else:
+        elif _from_the_call(self, addr):
             rtp = data
+        else:
+            return
 
         if (rtp[1] & 0x7F) != 0:  # not PCMU
             return
@@ -318,8 +342,10 @@ class RTPVideoProtocol(asyncio.DatagramProtocol):
                     _LOGGER.warning("SRTP video auth FAIL #%d (pkt %dB)", self._srtp_fail, len(data))
                 return
             self._srtp_ok += 1
-        else:
+        elif _from_the_call(self, addr):
             rtp = data
+        else:
+            return
 
         # Forward decrypted RTP to the AV ffmpeg (MPEG-TS for HomeKit).
         # Only when ffmpeg is up and listening — avoids sending to a dead port.
@@ -666,6 +692,12 @@ async def setup_transports():
 
     video_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     video_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    # A keyframe arrives as a burst of FU-A packets: with the default buffer
+    # the kernel drops part of it, and one lost fragment costs the whole group
+    # until the next keyframe.
+    for sock in (audio_sock, video_sock):
+        with contextlib.suppress(OSError):
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1 << 20)
     video_sock.bind(('0.0.0.0', RTP_VIDEO_PORT))
 
     _, audio_proto = await loop.create_datagram_endpoint(
@@ -722,8 +754,13 @@ async def setup_media(remote_sdp, local_crypto_key=None, local_video_crypto_key=
     video = remote_sdp.get("video", {})
     remote_ip = remote_sdp.get("conn", "")
 
+    # parse_sdp sets crypto_key only on an RTP/SAVP line with a supported
+    # suite; our answer echoes that suite (sip_client._line_security), so both
+    # directions of a line use it.
     remote_audio_key = audio.get("crypto_key")
     remote_video_key = video.get("crypto_key")
+    audio_suite = audio.get("crypto_suite") or "AES_CM_128_HMAC_SHA1_80"
+    video_suite = video.get("crypto_suite") or "AES_CM_128_HMAC_SHA1_80"
 
     if audio.get("port") and audio_proto:
         aip = audio.get("ip", remote_ip)
@@ -734,10 +771,10 @@ async def setup_media(remote_sdp, local_crypto_key=None, local_video_crypto_key=
         audio_proto.srtp_rx = None
         audio_proto.srtp_tx = None
         if remote_audio_key:
-            audio_proto.srtp_rx = SRTPContext(remote_audio_key)
+            audio_proto.srtp_rx = SRTPContext(remote_audio_key, audio_suite)
             _LOGGER.info("SRTP Audio RX context created")
         if local_crypto_key and remote_audio_key:
-            audio_proto.srtp_tx = SRTPContext(local_crypto_key)
+            audio_proto.srtp_tx = SRTPContext(local_crypto_key, audio_suite)
             _LOGGER.info("SRTP Audio TX context created")
         elif remote_audio_key:
             _LOGGER.warning("La targa cifra l'audio (a=crypto) ma noi non abbiamo offerto "
@@ -747,6 +784,7 @@ async def setup_media(remote_sdp, local_crypto_key=None, local_video_crypto_key=
             _LOGGER.warning("La targa non ha accettato PCMU (m=audio %s): la voce non passerà",
                             " ".join(fmts))
         audio_proto.tx_buf.clear()
+        audio_proto.tx_primed = False
         audio_proto.tx_count = 0
         # La targa dice sendonly/inactive: non vuole ricevere la nostra voce.
         audio_proto.tx_enabled = not early and audio.get("dir") not in ("sendonly", "inactive")
@@ -778,7 +816,7 @@ async def setup_media(remote_sdp, local_crypto_key=None, local_video_crypto_key=
         video_proto._nal_types = {}
         video_proto.srtp_rx = None
         if remote_video_key:
-            video_proto.srtp_rx = SRTPContext(remote_video_key)
+            video_proto.srtp_rx = SRTPContext(remote_video_key, video_suite)
             _LOGGER.info("SRTP Video RX — direct H.264 depacketization (no ffmpeg)")
         frame_grabber.start(video_proto)
         video_proto.send_stun()
@@ -830,6 +868,7 @@ async def stop_media():
     if audio_proto:
         audio_proto.tx_enabled = False
         audio_proto.tx_buf.clear()
+        audio_proto.tx_primed = False
         audio_proto.remote_addr = None
         audio_proto.pkt_count = 0
         audio_proto.srtp_rx = None
@@ -858,12 +897,24 @@ def close_transports():
         audio_proto.transport.close()
         audio_proto = None
     if video_proto and video_proto.transport:
+        # Its sender task would otherwise be destroyed pending on reload.
+        task = getattr(video_proto, "_nal_sender_task", None)
+        if task and not task.done():
+            task.cancel()
         video_proto.transport.close()
         video_proto = None
 
 
-# Tetto della voce in attesa: oltre, il browser manda più in fretta del tempo reale.
-_TX_MAX = 8000  # 1 s di μ-law
+# Cap on queued voice. The pacer sends in real time, so everything queued is
+# delay the person at the panel hears, and it never shrinks back: after one
+# network hiccup a 1 s queue kept the whole rest of the call 1 s late. 200 ms
+# covers the browser's 43-46 ms bursts and the HomeKit decoder's jitter; the
+# oldest audio is dropped first.
+_TX_MAX = 1600  # 200 ms of μ-law
+# After an underrun (nothing queued for a packet) voice resumes only once two
+# packets are queued: the next burst from the browser or HomeKit then plays
+# out whole instead of stuttering one packet of voice, one of silence.
+_TX_PREBUFFER = 320  # 40 ms of μ-law
 
 # 20 ms di silenzio PCMU: keepalive quando non c'è voce in coda. La targa
 # chiude un "Vedi esterno" se non riceve RTP per ~10 s, anche se il video
@@ -930,13 +981,16 @@ async def _tx_loop():
                 continue
             if t_view is None:
                 t_view = loop.time()
-            if len(ap.tx_buf) >= 160:
+            if not ap.tx_primed and len(ap.tx_buf) >= _TX_PREBUFFER:
+                ap.tx_primed = True
+            if ap.tx_primed and len(ap.tx_buf) >= 160:
                 frame = bytes(ap.tx_buf[:160])
                 del ap.tx_buf[:160]
             else:
                 if _silence_limit is not None and loop.time() - t_view >= _silence_limit:
                     continue  # solo la vista: 0 = mai silenzio; poi si chiude da sola, come prima
                 frame = SILENCE_ULAW
+                ap.tx_primed = False  # underrun: wait for the pre-buffer again
             ap.send_rtp(frame)
     except asyncio.CancelledError:
         pass

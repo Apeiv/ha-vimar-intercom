@@ -33,16 +33,18 @@
       },
       "network": {
         "title": "Rete locale",
-        "description": "Inserisci l'IP locale del citofono. Sarà eseguito un test di registrazione SIP. Utente: {sip_user}@{sip_domain} — MAC: {mac}. In caso di errore: {error_detail}",
+        "description": "Inserisci l'IP locale del citofono. Impianto: {plant}. La configurazione prova una registrazione vera sul trasporto atteso e, se fallisce, prova l'altro (UDP locale o cloud TLS) e tiene quello che funziona. Utente: {sip_user}@{sip_domain}, MAC: {mac}. In caso di errore: {error_detail}",
         "data": {
           "local_proxy": "IP citofono (proxy locale)",
-          "use_local_udp": "Usa UDP locale (consigliato)",
-          "local_udp_port": "Porta UDP locale"
+          "use_local_udp": "Prova prima l'UDP locale",
+          "local_udp_port": "Porta UDP locale",
+          "device_name": "Nome del dispositivo"
         },
         "data_description": {
           "local_proxy": "L'indirizzo IP locale del tuo citofono Vimar (es. 192.168.1.100).",
-          "use_local_udp": "Abilita la modalità UDP locale. Richiede che HA e il citofono siano sulla stessa rete.",
-          "local_udp_port": "Porta UDP usata da HA per il SIP locale. Default: 5060."
+          "use_local_udp": "Preimpostato dal tipo di impianto nel QR. Gli impianti Due Fili Plus EVO ricevono le chiamate solo tramite il relay cloud; se la prima via fallisce, si prova l'altra.",
+          "local_udp_port": "Porta UDP usata da HA per il SIP locale. Default: 5060.",
+          "device_name": "Il nome con cui l'integrazione si presenta al citofono (header MyName). L'abbinamento lo lega alla credenziale: una volta registrato non va cambiato."
         }
       },
       "zeroconf_confirm": {
@@ -54,6 +56,7 @@
       "qr_invalid": "QR non valido o non riconosciuto.",
       "required": "Questo campo è obbligatorio.",
       "invalid_ip": "Indirizzo IP non valido.",
+      "invalid_device_name": "Nome non valido: da 1 a 64 caratteri stampabili, senza caratteri di controllo.",
       "sip_registration_failed": "Registrazione SIP fallita. Verifica che l'IP del citofono sia corretto e raggiungibile da HA."
     },
     "abort": {

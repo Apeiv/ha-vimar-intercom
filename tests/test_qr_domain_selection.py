@@ -7,6 +7,8 @@ modalità cloud il dominio attivo deve essere cdomain anche quando il locale
 """
 from __future__ import annotations
 
+import hashlib
+
 from custom_components.vimar_intercom import qr_decoder, runtime
 
 LOCAL = "192.0.2.10"
@@ -115,4 +117,31 @@ def test_entry_without_the_new_keys_is_unchanged():
         "use_local_udp": False,
     })
     assert runtime.SIP_DOMAIN == LOCAL
+    # With the password HA1 is always recomputed on the domain in use: a correct
+    # stored HA1 comes out the same, a stale one (wrong realm) gets repaired.
+    assert runtime.SIP_HA1 == hashlib.md5(f"12345:{LOCAL}:secret".encode()).hexdigest()
+
+
+def test_without_a_password_the_stored_ha1_is_kept_on_its_own_domain():
+    runtime.configure({
+        "sip_user": "12345",
+        "sip_password": "",
+        "sip_domain": LOCAL,
+        "sip_ha1": "deadbeef",
+        "use_local_udp": False,
+    })
+    assert runtime.SIP_DOMAIN == LOCAL
     assert runtime.SIP_HA1 == "deadbeef"
+
+
+def test_without_a_password_an_ha1_for_another_domain_is_dropped():
+    runtime.configure({
+        "sip_user": "12345",
+        "sip_password": "",
+        "sip_domain": LOCAL,
+        "cloud_domain": CLOUD,
+        "sip_ha1": "deadbeef",
+        "use_local_udp": False,
+    })
+    assert runtime.SIP_DOMAIN == CLOUD
+    assert runtime.SIP_HA1 == ""
