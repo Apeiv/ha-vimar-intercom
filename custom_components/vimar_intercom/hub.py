@@ -705,11 +705,11 @@ class VimarIntercomHub:
             pass
 
     def _request_keyframe(self):
-        """Pacchetto video perso (media_handler): keyframe subito, non al giro dei 5 s."""
+        """Pacchetto video perso (media_handler): keyframe subito, non al prossimo IDR."""
         self._keyframe_now = asyncio.create_task(sip.send_keyframe_request())
 
     def _start_keyframe_loop(self):
-        """Send periodic keyframe requests during calls for video recovery."""
+        """Ask for a keyframe at call start (a short burst, see _keyframe_loop)."""
         self._cancel_keyframe_loop()
         self._keyframe_task = asyncio.create_task(self._keyframe_loop())
 
@@ -719,11 +719,16 @@ class VimarIntercomHub:
             self._keyframe_task = None
 
     async def _keyframe_loop(self):
-        """Keyframe burst at start, then slow periodic refresh.
+        """Keyframe burst at call start, and nothing after it.
 
-        Il burst serve a ottenere SPS/PPS+IDR appena parte il video. Dopo,
-        se il video sta effettivamente arrivando (pkt_count cresce) rallentiamo
-        molto: un INFO ogni 2s spammava il proxy (e i 407) senza utilità.
+        Il burst serve a ottenere SPS/PPS+IDR appena parte il video, e si ferma
+        appena i pacchetti video arrivano.
+
+        No periodic refresh afterwards: on the plants tested the panel ignores
+        picture_fast_update and sends its keyframes on its own clock (about
+        every 3 s on a Tab 7S Up 40517, not configurable), and each INFO is a
+        transaction through the cloud relay for the whole call. A lost video
+        packet still asks for a keyframe at once (media_handler._lost).
         """
         def _video_flowing():
             vp = media.video_proto
@@ -741,11 +746,6 @@ class VimarIntercomHub:
                 if _video_flowing():
                     break
                 await sip.send_keyframe_request()
-            # Then slow refresh: every 5s, only while the call lasts.
-            while sip.in_call:
-                await asyncio.sleep(5)
-                if sip.in_call:
-                    await sip.send_keyframe_request()
         except asyncio.CancelledError:
             pass
 
