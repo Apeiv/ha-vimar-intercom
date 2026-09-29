@@ -144,6 +144,7 @@ class VimarIntercomHub:
         }
         self._call_started_mono: float | None = None
         self._ring_answered = False
+        self._ring_declined = False  # rifiutato da noi (603): non è uno squillo perso
         self._was_ringing = False  # per il webhook di fine squillo, vedi _handle_broadcast
         # Callback per emettere eventi bus HA (registrati da __init__.py).
         # Evita di iniettare hass nell'hub, coerente con ring/state callbacks.
@@ -600,8 +601,12 @@ class VimarIntercomHub:
         return ok, msg
 
     async def async_decline(self):
-        await sip.do_decline_incoming()
+        # Prima della chiamata: il ring_ended parte da dentro do_decline_incoming.
+        self._ring_declined = True
+        declined = await sip.do_decline_incoming()
+        self._ring_declined = bool(declined)
         self._touch()
+        return declined
 
 
     async def async_hangup(self):
@@ -919,11 +924,12 @@ class VimarIntercomHub:
                     st["last_caller_id"] = _uri_to_id(caller)
                     st["ring_count"] += 1
                     self._ring_answered = False
+                    self._ring_declined = False
                     # Foto e clip sono di questo squillo: quelli di prima non vanno in notifica
                     for k in ("last_photo", "last_photo_path", "last_photo_v", "last_clip", "last_clip_path"):
                         st[k] = None
             elif msg_type == "ring_ended":
-                if not self._ring_answered and st["last_ring_time"]:
+                if not (self._ring_answered or self._ring_declined) and st["last_ring_time"]:
                     st["missed_count"] += 1
             elif msg_type == "call_started":
                 self._call_started_mono = time.monotonic()

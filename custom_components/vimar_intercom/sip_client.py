@@ -1973,9 +1973,10 @@ async def do_answer_incoming():
     return True, "Risposto!"
 
 
-async def do_decline_incoming(reason: str = "603 Decline", msg: str = "Squillo rifiutato"):
+async def do_decline_incoming(reason: str = "603 Decline", msg: str = "Squillo rifiutato") -> bool:
+    """True se c'era uno squillo da rifiutare."""
     if not ringing():
-        return
+        return False
 
     try:
         await send(_final(pending_incoming, reason))
@@ -1988,6 +1989,7 @@ async def do_decline_incoming(reason: str = "603 Decline", msg: str = "Squillo r
     # non lancia evento né webhook. Non per l'eco di una nostra chiamata: non è uno squillo.
     if not (in_call or calling):
         await broadcast("ring_ended", msg)
+    return True
 
 
 async def _end_ring():

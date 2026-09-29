@@ -741,9 +741,9 @@ class VimarAudioWSView(HomeAssistantView):
 
         elif action == "decline":
             try:
-                await hub.async_decline()
-                await self._broadcast({"type": "ring_ended", "msg": "Declined",
-                                       "registered": hub.registered, "in_call": False})
+                # il ring_ended lo manda già do_decline_incoming
+                if not await hub.async_decline():
+                    await ws.send_str(json.dumps({"type": "error", "msg": "No ringing call"}))
             except Exception as e:
                 await ws.send_str(json.dumps({"type": "error", "msg": str(e)}))
 

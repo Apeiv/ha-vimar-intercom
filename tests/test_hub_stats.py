@@ -1,4 +1,5 @@
 """_update_stats del hub: parsing degli annunci VOICEMAIL/DND e (futuro) GET_INIT_STATUS_REPLY."""
+import asyncio
 import pytest
 
 hub_mod = pytest.importorskip("custom_components.vimar_intercom.hub")
@@ -169,3 +170,27 @@ def test_sip_uri_accetta_solo_id_numerici():
     for cattivo in ("55001\r\nSubject: x", "\r", "55001@altro.dominio", "sip:55001"):
         with _pytest.raises(ValueError):
             hub_mod.sip_uri(cattivo)
+
+
+def test_declined_ring_is_not_missed(hub, monkeypatch):
+    """Un rifiuto (603) non e' uno squillo perso; uno squillo scaduto si'."""
+    from custom_components.vimar_intercom import sip_client as sip
+
+    async def _decline():
+        hub._update_stats("ring_ended", "Squillo rifiutato")  # come il broadcast di sip
+        return True
+
+    monkeypatch.setattr(sip, "do_decline_incoming", _decline)
+    monkeypatch.setattr(sip, "pending_incoming", {}, raising=False)
+    hub._update_stats("ring", None)
+    assert asyncio.run(hub.async_decline()) is True
+    assert hub.stats["missed_count"] == 0
+    hub._update_stats("ring", None)
+    hub._update_stats("ring_ended", "Squillo scaduto")
+    assert hub.stats["missed_count"] == 1
+
+
+def test_decline_without_ring_returns_false(monkeypatch):
+    from custom_components.vimar_intercom import sip_client as sip
+    monkeypatch.setattr(sip, "ringing", lambda: False)
+    assert asyncio.run(sip.do_decline_incoming()) is False
