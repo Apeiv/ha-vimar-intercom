@@ -606,7 +606,7 @@ def test_foto_vera_dello_squillo_dal_frame_grabber(monkeypatch, tmp_path):
             rig.ring()
             r183 = await rig.peer.wait_for(is_(code=183))
             rig.start_media(r183.body)
-            await wait_until(lambda: any(ring_log.RING_PHOTO.fullmatch(n) for n in os.listdir(tmp_path)),
+            await wait_until(lambda: any(ring_log.RING_FILE.fullmatch(n) for n in os.listdir(tmp_path)),
                              10, "foto dello squillo")
             await asyncio.sleep(0.2)
             rig.peer.request("CANCEL", "ring-1", 1, "pnl")
@@ -640,7 +640,7 @@ def test_clip_dello_squillo_e_foto_subito_poi_migliore(monkeypatch, tmp_path):
             r183 = await rig.peer.wait_for(is_(code=183))
             rig.start_media(r183.body)
             await wait_until(lambda: rig.panel_media.idr_at, 3, "IDR della targa")
-            await wait_until(lambda: any(ring_log.RING_PHOTO.fullmatch(n) for n in os.listdir(tmp_path)),
+            await wait_until(lambda: any(ring_log.RING_FILE.fullmatch(n) for n in os.listdir(tmp_path)),
                              5, "foto dello squillo")
             t_photo = time.time()
             [r] = ring_log.recent_rings(str(tmp_path), 10)

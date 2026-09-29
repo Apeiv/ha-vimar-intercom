@@ -12,7 +12,6 @@ from collections.abc import Callable
 # Registro degli squilli accanto alle foto: vecchi prima, al massimo RING_LOG_MAX.
 RING_LOG = "squillo.json"
 RING_LOG_MAX = 200
-RING_PHOTO = re.compile(r"squillo_\d{8}_\d{6}(_\d{3})?\.jpg")
 RING_FILE = re.compile(r"squillo_\d{8}_\d{6}(_\d{3})?\.(jpg|mp4)")  # foto o clip di uno squillo
 _lock = threading.Lock()  # letture/scritture dal pool dell'executor
 

@@ -124,7 +124,7 @@ def test_squillo_registrato_poi_risposto(tmp_path, monkeypatch):
         await asyncio.sleep(0.2)
         [ring] = rl.read_ring_log(str(tmp_path))
         assert ring["outcome"] == "missed" and ring["caller"] == "55001"
-        assert rl.RING_PHOTO.fullmatch(ring["photo"])
+        assert rl.RING_FILE.fullmatch(ring["photo"])
         assert (await hub.async_answer())[0]
         await asyncio.sleep(0.2)
         assert rl.read_ring_log(str(tmp_path))[0]["outcome"] == "answered"
