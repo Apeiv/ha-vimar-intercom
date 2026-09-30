@@ -1600,7 +1600,7 @@ def test_the_re_encoder_starts_while_the_call_connects(acc, monkeypatch):
     monkeypatch.setattr(hk, "Transcoder", FakeTranscoder)
     video = {"in": False}
     monkeypatch.setattr(hk.hkm, "video_ready", lambda _hub: video["in"])
-    monkeypatch.setattr(hk.hkm, "parameter_sets", lambda: (None, None))
+    monkeypatch.setattr(hk.hkm, "parameter_sets", lambda panel_uri=None: (b"sps", b"pps"))
     info = session()
 
     async def scenario():
@@ -1626,7 +1626,7 @@ def test_an_early_re_encoder_goes_with_a_call_that_never_connects(acc, monkeypat
     FakeTranscoder.gate = None
     monkeypatch.setattr(hk, "Transcoder", FakeTranscoder)
     monkeypatch.setattr(hk.hkm, "video_ready", lambda _hub: False)
-    monkeypatch.setattr(hk.hkm, "parameter_sets", lambda: (None, None))
+    monkeypatch.setattr(hk.hkm, "parameter_sets", lambda panel_uri=None: (b"sps", b"pps"))
 
     async def scenario():
         await a._ensure_transcoder(early=True)
@@ -1637,3 +1637,39 @@ def test_an_early_re_encoder_goes_with_a_call_that_never_connects(acc, monkeypat
     asyncio.run(scenario())
     assert FakeTranscoder.instances and all(t.stopped for t in FakeTranscoder.instances)
     assert a._transcoder is None
+
+
+def test_no_early_re_encoder_without_the_panels_parameters(acc, monkeypatch):
+    """Right after a restart no call has set the panel yet: an early encoder had
+    no SPS/PPS, missed the first keyframe, and the picture came at 3.6 s. It now
+    waits for the video, as before, and the view still gets one."""
+    a, procs, gate = acc
+    a._smooth = True
+    FakeTranscoder.instances.clear()
+    FakeTranscoder.gate = None
+    monkeypatch.setattr(hk, "Transcoder", FakeTranscoder)
+    video = {"in": False}
+    monkeypatch.setattr(hk.hkm, "video_ready", lambda _hub: video["in"])
+    asked = []
+
+    def params(panel_uri=None):
+        asked.append(panel_uri)
+        return (None, None) if panel_uri else (b"sps", b"pps")
+    monkeypatch.setattr(hk.hkm, "parameter_sets", params)
+    monkeypatch.setattr(hk.R, "INTERCOM", "sip:55100@plant.example.test")
+    info = session()
+
+    async def scenario():
+        gate["open"].set()
+        a._hub.in_call = a._hub.video_active = False
+        start = asyncio.create_task(a.start_stream(info, {}))
+        await asyncio.sleep(0.05)
+        early = len(FakeTranscoder.instances)
+        a._hub.in_call = a._hub.video_active = video["in"] = True
+        assert await start
+        return early
+
+    assert asyncio.run(scenario()) == 0
+    assert "sip:55100@plant.example.test" in asked, "asked for the called panel's"
+    assert len(FakeTranscoder.instances) == 1, "the view still gets one, once the video is in"
+    _close(a, info)

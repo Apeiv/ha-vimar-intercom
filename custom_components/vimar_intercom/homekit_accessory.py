@@ -64,6 +64,7 @@ from homeassistant.core import HomeAssistant
 
 from . import homekit_media as hkm
 from . import media_handler as media
+from . import runtime as R
 from . import sip_client as sip
 from .const import (
     CONF_HOMEKIT_ANSWER,
@@ -330,7 +331,13 @@ class VimarDoorbell(Camera):
                 # The call is over, or the view is: an encoder started now
                 # would read the end of this call, or the next one's start.
                 return None
-            sps, pps = hkm.parameter_sets()
+            # Early, the call has not set its panel yet: the parameters of the
+            # panel the view calls. Without them the encoder would miss the
+            # first keyframe (seen right after a restart: picture at 3.6 s),
+            # so it waits for the video like before.
+            sps, pps = hkm.parameter_sets(R.INTERCOM) if early else hkm.parameter_sets()
+            if early and not (sps and pps):
+                return None
             tc = Transcoder(sps, pps)
             tc.generation = gen
 
