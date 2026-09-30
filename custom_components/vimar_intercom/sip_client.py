@@ -775,7 +775,9 @@ async def _dispatch_message(raw: str):
         orphan = kind >= 200 and hdrs.get("cseq", "").endswith("INVITE") and (
             cid not in pending_responses or (in_call and cid == call_state["call_id"]))
         if orphan:
-            _LOGGER.warning("Risposta %d a un INVITE già chiuso (cid=%s)", kind, cid[:24])
+            # A 487 is the expected end of our own CANCEL (#44): not a warning.
+            _LOGGER.log(logging.DEBUG if kind == 487 else logging.WARNING,
+                        "Risposta %d a un INVITE già chiuso (cid=%s)", kind, cid[:24])
             try:  # nel reader TLS un'eccezione qui lo ucciderebbe
                 await _close_orphan_invite(kind, hdrs)
             except Exception:  # noqa: BLE001
@@ -1667,12 +1669,14 @@ async def do_system_message(target_uri, body_text, extra_headers=None, timeout=1
 NO_ANSWER = "No answer"
 
 
-async def do_call(target=None, silence_limit=None, answer_timeout=None):
+async def do_call(target=None, silence_limit=None, answer_timeout=None, ring_timeout=None):
     """INVITE a SIP target (default: intercom targa 55001).
 
     silence_limit: solo per la vista in uscita ("Vedi esterno"), vedi media.setup_media.
     answer_timeout: give up (CANCEL) after this many seconds without a final
-    answer, instead of 45, and return NO_ANSWER: the caller may try again."""
+    answer, instead of 45, and return NO_ANSWER: the caller may try again.
+    ring_timeout: the same, sooner, when a 100 Trying came and no 180/183
+    followed within this many seconds (a panel that swallowed the INVITE)."""
     if not registered:
         _LOGGER.error("do_call: NOT registered")
         return False, "Non registrato"
@@ -1768,9 +1772,11 @@ async def do_call(target=None, silence_limit=None, answer_timeout=None):
             _LOGGER.warning("CANCEL non inviato (%s): annullo in locale", e)
 
     cur_seq, inv_msg, retx, retx_iv, retx_at = 0, "", False, _T1, 0.0
+    trying_at, rang = None, False  # for ring_timeout
 
     async def _invite(auth=None):
-        nonlocal cur_seq, inv_msg, retx, retx_iv, retx_at
+        nonlocal cur_seq, inv_msg, retx, retx_iv, retx_at, trying_at
+        trying_at = None  # a new INVITE (after a challenge): its own 100
         cur_seq = _next_cseq()
         inv_msg = _inv(auth=auth, seq=cur_seq)
         await send(inv_msg)
@@ -1788,13 +1794,18 @@ async def do_call(target=None, silence_limit=None, answer_timeout=None):
     auth_tries, last_ch = 0, None
 
     try:
-        while time.time() < deadline:
+        while True:
+            limit = deadline
+            if ring_timeout and trying_at is not None and not rang:
+                limit = min(limit, trying_at + ring_timeout)
+            if time.time() >= limit:
+                break
             _LOGGER.debug("do_call: waiting q.get (qsize=%d, cid_in_pending=%s, q_is_same=%s)",
                            q.qsize(), cid in pending_responses, pending_responses.get(cid) is q)
             try:
                 wait = min(3, max(0.01, retx_at - time.time())) if retx else 3
-                if answer_timeout:  # to the deadline, not up to 3 s past it
-                    wait = min(wait, max(0.01, deadline - time.time()))
+                if answer_timeout or ring_timeout:  # to the deadline, not up to 3 s past it
+                    wait = min(wait, max(0.01, limit - time.time()))
                 raw = await asyncio.wait_for(q.get(), timeout=wait)
             except asyncio.TimeoutError:
                 if retx and time.time() >= retx_at:
@@ -1815,6 +1826,10 @@ async def do_call(target=None, silence_limit=None, answer_timeout=None):
             retx = False
 
             if code in (100, 180, 183):
+                if code == 100 and trying_at is None:
+                    trying_at = time.time()
+                elif code != 100:
+                    rang = True
                 if code == 183 and body:
                     with contextlib.suppress(ValueError):  # media fuori LAN: ignorato
                         call_state["remote_sdp"] = _remote_media(body)
@@ -1894,11 +1909,17 @@ async def do_call(target=None, silence_limit=None, answer_timeout=None):
 
         pending_responses.pop(cid, None)
         _set_calling(False)
-        if answer_timeout:
+        stalled = bool(ring_timeout and trying_at is not None and not rang
+                       and time.time() < deadline)
+        if stalled:
+            _LOGGER.warning("INVITE: 100 Trying and no 180 from %s after %.0fs", target_uri, ring_timeout)
+        elif answer_timeout:
             _LOGGER.warning("INVITE: no final answer from %s after %.0fs", target_uri, answer_timeout)
         else:
             _LOGGER.error("INVITE timeout (45s) for %s", target_uri)
         await _cancel()  # la targa non resti a squillare (e a rispondere dopo)
+        if stalled:
+            return False, f"{NO_ANSWER} (no 180 after {ring_timeout:.0f}s)"
         if answer_timeout:
             return False, f"{NO_ANSWER} ({answer_timeout:.0f}s)"
         return False, "Timeout (45s)"

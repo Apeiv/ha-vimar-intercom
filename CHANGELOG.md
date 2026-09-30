@@ -9,9 +9,11 @@ Italian and are kept as they were written.
 ### Fixed
 
 - "View outside" opened right after hanging up no longer fails after 25 s on local UDP (#41). The
-  view waits for the panel to answer our BYE (at most 6 s) before calling it again, and a view's
-  call that the panel leaves unanswered is cancelled after 8 s and tried once more. Cloud plants
-  are unchanged: the relay never answers a BYE, and the view still waits only for the local end.
+  view waits for the panel to answer our BYE (at most 6 s) before calling it again. A call to the
+  video panel (a view's, the card's "view outside", the call buttons) that the panel leaves
+  unanswered is cancelled and tried once more: after 3 s when the panel's proxy said 100 Trying and
+  the panel never rang, else after 8 s. Calls to a flat or the switchboard, and cloud plants, are
+  unchanged. The 487 that ends our own cancelled INVITE is logged at DEBUG.
 - The card's Fill/Fit button (#42). It is hidden while the video and its box have the same shape
   (a 4:3 panel in the default 4:3 box), where filling and fitting draw the same picture and the
   button seemed to do nothing. When the card falls back to Home Assistant's picture card (no

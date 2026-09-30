@@ -51,6 +51,11 @@ HANGUP_BYE_TIMEOUT = 8.0
 # nothing changes.
 LOCAL_UDP_ANSWER_TIMEOUT = 8.0
 LOCAL_UDP_RETRY_PAUSE = 2.0
+# The stuck state seen on a 40507 (#44): the Tab's proxy answers 100 Trying and
+# the panel never sends its 180, which in a good call follows within ~50 ms.
+# A panel call with a 100 and no 180/183 after this long is given up (and
+# retried) without waiting for LOCAL_UDP_ANSWER_TIMEOUT.
+LOCAL_UDP_RING_TIMEOUT = 3.0
 
 # Nomi "umani" degli indirizzi SIP dell'impianto
 SIP_ID_NAMES = {
@@ -155,6 +160,10 @@ class VimarIntercomHub:
         media.request_keyframe = self._request_keyframe  # pacchetto video perso
         self._auto_called = False
         self._auto_gen = 0  # which auto-call is the current one (_do_auto_call)
+        # A panel call waiting to be tried again (_call_panel): the line is
+        # free for 2 s, but a call is coming, for /av and for a new view.
+        self._panel_retry = False
+        self._explicit_gen = 0  # which explicit call or hang-up is the latest
 
         # ─── Statistiche / stato esteso (esposte da sensor.py) ───────────
         self.stats: dict = {
@@ -347,7 +356,7 @@ class VimarIntercomHub:
 
         Shared by stream_opened and call_pending so the two cannot drift.
         """
-        return bool(self._busy_now or sip.ringing() or self._auto_called)
+        return bool(self._busy_now or sip.ringing() or self._auto_called or self._panel_retry)
 
     @property
     def call_pending(self) -> bool:
@@ -566,23 +575,15 @@ class VimarIntercomHub:
         """
         try:
             # Default di do_call: R.INTERCOM, cioè la targa video (camera_target).
-            answer_timeout = LOCAL_UDP_ANSWER_TIMEOUT if R.USE_LOCAL_UDP else None
-            ok, msg = await sip.do_call(silence_limit=R.VIEW_KEEPALIVE,
-                                        answer_timeout=answer_timeout)
-            if not ok and msg.startswith(sip.NO_ANSWER) and self._view_still_waits(gen):
-                _LOGGER.warning("The panel did not answer the view's call (%s): "
-                                "one more try in %.0fs", msg, LOCAL_UDP_RETRY_PAUSE)
-                await asyncio.sleep(LOCAL_UDP_RETRY_PAUSE)
-                if self._view_still_waits(gen):
-                    ok, msg = await sip.do_call(silence_limit=R.VIEW_KEEPALIVE,
-                                                answer_timeout=answer_timeout)
+            ok, msg = await self._call_panel(None, lambda: self._view_still_waits(gen),
+                                             silence_limit=R.VIEW_KEEPALIVE)
             alt = None if ok else self._camera_fallback(msg)
             if alt:
                 _LOGGER.warning(
                     "Video panel %s did not answer (%s): trying %s, the panel "
                     "that last rang", R.CAMERA_TARGET, msg, alt)
-                ok, msg = await sip.do_call(target=sip_uri(alt), silence_limit=R.VIEW_KEEPALIVE,
-                                            answer_timeout=answer_timeout)
+                ok, msg = await self._call_panel(sip_uri(alt), lambda: self._view_still_waits(gen),
+                                                 silence_limit=R.VIEW_KEEPALIVE)
                 if ok:
                     self._learn_camera_target(alt)
         except Exception as e:  # noqa: BLE001
@@ -603,6 +604,29 @@ class VimarIntercomHub:
             if gen is None or gen == self._auto_gen:
                 self._auto_called = False
             self._auto_ended_at = time.monotonic()
+
+    async def _call_panel(self, target, still_wanted, **kw) -> tuple[bool, str]:
+        """Call a video panel (None: R.INTERCOM). On local UDP a panel that
+        has just ended a call can swallow the next INVITE (#41, #44): no final
+        answer after LOCAL_UDP_ANSWER_TIMEOUT, or a 100 Trying and no 180
+        after LOCAL_UDP_RING_TIMEOUT, is cancelled and tried once more after
+        LOCAL_UDP_RETRY_PAUSE, if `still_wanted()`. The cloud call is
+        unchanged: 45 s, no retry."""
+        if R.USE_LOCAL_UDP:
+            kw.update(answer_timeout=LOCAL_UDP_ANSWER_TIMEOUT, ring_timeout=LOCAL_UDP_RING_TIMEOUT)
+        ok, msg = await sip.do_call(target=target, **kw)
+        if ok or not msg.startswith(sip.NO_ANSWER) or not still_wanted():
+            return ok, msg
+        _LOGGER.warning("The panel did not answer (%s): one more try in %.0fs",
+                        msg, LOCAL_UDP_RETRY_PAUSE)
+        self._panel_retry = True
+        try:
+            await asyncio.sleep(LOCAL_UDP_RETRY_PAUSE)
+        finally:
+            self._panel_retry = False
+        if not still_wanted():
+            return ok, msg
+        return await sip.do_call(target=target, **kw)
 
     def _view_still_waits(self, gen: int | None) -> bool:
         """This auto-call is still wanted: the newest one, a viewer waiting,
@@ -865,7 +889,17 @@ class VimarIntercomHub:
 
     async def async_call(self, target: str | None = None) -> tuple[bool, str]:
         self._auto_called = False
-        return await (sip.do_call(target=sip_uri(target)) if target else sip.do_call())
+        self._explicit_gen += 1
+        uri = sip_uri(target) if target else None
+        if uri is None or uri == R.INTERCOM:
+            # The video panel (the card's "view outside", the call buttons):
+            # the same timeout and single retry as a view's auto-call (#44),
+            # unless the user hangs up or calls again, or a ring starts, meanwhile.
+            gen = self._explicit_gen
+            return await self._call_panel(
+                uri, lambda: gen == self._explicit_gen and not self._busy_now and not sip.ringing())
+        # A flat or the switchboard: a person answers, it may ring for long.
+        return await sip.do_call(target=uri)
 
     def claim_call(self) -> None:
         """Qualcuno parla (microfono sul WS audio): la chiamata è sua. Il messaggio
@@ -933,6 +967,7 @@ class VimarIntercomHub:
         locally raises, as before.
         """
         self._auto_called = False  # chiusa da noi: niente riaggancio automatico
+        self._explicit_gen += 1   # a panel call waiting for its retry is not retried
         self._cancel_call_timeout()
         ended = asyncio.Event()
         done = self._begin_hanging_up()

@@ -98,7 +98,7 @@ def _auto_call(hub, monkeypatch, results, *, during_pause=None):
     monkeypatch.setattr(hub_mod, "LOCAL_UDP_RETRY_PAUSE", 0.05)
     calls = []
 
-    async def do_call(target=None, silence_limit=None, answer_timeout=None):
+    async def do_call(target=None, silence_limit=None, answer_timeout=None, ring_timeout=None):
         calls.append(answer_timeout)
         if during_pause and len(calls) == 1:
             asyncio.get_running_loop().call_later(0.005, during_pause)
@@ -173,3 +173,80 @@ def test_on_the_cloud_the_view_call_keeps_its_45_s(hub, monkeypatch):
     monkeypatch.setattr(R, "USE_LOCAL_UDP", False)
     calls = _auto_call(hub, monkeypatch, [(False, "Timeout (45s)")])
     assert calls == [None]
+
+
+# ─── the card's "view outside" and the call buttons: explicit calls (#44) ────
+
+def _explicit(hub, monkeypatch, results, target=None, *, during_pause=None):
+    monkeypatch.setattr(hub_mod, "LOCAL_UDP_RETRY_PAUSE", 0.05)
+    calls, pending = [], []
+
+    async def do_call(target=None, silence_limit=None, answer_timeout=None, ring_timeout=None):
+        calls.append((target, answer_timeout, ring_timeout))
+        if during_pause and len(calls) == 1:
+            def check():
+                pending.append(hub._call_in_view)
+                during_pause()
+            asyncio.get_running_loop().call_later(0.005, check)
+        return results[len(calls) - 1]
+
+    monkeypatch.setattr(sip, "do_call", do_call)
+    ok, msg = asyncio.run(hub.async_call(target))
+    return ok, calls, pending
+
+
+def test_the_cards_view_outside_is_retried_like_a_views_auto_call(hub, monkeypatch):
+    """#44: the card calls the panel itself (async_call), so #41's retry never ran:
+    the panel's proxy said 100 Trying, the panel never sent its 180, and /av gave
+    up after 25 s. A 100 with no 180 is given up after 3 s and tried once more."""
+    monkeypatch.setattr(R, "USE_LOCAL_UDP", True)
+    ok, calls, pending = _explicit(hub, monkeypatch, [NO, (True, "Connesso!")],
+                                   during_pause=lambda: None)
+    assert ok
+    timeouts = (hub_mod.LOCAL_UDP_ANSWER_TIMEOUT, hub_mod.LOCAL_UDP_RING_TIMEOUT)
+    assert calls == [(None, *timeouts)] * 2
+    assert pending == [True], "during the pause /av and a new view see a call coming"
+
+
+def test_an_explicit_call_to_the_video_panel_by_its_address_is_retried(hub, monkeypatch):
+    monkeypatch.setattr(R, "USE_LOCAL_UDP", True)
+    monkeypatch.setattr(R, "INTERCOM", "sip:55100@plant.example.test")
+    monkeypatch.setattr(hub_mod, "sip_uri", lambda t: f"sip:{t}@plant.example.test")
+    ok, calls, _ = _explicit(hub, monkeypatch, [NO, (True, "Connesso!")], target="55100")
+    assert ok and len(calls) == 2
+
+
+def test_a_hang_up_during_the_pause_stops_the_retry(hub, monkeypatch):
+    monkeypatch.setattr(R, "USE_LOCAL_UDP", True)
+
+    def hang_up():
+        hub._explicit_gen += 1                  # what async_hangup does
+    ok, calls, _ = _explicit(hub, monkeypatch, [NO], during_pause=hang_up)
+    assert not ok and len(calls) == 1
+
+
+def test_a_call_to_a_flat_keeps_its_45_s_and_no_retry(hub, monkeypatch):
+    """A person answers a flat or the switchboard: it may ring for long."""
+    monkeypatch.setattr(R, "USE_LOCAL_UDP", True)
+    monkeypatch.setattr(R, "INTERCOM", "sip:55100@plant.example.test")
+    monkeypatch.setattr(hub_mod, "sip_uri", lambda t: f"sip:{t}@plant.example.test")
+    ok, calls, _ = _explicit(hub, monkeypatch, [(False, "Timeout (45s)")], target="60001")
+    assert calls == [("sip:60001@plant.example.test", None, None)]
+
+
+def test_on_the_cloud_an_explicit_call_is_unchanged(hub, monkeypatch):
+    monkeypatch.setattr(R, "USE_LOCAL_UDP", False)
+    ok, calls, _ = _explicit(hub, monkeypatch, [(False, "Timeout (45s)")])
+    assert calls == [(None, None, None)]
+
+
+def test_async_hangup_stops_a_pending_retry(hub, monkeypatch):
+    before = hub._explicit_gen
+
+    async def do_hangup(on_local_end=None):
+        if on_local_end:
+            on_local_end()
+
+    monkeypatch.setattr(sip, "do_hangup", do_hangup)
+    asyncio.run(hub.async_hangup())
+    assert hub._explicit_gen == before + 1
