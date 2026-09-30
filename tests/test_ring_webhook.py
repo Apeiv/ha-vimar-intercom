@@ -145,3 +145,10 @@ def test_safe_non_mostra_user_password_e_fire_logga_solo_il_tipo(fake_hass, monk
         asyncio.run(webhook.fire(url))
     assert "segreta" not in caplog.text and "tok" not in caplog.text
     assert "ValueError" in caplog.text
+
+
+@pytest.mark.parametrize("url", ["not a url", "http://", "http://[::1"])
+def test_safe_hides_urls_that_do_not_parse(url):
+    """A malformed URL (no host, or an unbalanced IPv6 bracket that urlsplit
+    rejects) is never printed as is: it may still carry the token."""
+    assert webhook._safe(url) == "(url non valido)"
