@@ -789,7 +789,9 @@ async def _dispatch_message(raw: str):
             # quindi è l'esito normale del keepalive, non un errore da segnalare.
             _LOGGER.debug("Keepalive response %d for cid=%s", kind, cid[:24])
         else:
-            _LOGGER.warning("Stale response %d for cid=%s", kind, cid[:24])
+            # A late answer to a request we stopped waiting for (a timed-out
+            # INFO, the BYE of a call already closed): nothing is lost.
+            _LOGGER.debug("Stale response %d for cid=%s", kind, cid[:24])
     elif isinstance(kind, str):
         await incoming_requests.put(raw)
 
@@ -1895,6 +1897,20 @@ async def do_call(target=None, silence_limit=None):
         _set_calling(False)
 
 
+_background: set[asyncio.Task] = set()
+
+
+def _spawn(coro) -> asyncio.Task:
+    """A task nobody awaits, kept referenced until it is done."""
+    t = asyncio.create_task(coro)
+    _background.add(t)
+    t.add_done_callback(_background.discard)
+    t.add_done_callback(
+        lambda t: _LOGGER.error("Background SIP task failed: %s", t.exception())
+        if not t.cancelled() and t.exception() else None)
+    return t
+
+
 async def send_keyframe_request():
     """Send SIP INFO picture_fast_update to get a video keyframe (SPS/PPS).
 
@@ -2414,8 +2430,10 @@ async def do_answer_incoming():
             media.enable_tx()  # l'anteprima riceveva soltanto
 
     await broadcast("call_started", "Chiamata attiva!")
-    # Request keyframe for video
-    await send_keyframe_request()
+    # Ask for a keyframe without waiting for the INFO's answer: it is a round
+    # trip through the relay (more with a 407), and the caller (a view, the
+    # card's Answer, HomeKit's Talk) would wait for it before anything else.
+    _spawn(send_keyframe_request())
     return True, "Risposto!"
 
 

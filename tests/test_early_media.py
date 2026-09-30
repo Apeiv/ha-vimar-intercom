@@ -92,6 +92,39 @@ def test_audio_only_early_media_is_not_reopened_on_answer(rete, monkeypatch):
     sip._set_in_call(False)
 
 
+def test_answer_does_not_wait_for_the_keyframe_info(rete, monkeypatch):
+    """The keyframe INFO is a round trip through the relay: answering returns
+    at once, and the request still goes out."""
+    inviati, media = rete
+    monkeypatch.setattr(mh, "video_proto", SimpleNamespace(remote_addr=("5.6.7.8", 4002)))
+    asked = []
+
+    async def _slow_keyframe():
+        asked.append("sent")
+        await asyncio.sleep(5)
+        asked.append("answered")
+    monkeypatch.setattr(sip, "send_keyframe_request", _slow_keyframe)
+
+    async def go():
+        await sip.handle_incoming_invite(INVITE)
+        res = await asyncio.wait_for(sip.do_answer_incoming(), 1)
+        await asyncio.sleep(0)
+        return res
+    ok, _ = asyncio.run(go())
+    assert ok and asked == ["sent"]
+    sip._set_in_call(False)
+
+
+def test_a_stale_response_is_not_a_warning(caplog):
+    """A late answer to a request nobody waits for any more is logged at DEBUG."""
+    raw = ("SIP/2.0 200 OK\r\nCall-ID: gone-1\r\nCSeq: 5 INFO\r\n"
+           "Content-Length: 0\r\n\r\n")
+    with caplog.at_level(logging.DEBUG, logger=sip._LOGGER.name):
+        asyncio.run(sip._dispatch_message(raw))
+    stale = [r for r in caplog.records if "Stale response" in r.getMessage()]
+    assert stale and all(r.levelno == logging.DEBUG for r in stale)
+
+
 def test_durante_una_nostra_chiamata_niente_early_media(rete, monkeypatch):
     inviati, media = rete
     monkeypatch.setattr(sip, "calling", True)  # l'eco della nostra chiamata

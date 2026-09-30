@@ -52,6 +52,8 @@ Call and media:
 - The talk queue is capped at 80 ms, oldest audio dropped first: a network hiccup no longer
   leaves the rest of the call late. There is no pre-buffer: a queued packet goes out on the next
   tick.
+- Answering no longer waits for the reply to the keyframe INFO, a round trip through the relay:
+  the request still goes out, in the background.
 - The SDP answer mirrors the offer's encryption per media line: RTP/SAVP with the crypto tag and
   suite the offer chose for that line (AES_CM_128_HMAC_SHA1_80 or _32), RTP/AVP for a plain line.
   A line whose suites are all unsupported is refused. Our own offers still follow the plant
@@ -117,6 +119,8 @@ Call and media:
 
 SIP:
 
+- A late response nobody waits for any more ("Stale response") is logged at DEBUG, not
+  WARNING.
 - REGISTER retries once more when the registrar rotates its nonce, and answers a 407 with
   Proxy-Authorization.
 - The framer handles the CRLF keepalive pongs; the request processor survives a reply that cannot
