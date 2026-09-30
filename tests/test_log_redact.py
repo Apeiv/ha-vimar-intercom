@@ -76,3 +76,29 @@ def test_non_solleva_mai(monkeypatch):
 @pytest.mark.parametrize("vuoto", ["", None])
 def test_input_vuoto(vuoto):
     assert lr.redact(vuoto) == vuoto
+
+
+# ─── i quattro casi che passavano in chiaro (review del 27/09) ────────────
+
+@pytest.mark.parametrize("riga, segreto", [
+    ("sip_password=abc123", "abc123"),
+    ('password="my secret"', "my secret"),
+    ("token: 'x y z'", "x y z"),
+    ("{'sip_password': 'secret1'}", "secret1"),
+    ('{"sip_password": "secret 2", "sip_user": "12345"}', "secret 2"),
+    ("pn_token=abcd", "abcd"),
+])
+def test_casi_che_passavano_in_chiaro(riga, segreto):
+    out = lr.redact(riga)
+    assert segreto not in out
+    assert "***" in out
+
+
+def test_le_virgolette_restano_e_gli_altri_campi_pure():
+    out = lr.redact('{"sip_password": "a b", "sip_user": "12345"}')
+    assert out == '{"sip_password": "***", "sip_user": "12345"}'
+
+
+@pytest.mark.parametrize("riga", ["mypassword_hint=ok", "tokens=5", "sip_user=12345"])
+def test_non_oscura_quello_che_non_e_un_segreto(riga):
+    assert lr.redact(riga) == riga

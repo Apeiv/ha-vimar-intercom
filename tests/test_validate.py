@@ -125,3 +125,24 @@ def test_solo_http_e_https(dato, atteso):
 ])
 def test_http_url(url, ok):
     assert v.http_url(url) is ok
+
+
+# ─── is_private_host: solo IP, IP:porta, [IPv6] e [IPv6]:porta, interi ───────
+# `10.0.0.1:1@attacker.tld` passava come 10.0.0.1, ma nell'URL `@` separa le
+# credenziali dall'host: fetch_local mandava il Digest SIP ad attacker.tld.
+
+@pytest.mark.parametrize("host", [
+    "10.0.0.1:1@attacker.tld", "10.0.0.1:80@x", "[::1]@x", "[::1]:80@x",
+    "10.0.0.1:abc", "10.0.0.1:0", "10.0.0.1:99999", "10.0.0.1:",
+    "10.0.0.1#@attacker.tld", "10.0.0.1\\@attacker.tld", "user@10.0.0.1",
+])
+def test_host_con_trucchi_rifiutato(host):
+    assert v.is_private_host(host) is False
+
+
+@pytest.mark.parametrize("host", [
+    "10.0.0.1", "192.168.0.149", "192.168.0.149:80", "127.0.0.1:8080",
+    "[::1]", "[::1]:80", "[fe80::1]:8080", "::1",
+])
+def test_host_privati_validi(host):
+    assert v.is_private_host(host) is True

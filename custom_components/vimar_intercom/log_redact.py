@@ -40,9 +40,26 @@ _SECRET_KEYS = ("pwd", "passwd", "password", "secret", "ha1", "token", "pn-tok",
 
 # La chiave può essere tra virgolette (JSON `"token": "…"`, repr di un dict
 # `'token': '…'`): la virgoletta di chiusura della chiave fa parte del gruppo 1.
+# Prima della chiave non si usa `\b`: `_` è un carattere di parola, e con `\b`
+# `sip_password=…` passava in chiaro. Basta che non la preceda una lettera o una
+# cifra: `sip_password`, `pn_token`, `"password"` sono coperti, `mypassword` no.
+# Il valore tra virgolette arriva fino alla virgoletta di chiusura, spazi
+# compresi (`password="my secret"`); senza virgolette, fino al primo separatore.
 _ASSIGN = re.compile(
-    r"(?i)\b((?:" + "|".join(re.escape(k) for k in _SECRET_KEYS) + r")[\"']?)(\s*[:=]\s*)([\"']?)([^\"'\s,;&}]+)\3"
+    r"(?i)(?<![A-Za-z0-9])((?:" + "|".join(re.escape(k) for k in _SECRET_KEYS) + r")[\"']?)(\s*[:=]\s*)"
+    r"(?:\"([^\"]*)\"|'([^']*)'|([^\"'\s,;&}]+))"
 )
+
+
+def _mask_assign(m: re.Match) -> str:
+    if m.group(3) is not None:
+        val = f'"{MASK}"'
+    elif m.group(4) is not None:
+        val = f"'{MASK}'"
+    else:
+        val = MASK
+    return f"{m.group(1)}{m.group(2)}{val}"
+
 
 # Authorization / Proxy-Authorization: tutto il valore, fino a fine riga.
 _AUTH_HEADER = re.compile(r"(?im)^(\s*(?:proxy-)?authorization\s*:\s*).*$")
@@ -78,7 +95,7 @@ def redact(text: str) -> str:
     if not text:
         return text
     try:
-        out = _ASSIGN.sub(lambda m: f"{m.group(1)}{m.group(2)}{m.group(3)}{MASK}{m.group(3)}", text)
+        out = _ASSIGN.sub(_mask_assign, text)
         out = _AUTH_HEADER.sub(lambda m: f"{m.group(1)}{MASK}", out)
         out = _AUTH_INLINE.sub(lambda m: f"{m.group(1)}{MASK}", out)
         out = _DIGEST_FIELD.sub(lambda m: f"{m.group(1)}{m.group(2)}{m.group(3)}{MASK}{m.group(3)}", out)
