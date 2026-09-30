@@ -47,7 +47,7 @@ def rete(monkeypatch):
     monkeypatch.setattr(sip, "send_keyframe_request", _keyframe)
     monkeypatch.setattr(mh, "setup_media", _setup)
     monkeypatch.setattr(mh, "stop_media", _stop)
-    monkeypatch.setattr(sip, "build_sdp", lambda offer=None: "v=0\r\nSDP-NOSTRO\r\n")
+    monkeypatch.setattr(sip, "build_sdp", lambda offer=None, reuse_keys=False: "v=0\r\nSDP-NOSTRO\r\n")
     monkeypatch.setattr(sip, "in_call", False)
     monkeypatch.setattr(sip, "calling", False)
     monkeypatch.setattr(sip.R, "USE_LOCAL_UDP", False)  # cloud: media dai relay pubblici
@@ -75,6 +75,54 @@ def test_risposta_riusa_lo_stesso_sdp_senza_riaprire_il_video(rete, monkeypatch)
     assert inviati[-1].startswith("SIP/2.0 200 OK") and "SDP-NOSTRO" in inviati[-1]
     assert media == ["setup"]  # niente secondo setup_media
     sip._set_in_call(False)
+
+
+def test_audio_only_early_media_is_not_reopened_on_answer(rete, monkeypatch):
+    """An audio-only ring opens only the audio line: answering must not see
+    "no video open" and restart the media the preview already runs."""
+    inviati, media = rete
+    tx = []
+    monkeypatch.setattr(mh, "audio_proto", SimpleNamespace(remote_addr=("5.6.7.8", 4000)))
+    monkeypatch.setattr(mh, "video_proto", SimpleNamespace(remote_addr=None))
+    monkeypatch.setattr(mh, "enable_tx", lambda: tx.append(True))
+    asyncio.run(sip.handle_incoming_invite(INVITE.split("m=video")[0]))
+    ok, _ = asyncio.run(sip.do_answer_incoming())
+    assert ok
+    assert media == ["setup"] and tx == [True]
+    sip._set_in_call(False)
+
+
+def test_answer_does_not_wait_for_the_keyframe_info(rete, monkeypatch):
+    """The keyframe INFO is a round trip through the relay: answering returns
+    at once, and the request still goes out."""
+    inviati, media = rete
+    monkeypatch.setattr(mh, "video_proto", SimpleNamespace(remote_addr=("5.6.7.8", 4002)))
+    asked = []
+
+    async def _slow_keyframe():
+        asked.append("sent")
+        await asyncio.sleep(5)
+        asked.append("answered")
+    monkeypatch.setattr(sip, "send_keyframe_request", _slow_keyframe)
+
+    async def go():
+        await sip.handle_incoming_invite(INVITE)
+        res = await asyncio.wait_for(sip.do_answer_incoming(), 1)
+        await asyncio.sleep(0)
+        return res
+    ok, _ = asyncio.run(go())
+    assert ok and asked == ["sent"]
+    sip._set_in_call(False)
+
+
+def test_a_stale_response_is_not_a_warning(caplog):
+    """A late answer to a request nobody waits for any more is logged at DEBUG."""
+    raw = ("SIP/2.0 200 OK\r\nCall-ID: gone-1\r\nCSeq: 5 INFO\r\n"
+           "Content-Length: 0\r\n\r\n")
+    with caplog.at_level(logging.DEBUG, logger=sip._LOGGER.name):
+        asyncio.run(sip._dispatch_message(raw))
+    stale = [r for r in caplog.records if "Stale response" in r.getMessage()]
+    assert stale and all(r.levelno == logging.DEBUG for r in stale)
 
 
 def test_durante_una_nostra_chiamata_niente_early_media(rete, monkeypatch):
@@ -234,7 +282,8 @@ def test_udp_locale_niente_media_verso_indirizzi_fuori_lan(rete, monkeypatch):
 def _in_dialogo(monkeypatch, cid="nostra"):
     monkeypatch.setattr(sip, "in_call", True)
     monkeypatch.setitem(sip.call_state, "call_id", cid)
-    monkeypatch.setitem(sip.call_state, "local_sdp", "v=0\r\nSDP-DELLA-CHIAMATA\r\n")
+    monkeypatch.setitem(sip.call_state, "local_sdp",
+                        "v=0\r\nSDP-DELLA-CHIAMATA\r\nm=audio 9100 RTP/AVP 0\r\nm=video 9200 RTP/AVP 96\r\n")
     monkeypatch.setitem(sip.call_state, "remote_sdp", sip.parse_sdp(INVITE.split("\r\n\r\n", 1)[1]))
 
 

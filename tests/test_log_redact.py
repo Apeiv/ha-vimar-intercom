@@ -102,3 +102,34 @@ def test_le_virgolette_restano_e_gli_altri_campi_pure():
 @pytest.mark.parametrize("riga", ["mypassword_hint=ok", "tokens=5", "sip_user=12345"])
 def test_non_oscura_quello_che_non_e_un_segreto(riga):
     assert lr.redact(riga) == riga
+
+# ─── SRTP keys ────────────────────────────────────────────────────────────────
+
+SRTP_KEY = "WVNfX19zZW1jdGwgKCkgewkyMjA7fQp9CnVubGVz"
+
+
+def test_the_srtp_key_in_an_sdp_line_is_hidden():
+    out = lr.redact(f"[SDP <<<]   a=crypto:1 AES_CM_128_HMAC_SHA1_80 inline:{SRTP_KEY}")
+    assert SRTP_KEY not in out
+    assert "AES_CM_128_HMAC_SHA1_80 inline:" in out, "the line stays readable"
+
+
+@pytest.mark.parametrize("name", ["crypto_key", "a_srtp_key", "v_srtp_key"])
+def test_the_srtp_key_in_a_parsed_sdp_dict_is_hidden(name):
+    out = lr.redact(f"SDP: audio={{'port': 4000, '{name}': '{SRTP_KEY}'}}")
+    assert SRTP_KEY not in out and "'port': 4000" in out
+
+
+@pytest.mark.parametrize("name", ["key", "srtp-key", "master_key"])
+def test_any_value_under_a_key_named_key_is_hidden(name):
+    out = lr.redact(f"crypto=[{{'tag': '1', '{name}': 'abc123'}}] \"{name}\": \"xyz789\"")
+    assert "abc123" not in out and "xyz789" not in out and "'tag': '1'" in out
+
+
+def test_a_bare_srtp_sized_base64_after_key_is_hidden():
+    assert SRTP_KEY not in lr.redact(f"key: {SRTP_KEY}")
+    assert SRTP_KEY not in lr.redact(f"key={SRTP_KEY}")
+
+
+def test_words_that_merely_contain_key_stay_readable():
+    assert lr.redact("'keyframe': 12, 'monkey': 'x'") == "'keyframe': 12, 'monkey': 'x'"

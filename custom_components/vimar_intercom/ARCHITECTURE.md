@@ -34,6 +34,7 @@ vimar_intercom/
 ├── binary_sensor.py    SIP registrato, in call, squillo, chiamata in uscita
 ├── media_handler.py    RTP H.264/PCMU, WebSocket audio/video, ffmpeg
 ├── srtp.py             SRTP AES-CM-128-HMAC-SHA1-80 (pycryptodome)
+├── rtcp.py             RTCP probe for debugging (only with the logger at DEBUG)
 ├── model_detect.py     Rilevamento modello dagli header SIP
 ├── device.py           device_info condiviso
 ├── services.yaml, strings.json, translations/{it,en}.json

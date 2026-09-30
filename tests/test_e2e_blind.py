@@ -457,22 +457,25 @@ def test_squillo_cloud_record_route_rispondi_keyframe_riaggancia_niente_scartato
 
 
 def test_targa_cifra_ma_noi_no_mai_voce_in_chiaro(monkeypatch):
-    """La targa risponde con a=crypto ma «Cifra il media» è spento: si sente lei (RX
-    decifrato), ma la nostra voce non parte mai in chiaro dentro una sessione SRTP."""
+    """La targa offre a=crypto e «Cifra il media» è spento: la risposta rispecchia
+    l'offerta, quindi si sente lei (RX decifrato) e la nostra voce parte cifrata,
+    mai in chiaro dentro una sessione SRTP."""
     async def s():
         async with Rig(monkeypatch) as rig:
             await rig.register()
             rig.peer.key = "d0RmdmcmVCspeEc3QGZiNWpVLFJhQX1cfHAwJSoj"
             rig.ring()
-            await rig.peer.wait_for(is_(code=183))
+            r183 = await rig.peer.wait_for(is_(code=183))
+            assert "RTP/SAVP" in r183.body and "a=crypto" in r183.body
             assert (await rig.hub.async_answer())[0]
             await asyncio.sleep(0.2)
-            assert media.audio_proto.srtp_rx is not None and media.audio_proto.srtp_tx is None
+            assert media.audio_proto.srtp_rx is not None and media.audio_proto.srtp_tx is not None
             for _ in range(20):
                 media.send_audio(b"\x10\x00" * 160)
                 await asyncio.sleep(0.02)
-            await asyncio.sleep(0.5)
-            assert rig.peer.audio_rx == [], "RTP in chiaro verso una targa che cifra"
+            await wait_until(lambda: rig.peer.audio_rx, 2, "voce alla targa")
+            # 12 header + 160 PCMU + 10 of SRTP auth tag: nothing left in the clear.
+            assert {len(p) - 12 for p in rig.peer.audio_rx} == {170}, "RTP in chiaro verso una targa che cifra"
             await rig.hub.async_hangup()
     run(s())
 

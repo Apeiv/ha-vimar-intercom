@@ -51,6 +51,7 @@ def test_la_nostra_offerta_propone_entrambi_i_modi():
 
 
 def test_offerta_senza_h264_ripiega_sulla_nostra_offerta():
-    solo_audio = OFFERTA_2F.split("m=video")[0]
-    video = _video(sip.build_sdp(sip.parse_sdp(solo_audio)))
+    # An offered video line with no H.264 in it: our own H.264 list.
+    senza_h264 = OFFERTA_2F.replace("a=rtpmap:96 H264/90000", "a=rtpmap:96 VP8/90000")
+    video = _video(sip.build_sdp(sip.parse_sdp(senza_h264)))
     assert video[0].split()[3:] == ["96", "97"]

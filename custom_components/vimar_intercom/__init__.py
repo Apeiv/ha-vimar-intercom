@@ -39,7 +39,6 @@ from . import webhook
 _LOGGER = logging.getLogger(__name__)
 
 # Buffer interno dei log e inoltro al log di HA: vedi log_buffer.py.
-_debug_log = _log_buffer.debug_log
 _log_buffer.install()
 
 PLATFORMS = ["camera", "lock", "button", "event", "binary_sensor", "sensor", "switch", "select",
@@ -126,7 +125,10 @@ def _entry_data(hass: HomeAssistant) -> dict:
     """Dati dell'entry attiva. Le view HTTP restano registrate anche dopo aver
     tolto e riaggiunto l'integrazione (entry_id nuovo), e la prima registrata
     vince: legate al vecchio entry_id rispondevano 503 fino al riavvio di HA."""
-    return next(iter(hass.data.get(DOMAIN, {}).values()), {})
+    # Only an entry's own dict (it has a "hub"): any other key under DOMAIN
+    # (a flag, a cache) must never be taken for the active entry.
+    return next((v for v in hass.data.get(DOMAIN, {}).values()
+                 if isinstance(v, dict) and "hub" in v), {})
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -136,8 +138,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # tutti: sul cloud Vimar la registrazione (e le push) sono associate
     # all'identità, quindi due impianti con lo stesso valore si scalzano a
     # vicenda. Gli entry già esistenti vengono migrati qui, in silenzio.
-    if not entry.data.get("device_imei") or not entry.data.get("device_uuid"):
-        identity = runtime.new_device_identity()
+    if (identity := _missing_identity(entry.data)) is not None:
         hass.config_entries.async_update_entry(
             entry, data={**entry.data, **identity})
         _LOGGER.info("Identità dispositivo generata per questa installazione")
@@ -156,6 +157,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     webhook.setup(hass)   # GET a inizio/fine squillo, se configurato
 
     hub = VimarIntercomHub()
+
+    @callback
+    def _persist_learned(updates: dict) -> None:
+        """Values learned from the plant go in the entry data, not the
+        options, so saving them does not reload the integration."""
+        if (data := _learned_data(entry.data, updates)) is not None:
+            hass.config_entries.async_update_entry(entry, data=data)
+
+    hub.set_persist_callback(_persist_learned)
 
     # Insieme di WS audio attivi: vive in hass.data per evitare globals
     # a livello di modulo (sicuro con reload e multi-entry).
@@ -265,12 +275,47 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Ricarica l'integrazione al salvataggio delle options, tranne quando cambiano
-    solo le chiavi del messaggio di assenza: quelle si applicano in memoria."""
+    """Reload the integration when the options are saved, except when:
+
+    - nothing in the options changed: the listener fires on every change of
+      the entry, including the integration saving the detected model or a
+      learned panel into the entry data, and that used to reload everything,
+      in the middle of a call too;
+    - only the away message keys changed: those apply in memory.
+    """
     data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if data is not None and not _options_changed(data.get("applied"), entry.options):
+        return
     if data is not None and away_config.apply_options(data, entry.options):
         return
     await hass.config_entries.async_reload(entry.entry_id)
+
+
+def _missing_identity(data) -> dict | None:
+    """The device identity to add to an entry that lacks one, or None.
+
+    Entries from the m4r1k fork already have an identity under one name
+    ("device_id", used for both headers): changing it would break the
+    pairing, so it is kept.
+    """
+    if data.get("device_imei") and data.get("device_uuid"):
+        return None
+    legacy = str(data.get("device_id") or "").strip()
+    if legacy:
+        return {"device_imei": legacy, "device_uuid": legacy}
+    return runtime.new_device_identity()
+
+
+def _learned_data(data, updates: dict) -> dict | None:
+    """The entry data with the learned values, or None when nothing changes."""
+    if all(data.get(k) == v for k, v in updates.items()):
+        return None
+    return {**data, **updates}
+
+
+def _options_changed(started_with, options) -> bool:
+    """True when the options differ from those the entry started with."""
+    return started_with != dict(options)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -801,7 +846,7 @@ class VimarDebugView(HomeAssistantView):
             n = int(request.query.get("lines", "100"))
         except ValueError:
             n = 100
-        text = "\n".join(_debug_log[-n:])
+        text = "\n".join(_log_buffer.tail(n))
         return web.Response(text=text, content_type="text/plain")
 
 
@@ -896,8 +941,10 @@ class VimarAVStreamView(HomeAssistantView):
         if passive and not hub.video_active:
             return web.Response(status=503, text="No call (passive)")
         _LOGGER.info("AV stream requested%s", " (passive)" if passive else "")
-        wait = passive or await hub.stream_opened()
         try:  # tutto dentro: se il client se ne va prima, lo spettatore va comunque tolto
+            # Inside the try too: stream_opened counts the viewer at once and can
+            # then wait for a hang-up; a client leaving meanwhile is uncounted.
+            wait = passive or await hub.stream_opened()
             if not wait:
                 return web.Response(status=503, text="No call")
             waited = 0

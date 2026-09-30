@@ -4,7 +4,8 @@ import asyncio
 import contextlib
 import hashlib
 import os
-import random
+import re
+import secrets
 import socket
 import ssl
 import string
@@ -17,6 +18,7 @@ from . import log_redact
 from . import media_handler as media
 from . import model_detect
 from . import validate
+from .inventory import DeviceInventory
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -59,6 +61,8 @@ lock = None
 _udp_sock = None     # UDP socket (local mode)
 _udp_target = None   # (host, port) target for UDP sendto
 registered = False
+# The plant's devices seen on the SIP channel (see inventory.py).
+DEVICES = DeviceInventory()
 in_call = False
 calling = False
 cseq_counter = 0
@@ -265,7 +269,8 @@ def _simple_contact():
 
 
 def _gen(prefix="z9hG4bK"):
-    return f"{prefix}{random.randint(100000, 9999999):x}"
+    # secrets, not random: tags, branches and Call-IDs should not be guessable.
+    return f"{prefix}{secrets.token_hex(4)}"
 
 
 def _next_cseq():
@@ -292,13 +297,26 @@ def _digest_resp(method, uri, nonce, realm=None, qop=None, nc=None, cnonce=None)
     return hashlib.md5(f"{ha1}:{nonce}:{ha2}".encode()).hexdigest()
 
 
-def _challenge_params(challenge: str) -> dict:
-    p = {}
-    for item in challenge.replace("Digest ", "").split(","):
-        if "=" in item:
-            k, v = item.strip().split("=", 1)
-            p[k.strip()] = v.strip().strip('"')
-    return p
+# One name=value of a challenge: a quoted value may hold commas (a realm, a
+# qop list), so the value is matched whole instead of splitting on commas.
+_CHALLENGE_PARAM = re.compile(r'([A-Za-z][A-Za-z0-9_-]*)\s*=\s*(?:"([^"]*)"|([^,\s]+))')
+
+
+def _challenge_params(challenge: str) -> dict[str, str]:
+    """Parameters of a WWW-Authenticate / Proxy-Authenticate value.
+
+    `Digest realm="a, b", nonce="n"` gives {"realm": "a, b", "nonce": "n"};
+    names are lower-cased. Another scheme (Basic) gives {}.
+    """
+    scheme, sep, params = (challenge or "").strip().partition(" ")
+    if "=" in scheme:
+        params = challenge  # no scheme name: parameters only
+    elif not sep or scheme.lower() != "digest":
+        return {}
+    return {
+        m.group(1).lower(): m.group(2) if m.group(2) is not None else m.group(3)
+        for m in _CHALLENGE_PARAM.finditer(params)
+    }
 
 
 # L'ultima sfida del proxy (Proxy-Authenticate): con quella gli INFO di keyframe
@@ -329,8 +347,8 @@ def _make_auth(method, uri, challenge):
     opaque = p.get("opaque", "")
     qop = p.get("qop", "")
     nc = "00000001"
-    cnonce = f"{random.randint(10**7, 10**8-1):08x}"
-    if "auth" in qop:
+    cnonce = secrets.token_hex(8)
+    if "auth" in [item.strip().lower() for item in qop.split(",")]:
         resp = _digest_resp(method, uri, nonce, realm, "auth", nc, cnonce)
         hdr = (f'Digest username="{R.SIP_USER}", realm="{realm}", '
                f'nonce="{nonce}", uri="{uri}", response="{resp}", '
@@ -466,6 +484,11 @@ async def connect():
         if writer is None:
             raise ConnectionError(f"Nessun proxy SIP cloud raggiungibile: {last_err}")
         lock = asyncio.Lock()
+        if not verify:
+            # Every time, not once: this connection carries the REGISTER.
+            _LOGGER.warning(
+                "SIP TLS connected WITHOUT certificate verification (%s): the "
+                "link is encrypted but the proxy is not authenticated", cert_error)
         _LOGGER.info("SIP TLS connected")
 
 
@@ -488,6 +511,48 @@ def cancel_reconnect() -> None:
     """Ferma la riconnessione in corso (unload dell'integrazione)."""
     if _reconnect_task:
         _reconnect_task.cancel()
+
+
+def reset_state() -> None:
+    """Put the module back to its starting state (integration unload).
+
+    The SIP state lives in module variables, which survive a reload: without
+    this the new hub started out convinced it was still in a call.
+
+    The hub being unloaded is not notified of these changes (its state
+    callback is dropped first: the next hub sets its own at start), the
+    transport is closed and forgotten, and whoever still waits for a response
+    is woken with _CANCEL instead of waiting for a queue nobody fills.
+    """
+    global _local_crypto_key, _local_video_crypto_key, _last_sweep
+    global _state_change_callback, reader, writer, _udp_sock
+    global granted_expiry, registered_at
+    cancel_reconnect()
+    _state_change_callback = None
+    _set_in_call(False)
+    _set_calling(False)
+    _set_registered(False)
+    for sock in (writer, _udp_sock):
+        if sock is not None:
+            with contextlib.suppress(Exception):
+                sock.close()
+    reader = writer = _udp_sock = None
+    for key in call_state:
+        call_state[key] = None
+    timer = pending_incoming.pop("timer", None)
+    if timer:
+        timer.cancel()
+    pending_incoming.clear()
+    pending_incoming.update(_PENDING_INITIAL)
+    for queue in list(pending_responses.values()):
+        with contextlib.suppress(Exception):
+            queue.put_nowait(_CANCEL)
+    pending_responses.clear()
+    _seen_requests.clear()
+    _last_sweep = 0.0
+    _local_crypto_key = _local_video_crypto_key = None
+    granted_expiry, registered_at = None, 0.0
+    DEVICES.forget_bindings()
 
 
 async def _reconnect():
@@ -558,6 +623,7 @@ def _parse(msg):
     hdrs = {}
     via_list = []
     rr_list = []   # Record-Route: più header, l'ordine conta (route set)
+    contact_list = []  # a registrar lists one Contact per binding
     for line in lines[1:]:
         if ":" in line:
             k, v = line.split(":", 1)
@@ -566,12 +632,44 @@ def _parse(msg):
                 via_list.append(v.strip())
             elif key == "record-route":
                 rr_list.append(v.strip())
+            elif key == "contact":
+                contact_list.append(v.strip())
             hdrs[key] = v.strip()
     if via_list:
         hdrs["_via_all"] = via_list
     if rr_list:
         hdrs["_rr_all"] = rr_list
+    if contact_list:
+        hdrs["_contact_all"] = contact_list
     return (code or method), hdrs, body, first
+
+
+def _split_contacts(hdrs) -> list[str]:
+    """Each binding as its own entry.
+
+    A registrar may list contacts on several Contact lines or on one line
+    separated by commas (and commas also appear inside quoted parameters, so
+    a blind split does not work).
+    """
+    raw = hdrs.get("_contact_all") or ([hdrs["contact"]] if hdrs.get("contact") else [])
+    values: list[str] = []
+    for line in raw:
+        current, depth, quoted = [], 0, False
+        for char in line:
+            if char == '"':
+                quoted = not quoted
+            elif not quoted and char in "<[":
+                depth += 1
+            elif not quoted and char in ">]":
+                depth = max(0, depth - 1)
+            if char == "," and depth == 0 and not quoted:
+                values.append("".join(current).strip())
+                current = []
+            else:
+                current.append(char)
+        if current:
+            values.append("".join(current).strip())
+    return [v for v in values if v]
 
 
 def _call_id(hdrs):
@@ -691,7 +789,9 @@ async def _dispatch_message(raw: str):
             # quindi è l'esito normale del keepalive, non un errore da segnalare.
             _LOGGER.debug("Keepalive response %d for cid=%s", kind, cid[:24])
         else:
-            _LOGGER.warning("Stale response %d for cid=%s", kind, cid[:24])
+            # A late answer to a request we stopped waiting for (a timed-out
+            # INFO, the BYE of a call already closed): nothing is lost.
+            _LOGGER.debug("Stale response %d for cid=%s", kind, cid[:24])
     elif isinstance(kind, str):
         await incoming_requests.put(raw)
 
@@ -830,7 +930,7 @@ async def reader_task():
                 buf = b""
                 continue
             buf += chunk
-            if len(buf) > 1_000_000:  # guard: 1 MB max — evita OOM su messaggi malformati
+            if len(buf) > MAX_SIP_BODY:  # guard: 1 MB max — evita OOM su messaggi malformati
                 _LOGGER.error("SIP TCP buffer overflow (>1 MB); reset connessione")
                 await _reconnect_from_reader()
                 buf = b""
@@ -856,24 +956,78 @@ async def reader_task():
             await asyncio.sleep(2)
             continue
 
-        while b"\r\n\r\n" in buf:
-            hdr_end = buf.index(b"\r\n\r\n") + 4
-            hdr_text = buf[:hdr_end].decode(errors="replace")
-            cl = 0
-            for line in hdr_text.split("\r\n"):
-                if line.lower().startswith("content-length:"):
-                    try:
-                        # max(0): un Content-Length negativo non faceva avanzare il
-                        # buffer e il ciclo girava all'infinito, senza mai cedere l'event loop.
-                        cl = max(0, int(line.split(":", 1)[1].strip()))
-                    except ValueError:
-                        pass
-            total = hdr_end + cl
-            if len(buf) < total:
-                break
-            raw = buf[:total].decode(errors="replace")
-            buf = buf[total:]
+        messages, rest = _split_stream(buf)
+        for raw in messages:
             await _dispatch_message(raw)
+        if rest is None:
+            # Broken framing (see _split_stream): nothing after it can be trusted.
+            await _reconnect_after_framing_error()
+            rest = b""
+        buf = rest
+
+
+# A peer that keeps sending unframeable data would otherwise have us reconnect
+# in a tight loop: at most one framing-error reconnect every this many seconds.
+FRAMING_RECONNECT_MIN_S = 2.0
+framing_errors = 0            # since start, for the log and diagnostics
+_last_framing_reconnect = -1e9
+
+
+async def _reconnect_after_framing_error() -> None:
+    global framing_errors, _last_framing_reconnect
+    framing_errors += 1
+    wait = FRAMING_RECONNECT_MIN_S - (time.monotonic() - _last_framing_reconnect)
+    if wait > 0:
+        _LOGGER.warning("SIP: framing error #%d right after the last one: reconnecting "
+                        "in %.1f s", framing_errors, wait)
+        await asyncio.sleep(wait)
+    _last_framing_reconnect = time.monotonic()
+    await _reconnect_from_reader()
+
+
+# Largest body the framer accepts: the reader's buffer guard is the same 1 MB.
+MAX_SIP_BODY = 1_000_000
+
+
+def _split_stream(buf: bytes) -> tuple[list[str], bytes | None]:
+    """Cut the TLS stream into complete SIP messages; return them and the rest.
+
+    CRLFs between messages are keepalive pongs (RFC 5626 §4.4.1). Left in the
+    buffer they ended up in front of the next message, which then lost its
+    first line and was dropped as unrecognised.
+
+    Content-Length may also come as the compact header `l:` (RFC 3261
+    section 7.3.3). A value that is not a number, or one above MAX_SIP_BODY,
+    means the stream can no longer be framed: waiting for a body that size
+    held every later message forever. The rest is then None, and the reader
+    drops the connection and reconnects. A negative value counts as 0.
+    """
+    messages: list[str] = []
+    while True:
+        buf = buf.lstrip(b"\r\n")
+        end = buf.find(b"\r\n\r\n")
+        if end < 0:
+            return messages, buf
+        hdr_end = end + 4
+        cl = 0
+        for line in buf[:hdr_end].decode(errors="replace").split("\r\n"):
+            name, sep, value = line.partition(":")
+            if not sep or name.strip().lower() not in ("content-length", "l"):
+                continue
+            try:
+                # max(0): a negative Content-Length did not advance the
+                # buffer and the loop spun forever on the event loop.
+                cl = max(0, int(value.strip()))
+            except ValueError:
+                cl = None
+            if cl is None or cl > MAX_SIP_BODY:
+                _LOGGER.error("SIP: invalid Content-Length (%r): the stream can no "
+                              "longer be framed, reconnecting", value.strip()[:32])
+                return messages, None
+        if len(buf) < hdr_end + cl:
+            return messages, buf
+        messages.append(buf[:hdr_end + cl].decode(errors="replace"))
+        buf = buf[hdr_end + cl:]
 
 
 def _clen(body: str) -> int:
@@ -895,7 +1049,8 @@ _T1 = 0.5   # primo intervallo di ritrasmissione (s)
 _T2 = 4.0   # intervallo massimo (s)
 
 
-async def _send_request(msg: str, cid: str, timeout: float = 15) -> list[str]:
+async def _send_request(msg: str, cid: str, timeout: float = 15,
+                        on_sent=None) -> list[str]:
     """Invia una richiesta non-INVITE e ne raccoglie le risposte fino alla finale.
 
     Due differenze rispetto a `send()` + `_wait_final()`:
@@ -907,6 +1062,8 @@ async def _send_request(msg: str, cid: str, timeout: float = 15) -> list[str]:
       stessa transazione per il server) a 0,5 - 1 - 2 - 4 - 4 … secondi, finché non
       arriva una risposta qualsiasi. Su TCP/TLS il trasporto è affidabile e non si
       ritrasmette.
+
+    on_sent: called once the request has left, before waiting for the answer.
     """
     q = pending_responses.setdefault(cid, asyncio.Queue())
     # La coda di un dialogo (BYE) raccoglie anche i 200 degli INFO di keyframe:
@@ -920,6 +1077,8 @@ async def _send_request(msg: str, cid: str, timeout: float = 15) -> list[str]:
     results: list[str] = []
     try:
         await send(msg)  # anche un invio fallito toglie la coda (finally)
+        if on_sent:
+            on_sent()
         # Coda tolta da altri: BYE incrociati, handle_incoming_bye ha chiuso il dialogo e
         # la risposta al nostro BYE non arriverà qui. Si esce subito, non dopo `timeout`.
         while pending_responses.get(cid) is q:
@@ -937,6 +1096,9 @@ async def _send_request(msg: str, cid: str, timeout: float = 15) -> list[str]:
                     _LOGGER.debug("ritrasmissione cid=%s (prossima tra %.1fs)", cid[:24], interval)
                     await send(msg)
                 continue
+            if raw is _CANCEL:  # reset_state: nobody will answer any more
+                q.put_nowait(raw)  # for whoever else waits on this queue
+                break
             kind, hdrs, *_ = _parse(raw)
             if want and hdrs.get("cseq", "").split() != want:
                 continue
@@ -960,6 +1122,9 @@ async def _wait_final(cid, timeout=15):
             break
         try:
             raw = await asyncio.wait_for(q.get(), timeout=min(rem, 3))
+            if raw is _CANCEL:  # reset_state: nobody will answer any more
+                q.put_nowait(raw)
+                break
             results.append(raw)
             kind, *_ = _parse(raw)
             if isinstance(kind, int) and kind >= 200:
@@ -1009,33 +1174,105 @@ def _h264_answer(offer: dict | None) -> tuple[tuple[str, str], ...]:
     return _H264_OFFER
 
 
-def build_sdp(offer: dict | None = None):
+_SRTP_SUITES = ("AES_CM_128_HMAC_SHA1_80", "AES_CM_128_HMAC_SHA1_32")
+_DEFAULT_CRYPTO = {"tag": "1", "suite": "AES_CM_128_HMAC_SHA1_80"}
+
+
+def _offered_line(offer: dict | None, kind: str) -> dict | None:
+    """The offer's m=<kind> line, or None when the offer has no such line.
+
+    parse_sdp leaves an empty dict for a section the offer lacks; only a line
+    with a port (0 included) was really offered.
+    """
+    line = (offer or {}).get(kind)
+    return line if line and "port" in line else None
+
+
+def _offered_kinds(offer: dict | None) -> list[str]:
+    """The m-lines of an offer, in its order.
+
+    With no offer (we make it), both; audio only when the pairing QR says the
+    entrance has no camera (video=0, R.VIDEO_ENABLED False): offering video
+    asks for a stream nobody will send.
+    """
+    kinds = [k for k in ((offer or {}).get("order") or ("audio", "video"))
+             if _offered_line(offer, k) is not None]
+    if kinds:
+        return kinds
+    return ["audio", "video"] if getattr(R, "VIDEO_ENABLED", True) else ["audio"]
+
+
+def _line_security(offer: dict | None, kind: str) -> tuple[bool, dict | None]:
+    """(answer this m-line with a live port, the crypto to answer it with or None).
+
+    When we answer, each m-line mirrors that line of the offer: plants differ
+    (a 2F panel wants plain RTP and ignores SRTP, a 2FV2 relay offers
+    RTP/SAVP with a=crypto), and answering with the other profile means
+    claiming to accept something we will not use: we would receive encrypted
+    and send in the clear. An RTP/SAVP line is answered with the tag and suite
+    of the offer's first supported a=crypto line; one with no supported suite
+    cannot be used and is refused (port 0, RFC 4568 section 7.1.2). A line the
+    offer declined (port 0) stays declined, and a line the offer lacks is not
+    answered at all (build_sdp leaves it out). Only when we make the offer does
+    the plant setting (R.MEDIA_ENC) decide.
+    """
+    offered = [m for m in (_offered_line(offer, "audio"), _offered_line(offer, "video")) if m]
+    if not offered:
+        return True, (dict(_DEFAULT_CRYPTO) if getattr(R, "MEDIA_ENC", False) else None)
+    line = _offered_line(offer, kind)
+    if line is None or not line.get("port"):
+        return False, None
+    if not line.get("secure"):
+        return True, None
+    if line.get("crypto_key") and not line.get("refused"):
+        return True, {"tag": line.get("crypto_tag") or "1",
+                      "suite": line.get("crypto_suite") or _DEFAULT_CRYPTO["suite"]}
+    _LOGGER.warning("SDP: m=%s offers RTP/SAVP without a supported crypto suite "
+                    "(%s): line refused", kind,
+                    ", ".join(c.get("suite", "?") for c in line.get("crypto", [])) or "none")
+    return False, None
+
+
+def build_sdp(offer: dict | None = None, reuse_keys: bool = False):
     """Costruisce l'offerta/risposta SDP.
 
     Su questo impianto (verificato sul campo 20/08/2026 verso la targa 55100)
     il media viaggia in RTP IN CHIARO: se si offre SRTP (RTP/SAVP + a=crypto)
     la targa baresip non risponde e tutto il media fallisce. Perciò il default
     è RTP/AVP senza a=crypto. SRTP resta disponibile via R.MEDIA_ENC=True per
-    impianti che negoziano media_enc.
+    impianti che negoziano media_enc. As an answer, each m-line mirrors the
+    offer's profile and crypto suite for that line (see _line_security).
+
+    reuse_keys: a new answer inside a dialog (re-INVITE) keeps the local SRTP
+    keys the running media already encrypts with, so what we advertise and
+    what srtp_tx sends stay the same key.
     """
     global _local_crypto_key, _local_video_crypto_key
     sid = str(int(time.time()))
     import base64 as _b64
 
-    enc = bool(getattr(R, "MEDIA_ENC", False))
-    proto = "RTP/SAVP" if enc else "RTP/AVP"
+    audio_ok, audio_sec = _line_security(offer, "audio")
+    video_ok, video_sec = _line_security(offer, "video")
 
-    if enc:
-        _local_crypto_key = _b64.b64encode(os.urandom(30)).decode()
-        _local_video_crypto_key = _b64.b64encode(os.urandom(30)).decode()
-        audio_crypto = f"a=crypto:1 AES_CM_128_HMAC_SHA1_80 inline:{_local_crypto_key}\r\n"
-        video_crypto = f"a=crypto:1 AES_CM_128_HMAC_SHA1_80 inline:{_local_video_crypto_key}\r\n"
-    else:
-        # RTP in chiaro: nessuna chiave locale → setup_media non crea srtp_tx/rx.
-        _local_crypto_key = None
-        _local_video_crypto_key = None
-        audio_crypto = ""
-        video_crypto = ""
+    # RTP in chiaro su una linea: nessuna chiave locale → setup_media non crea
+    # srtp_tx/rx per quella linea.
+    def _key(sec, current):
+        if not sec:
+            return None
+        if reuse_keys and current:
+            return current
+        return _b64.b64encode(os.urandom(30)).decode()
+
+    _local_crypto_key = _key(audio_sec, _local_crypto_key)
+    _local_video_crypto_key = _key(video_sec, _local_video_crypto_key)
+    audio_proto = "RTP/SAVP" if audio_sec else "RTP/AVP"
+    video_proto = "RTP/SAVP" if video_sec else "RTP/AVP"
+    audio_crypto = (f"a=crypto:{audio_sec['tag']} {audio_sec['suite']} "
+                    f"inline:{_local_crypto_key}\r\n") if audio_sec else ""
+    video_crypto = (f"a=crypto:{video_sec['tag']} {video_sec['suite']} "
+                    f"inline:{_local_video_crypto_key}\r\n") if video_sec else ""
+    audio_port = C.RTP_AUDIO_PORT if audio_ok else 0
+    video_port = C.RTP_VIDEO_PORT if video_ok else 0
 
     h264 = _h264_answer(offer)
     h264_lines = "".join(
@@ -1047,6 +1284,28 @@ def build_sdp(offer: dict | None = None):
         for pt, fmtp in h264
     )
 
+    blocks = {
+        "audio": (
+            f"m=audio {audio_port} {audio_proto} 0 8 101\r\n"
+            f"a=rtpmap:0 PCMU/8000\r\n"
+            f"a=rtpmap:8 PCMA/8000\r\n"
+            f"a=rtpmap:101 telephone-event/8000\r\n"
+            f"a=fmtp:101 0-15\r\n"
+            f"a=ptime:20\r\n"
+            f"a=sendrecv\r\n"
+            f"{audio_crypto}"
+        ),
+        "video": (
+            f"m=video {video_port} {video_proto} {' '.join(pt for pt, _ in h264)}\r\n"
+            f"b=AS:256\r\n"
+            f"{h264_lines}"
+            f"a=sendrecv\r\n"
+            f"{video_crypto}"
+        ),
+    }
+    # RFC 3264 section 6: the answer has exactly the offer's m-lines, in the
+    # offer's order; a line is refused with port 0, never dropped, and a line
+    # the offer lacks is never added (an audio-only panel got a live m=video).
     return (
         f"v=0\r\n"
         f"o=- {sid} {sid} IN IP4 {MY_IP}\r\n"
@@ -1055,24 +1314,55 @@ def build_sdp(offer: dict | None = None):
         f"b=AS:512\r\n"
         f"t=0 0\r\n"
         f"a=rtcp-xr:rcvr-rtt=all:10000 stat-summary=loss,dup,jitt,TTL voip-metrics\r\n"
-        f"m=audio {C.RTP_AUDIO_PORT} {proto} 0 8 101\r\n"
-        f"a=rtpmap:0 PCMU/8000\r\n"
-        f"a=rtpmap:8 PCMA/8000\r\n"
-        f"a=rtpmap:101 telephone-event/8000\r\n"
-        f"a=fmtp:101 0-15\r\n"
-        f"a=ptime:20\r\n"
-        f"a=sendrecv\r\n"
-        f"{audio_crypto}"
-        f"m=video {C.RTP_VIDEO_PORT} {proto} {' '.join(pt for pt, _ in h264)}\r\n"
-        f"b=AS:256\r\n"
-        f"{h264_lines}"
-        f"a=sendrecv\r\n"
-        f"{video_crypto}"
+        + "".join(blocks.get(kind) or _refused_block(offer[kind])
+                  for kind in _offered_kinds(offer))
     )
 
 
+def _refused_block(line: dict) -> str:
+    """An m-line we do not handle (m=text, m=application, ...), refused.
+
+    RFC 3264 section 6: the answer keeps it, with port 0 and a format from the
+    offer; dropping it shifts every later line of the answer.
+    """
+    fmts = " ".join(line.get("fmts") or ["0"])
+    return f"m={line.get('media', 'application')} 0 {line.get('proto') or 'RTP/AVP'} {fmts}\r\n"
+
+
+def _answer_fits(answer: str, offer: dict | None) -> bool:
+    """Whether a previous answer still answers `offer`: the same m-lines in
+    the same order, and no live line where the offer has port 0."""
+    if not offer or not offer.get("order"):
+        return True  # no SDP in the re-INVITE: the old session stands
+    ours = _sdp_lines(answer)
+    kinds = _offered_kinds(offer)
+    if [media for media, _ in ours] != [offer[k].get("media", k) for k in kinds]:
+        return False
+    return all(offer[k]["port"] or not live for k, (_, live) in zip(kinds, ours))
+
+
+def _sdp_lines(sdp_text: str) -> list[tuple[str, bool]]:
+    """(media, live) for each m-line of an SDP, in order."""
+    lines = []
+    for line in sdp_text.split("\n"):
+        parts = line.strip().split()
+        if parts and parts[0].startswith("m=") and len(parts) > 1:
+            lines.append((parts[0][2:], parts[1] != "0"))
+    return lines
+
+
+def _loggable(section: dict | None) -> dict:
+    """A parsed SDP section without its SRTP master key, for the log."""
+    return {k: v for k, v in (section or {}).items() if k != "crypto_key"}
+
+
 def parse_sdp(sdp_text):
-    result = {"audio": {}, "video": {}, "conn": ""}
+    # "order" lists the m-lines as offered. A section the SDP lacks stays an
+    # empty dict (no "port"): it is not a line of this session. Any other
+    # m-line (m=text, m=application, a second m=audio) gets its own section
+    # "m<n>" with "unknown": we answer it with port 0, and its c= and a=
+    # lines stay in it instead of changing the line before.
+    result = {"audio": {}, "video": {}, "conn": "", "order": []}
     m = None
     for line in sdp_text.split("\n"):
         line = line.strip()
@@ -1082,16 +1372,24 @@ def parse_sdp(sdp_text):
                 result[m]["ip"] = ip
             else:
                 result["conn"] = ip
-        elif line.startswith("m=audio"):
-            m = "audio"
+        elif line.startswith("m="):
             parts = line.split()
-            result["audio"]["port"] = int(parts[1])
-            result["audio"]["fmts"] = parts[3:]
-        elif line.startswith("m=video"):
-            m = "video"
-            parts = line.split()
-            result["video"]["port"] = int(parts[1])
-            result["video"]["fmts"] = parts[3:]
+            media = parts[0][2:]
+            try:
+                port = int(parts[1]) if len(parts) > 1 else 0
+            except ValueError:
+                port = 0
+            if media in ("audio", "video") and "port" not in result[media]:
+                m = media
+            else:
+                m = f"m{len(result['order'])}"
+                result[m] = {"media": media, "unknown": True}
+            result["order"].append(m)
+            result[m]["port"] = port
+            result[m]["proto"] = parts[2] if len(parts) > 2 else ""
+            result[m]["secure"] = (not result[m].get("unknown")
+                                   and "SAVP" in result[m]["proto"].upper())
+            result[m]["fmts"] = parts[3:]
         elif line[2:] in ("sendrecv", "sendonly", "recvonly", "inactive") and line.startswith("a="):
             result.setdefault(m or "session", {})["dir"] = line[2:]
         elif line.startswith("a=rtpmap:") and m:
@@ -1099,14 +1397,31 @@ def parse_sdp(sdp_text):
         elif line.startswith("a=fmtp:") and m:
             result[m].setdefault("fmtp", []).append(line)
         elif line.startswith("a=crypto:") and m:
-            parts = line.split()
-            for p in parts:
-                if p.startswith("inline:"):
-                    result[m]["crypto_key"] = p[7:]
-                    break
+            # a=crypto:<tag> <suite> inline:<key>[|lifetime][|MKI] (RFC 4568)
+            parts = line[9:].split()
+            if len(parts) >= 3 and parts[2].startswith("inline:"):
+                sec = result[m]
+                tag, suite = parts[0], parts[1].upper()
+                # The list keeps tag and suite only: the parsed SDP is logged,
+                # and a master key in a log decrypts the call.
+                sec.setdefault("crypto", []).append({"tag": tag, "suite": suite})
+                # The key used for this line: the first a=crypto with a suite
+                # we support, only on an RTP/SAVP line (on RTP/AVP it means
+                # nothing).
+                if sec.get("secure") and "crypto_key" not in sec and suite in _SRTP_SUITES:
+                    sec.update(crypto_key=parts[2][7:].split("|", 1)[0],
+                               crypto_tag=tag, crypto_suite=suite)
     session_dir = result.pop("session", {}).get("dir")
     for section in ("audio", "video"):
-        if section in result and "ip" not in result[section]:
+        line = result[section]
+        if line.get("port") and line.get("secure") and "crypto_key" not in line:
+            # RTP/SAVP with no crypto suite we support: our answer refuses it
+            # with port 0 (_line_security), so no media may be set up on it.
+            line["refused"] = True
+    for section in ("audio", "video"):
+        if "port" not in result[section]:
+            continue
+        if "ip" not in result[section]:
             result[section]["ip"] = result["conn"]
         if session_dir and "dir" not in result[section]:
             result[section]["dir"] = session_dir
@@ -1114,6 +1429,78 @@ def parse_sdp(sdp_text):
 
 
 # ─── Operations ─────────────────────────────────────────────────────
+
+def _record_bindings(hdrs) -> None:
+    """Note who is registered on the account, us included.
+
+    This is the only moment the registrar also lists the devices that are not
+    sending anything right now.
+    """
+    try:
+        DEVICES.forget_bindings()
+        for contact in _split_contacts(hdrs):
+            DEVICES.note_binding(contact, own_device_id=R.DEVICE_UUID, own_name=R.DEVICE_NAME)
+    except Exception as e:  # noqa: BLE001
+        _LOGGER.debug("Device inventory (bindings) skipped: %s", e)
+
+
+# The hub renews the registration every REGISTER_INTERVAL seconds, sooner when
+# the registrar grants a shorter lifetime (renew_delay). A grant under
+# MIN_GRANTED_EXPIRES is still worth a WARNING: the renewals then run more often
+# than upstream's 120 s, and one lost answer leaves little time before it lapses.
+REGISTER_INTERVAL = 120
+MIN_GRANTED_EXPIRES = 150
+# Renew this long before the grant lapses; on short grants the margin shrinks
+# to a fifth of the grant, and a renewal is never scheduled closer than this.
+REGISTER_MARGIN = 60
+MIN_REGISTER_INTERVAL = 5
+
+# The lifetime the registrar granted at the last successful REGISTER (None: it
+# did not say), and when that was (time.monotonic(), 0.0: never).
+granted_expiry: int | None = None
+registered_at = 0.0
+
+
+def _remember_granted_expiry(hdrs) -> int | None:
+    """Record the lifetime the registrar granted and when (a 200 to REGISTER)."""
+    global granted_expiry, registered_at
+    granted_expiry = _granted_expires(hdrs)
+    registered_at = time.monotonic()
+    return granted_expiry
+
+
+def renew_delay() -> float:
+    """Seconds between one successful REGISTER and the next renewal.
+
+    REGISTER_INTERVAL (upstream's 120 s) is the upper bound, so nothing changes
+    on a registrar that grants 120 s or more. On a shorter grant a fixed margin
+    would put the renewal right on the expiry (60 - 60 = 0), so the margin is
+    min(REGISTER_MARGIN, 20% of the grant), with a floor of MIN_REGISTER_INTERVAL.
+    """
+    granted = granted_expiry
+    if not granted:
+        return float(REGISTER_INTERVAL)
+    margin = min(REGISTER_MARGIN, granted * 0.2)
+    return float(min(REGISTER_INTERVAL, max(MIN_REGISTER_INTERVAL, granted - margin)))
+
+
+def _granted_expires(hdrs) -> int | None:
+    """The lifetime the registrar granted our binding, or None if it did not say.
+
+    Our own contact (by +sip.instance, or by our address) first: other devices
+    share this SIP user and their remaining lifetime says nothing about ours.
+    Then the Expires header.
+    """
+    instance = f"urn:uuid:{R.DEVICE_UUID}" if R.DEVICE_UUID else ""
+    ours = f"{MY_IP}:{_my_port()}" if MY_IP else ""
+    for value in _split_contacts(hdrs):
+        if (instance and instance in value) or (ours and ours in value):
+            m = re.search(r";\s*expires\s*=\s*(\d+)", value)
+            if m:
+                return int(m.group(1))
+    raw = str(hdrs.get("expires", "")).strip()
+    return int(raw) if raw.isdigit() else None
+
 
 async def do_register():
     # In UDP mode writer is always None — skip the TLS connect check
@@ -1128,7 +1515,7 @@ async def do_register():
     cid = _gen("reg-")
     uri = f"sip:{R.SIP_DOMAIN}"
 
-    def _msg(auth=None, seq=1):
+    def _msg(auth=None, seq=1, auth_hdr="Authorization"):
         branch = _gen()
         m = (f"REGISTER {uri} SIP/2.0\r\n"
              f"{_via_line(branch)}"
@@ -1141,41 +1528,69 @@ async def do_register():
              f"Contact: {_contact_hdr()}\r\n"
              f"User-Agent: {C.USER_AGENT}\r\n"
              f"Mobile-IMEI: {R.DEVICE_IMEI}\r\n"
-             f"MyName: {C.MY_NAME}\r\n"
+             f"MyName: {R.DEVICE_NAME}\r\n"
              f"Supported: replaces,outbound,gruu\r\n"
              f"Allow: INVITE,ACK,BYE,CANCEL,OPTIONS,NOTIFY,INFO,MESSAGE,UPDATE\r\n")
         if auth:
-            m += f"Authorization: {auth}\r\n"
+            m += f"{auth_hdr}: {auth}\r\n"
         return m + "Content-Length: 0\r\n\r\n"
 
-    s1 = _next_cseq()
-    resps = await _send_request(_msg(seq=s1), cid)
-
-    # Ogni uscita negativa deve azzerare `registered`: e' anche il keepalive a
-    # chiamare questa funzione, e fino alla 1.0.5 un fallimento lasciava il flag
-    # a True. Home Assistant dichiarava il citofono raggiungibile mentre non lo
-    # era piu', e il binary_sensor restava verde a impianto spento.
-    for r in resps:
-        code, hdrs, *_ = _parse(r)
-        if code == 401:
-            ch = hdrs.get("www-authenticate", "")
-            if not ch:
-                _LOGGER.warning("REGISTER: 401 senza challenge, registrazione fallita")
-                _set_registered(False)
-                return False
-            auth = _make_auth("REGISTER", uri, ch)
-            for r2 in await _send_request(_msg(auth=auth, seq=_next_cseq()), cid):
-                if _parse(r2)[0] == 200:
-                    _set_registered(True)
-                    _LOGGER.info("SIP registered successfully")
-                    return True
-            _LOGGER.warning("REGISTER: nessun 200 dopo l'autenticazione")
-            _set_registered(False)
-            return False
-        elif code == 200:
+    # Every failure clears `registered`: the keepalive calls this too, and a
+    # failed attempt used to leave the flag True.
+    # The registrar may answer an authenticated REGISTER with a fresh 401 and a
+    # new nonce, without stale=true (seen at renewals on a Tab 7S Up 40517).
+    # A new nonce is retried; the same nonce twice means the credentials were
+    # refused, and retrying would only loop.
+    seen_nonces: set[str] = set()
+    auth = None
+    # A 401 is answered with Authorization, a 407 with Proxy-Authorization
+    # (RFC 3261 section 22.3).
+    auth_hdr = "Authorization"
+    resps: list[str] = []
+    last_code = None
+    for _attempt in range(3):
+        resps = await _send_request(
+            _msg(auth=auth, seq=_next_cseq(), auth_hdr=auth_hdr), cid)
+        final = None
+        for r in resps:
+            code, hdrs, *_ = _parse(r)
+            if isinstance(code, int) and code >= 200:
+                final = (code, hdrs)
+        if final is None:
+            break
+        code, hdrs = final
+        last_code = code
+        if code == 200:
+            granted = _remember_granted_expiry(hdrs)
+            if granted is not None and granted < MIN_GRANTED_EXPIRES:
+                _LOGGER.warning("The registrar granted only %d s (Expires): renewing every "
+                                "%.0f s instead of every %d s", granted, renew_delay(),
+                                REGISTER_INTERVAL)
+            _record_bindings(hdrs)
             _set_registered(True)
             _LOGGER.info("SIP registered successfully")
             return True
+        if code not in (401, 407):
+            _LOGGER.warning("REGISTER rejected: %s", code)
+            _set_registered(False)
+            return False
+        ch = hdrs.get("www-authenticate" if code == 401 else "proxy-authenticate", "")
+        nonce = re.search(r'nonce\s*=\s*"([^"]*)"', ch)
+        nonce = nonce.group(1) if nonce else ""
+        if not ch or nonce in seen_nonces:
+            _LOGGER.warning("REGISTER: %s", "credentials refused" if ch else
+                            f"{code} without a challenge")
+            _set_registered(False)
+            return False
+        seen_nonces.add(nonce)
+        auth = _make_auth("REGISTER", uri, ch)
+        auth_hdr = "Authorization" if code == 401 else "Proxy-Authorization"
+    if last_code in (401, 407) and final is not None:
+        # Three challenges, each with a new nonce: the credentials never passed.
+        _LOGGER.warning("REGISTER: credentials refused (the registrar rotated its "
+                        "nonce each time)")
+        _set_registered(False)
+        return False
     # Diagnostica: "0 risposte" = nulla è tornato nemmeno dopo le ritrasmissioni;
     # altrimenti diciamo quali codici sono arrivati, che prima non si leggevano.
     codes = [_parse(r)[0] for r in resps]
@@ -1196,7 +1611,7 @@ async def do_system_message(target_uri, body_text, extra_headers=None, timeout=1
     _LOGGER.info("do_system_message: target=%s body=%s headers=%s", target_uri, body_text, extra_headers)
     ftag = _gen("")
     # Come l'app ufficiale (MakeCallModel/SystemMsg): Call-ID = 10 caratteri alfanumerici
-    cid = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
+    cid = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(10))
 
     def _msg(auth=None, seq=1):
         branch = _gen()
@@ -1211,7 +1626,7 @@ async def do_system_message(target_uri, body_text, extra_headers=None, timeout=1
              f"Contact: {_simple_contact()}\r\n"
              f"User-Agent: {C.USER_AGENT}\r\n"
              f"Mobile-IMEI: {R.DEVICE_IMEI}\r\n"
-             f"MyName: {C.MY_NAME}\r\n")
+             f"MyName: {R.DEVICE_NAME}\r\n")
         if extra_headers:
             for k, v in extra_headers.items():
                 m += f"{k}: {v}\r\n"
@@ -1273,7 +1688,7 @@ async def do_call(target=None, silence_limit=None):
     call_state["local_sdp"] = sdp
     call_state["silence_limit"] = silence_limit
 
-    vimar_callid = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
+    vimar_callid = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(10))
     inv_branch = ""
 
     def _inv(auth=None, seq=1):
@@ -1297,7 +1712,7 @@ async def do_call(target=None, silence_limit=None):
         if auth:
             m += f"Proxy-Authorization: {auth}\r\n"
         m += (f"Mobile-IMEI: {R.DEVICE_IMEI}\r\n"
-              f"MyName: {C.MY_NAME}\r\n"
+              f"MyName: {R.DEVICE_NAME}\r\n"
               f"X-Call-ID: {vimar_callid}\r\n"
               f"Content-Type: application/sdp\r\n"
               f"Content-Length: {_clen(sdp)}\r\n\r\n{sdp}")
@@ -1445,7 +1860,8 @@ async def do_call(target=None, silence_limit=None):
 
                 if remote:
                     call_state["remote_sdp"] = remote
-                    _LOGGER.info("SDP: audio=%s video=%s", remote.get('audio', {}), remote.get('video', {}))
+                    _LOGGER.info("SDP: audio=%s video=%s", _loggable(remote.get('audio')),
+                                 _loggable(remote.get('video')))
                     await media.setup_media(remote, _local_crypto_key, _local_video_crypto_key,
                                             silence_limit=call_state["silence_limit"])
                     if not calling:
@@ -1479,6 +1895,20 @@ async def do_call(target=None, silence_limit=None):
         # guardia a inizio funzione blocca ogni chiamata successiva.
         pending_responses.pop(cid, None)
         _set_calling(False)
+
+
+_background: set[asyncio.Task] = set()
+
+
+def _spawn(coro) -> asyncio.Task:
+    """A task nobody awaits, kept referenced until it is done."""
+    t = asyncio.create_task(coro)
+    _background.add(t)
+    t.add_done_callback(_background.discard)
+    t.add_done_callback(
+        lambda t: _LOGGER.error("Background SIP task failed: %s", t.exception())
+        if not t.cancelled() and t.exception() else None)
+    return t
 
 
 async def send_keyframe_request():
@@ -1558,6 +1988,9 @@ async def send_keyframe_request():
                 )
             except (asyncio.TimeoutError, KeyError):
                 break
+            if raw is _CANCEL:  # reset_state, or do_hangup for do_call: not ours
+                foreign.append(raw)
+                break
             code, hdrs, *_ = _parse(raw)
             cseq = hdrs.get("cseq", "").split()
             if "INFO" not in hdrs.get("cseq", "INFO"):
@@ -1588,7 +2021,12 @@ async def send_keyframe_request():
     # possedere la stessa coda. La coda del dialog viene ripulita a hangup.
 
 
-async def do_hangup():
+async def do_hangup(on_local_end=None):
+    """End the call: at once locally, then wait for the BYE's answer.
+
+    on_local_end: called once the call has ended locally (media off,
+    call_ended broadcast) and the BYE has left, before that wait.
+    """
     if calling and (q := pending_responses.get(call_state["call_id"])):
         # "Annulla" mentre la targa squilla: do_call manda il CANCEL ed esce. Fino
         # alla 1.0.9 do_call restava in attesa e, al 200 OK, la chiamata partiva
@@ -1600,6 +2038,8 @@ async def do_hangup():
         if not ringing():  # non spegnere l'anteprima di uno squillo
             await media.stop_media()
         await broadcast("call_ended", "Chiamata terminata")
+        if on_local_end:
+            on_local_end()
         return
 
     cid = call_state["call_id"]
@@ -1636,7 +2076,7 @@ async def do_hangup():
     try:
         # Come le altre non-INVITE: su UDP ritrasmesso finché la targa risponde. Un
         # BYE perso la lasciava occupata (486 al "Vedi esterno" successivo).
-        await _send_request(bye, cid, timeout=5)
+        await _send_request(bye, cid, timeout=5, on_sent=on_local_end)
     except Exception as e:  # noqa: BLE001
         # Connessione caduta (TLS cloud in riconnessione): la chiamata si chiude
         # comunque qui. Prima restava in_call per sempre, col media acceso, il timer
@@ -1744,6 +2184,7 @@ pending_incoming = {
     "sdp": None, "early": False, "resp": None,
     "contact": None, "route_set": None,   # remote target e route set del dialogo (UAS)
 }
+_PENDING_INITIAL = dict(pending_incoming)  # what reset_state puts back
 
 
 async def handle_incoming_invite(raw):
@@ -1766,12 +2207,22 @@ async def handle_incoming_invite(raw):
             await send(f"SIP/2.0 488 Not Acceptable Here\r\n{via_block}To: {to_hdr}\r\nFrom: {from_hdr}\r\n"
                        f"Call-ID: {cid}\r\nCSeq: {cseq}\r\nContent-Length: 0\r\n\r\n")
             return
-        sdp = call_state.get("local_sdp") or build_sdp(remote)
+        sdp = call_state.get("local_sdp")
+        keys = (_local_crypto_key, _local_video_crypto_key)
+        if not sdp or not _answer_fits(sdp, remote):
+            # The re-offer adds, drops or declines a line: the old answer no
+            # longer has the offer's m-lines (RFC 3264 section 8). The keys
+            # the media already sends with stay: a new key in the answer and
+            # the old one in srtp_tx would make our audio undecryptable.
+            sdp = call_state["local_sdp"] = build_sdp(remote, reuse_keys=True)
         await send(f"SIP/2.0 200 OK\r\n{via_block}To: {to_hdr}\r\nFrom: {from_hdr}\r\n"
                    f"Call-ID: {cid}\r\nCSeq: {cseq}\r\nContact: {_simple_contact()}\r\n"
                    f"Content-Type: application/sdp\r\n"
                    f"Content-Length: {_clen(sdp)}\r\n\r\n{sdp}")
-        if remote and remote != call_state["remote_sdp"]:
+        rekeyed = keys != (_local_crypto_key, _local_video_crypto_key)
+        if remote and (remote != call_state["remote_sdp"] or rekeyed):
+            # rekeyed: a line turned to SRTP (or back) and got a key it had
+            # not: the media must encrypt with what the answer says.
             call_state["remote_sdp"] = remote
             await media.setup_media(remote, _local_crypto_key, _local_video_crypto_key,
                                     silence_limit=call_state["silence_limit"])
@@ -1967,16 +2418,22 @@ async def do_answer_incoming():
 
     if remote:
         call_state["remote_sdp"] = remote
-        _LOGGER.info("Answer SDP: audio=%s video=%s", remote.get('audio'), remote.get('video'))
+        _LOGGER.info("Answer SDP: audio=%s video=%s", _loggable(remote.get('audio')),
+                     _loggable(remote.get('video')))
         # Con early media il flusso è già aperto, salvo che qualcosa l'abbia chiuso.
-        if not (p["early"] and media.video_proto and media.video_proto.remote_addr):
+        # The early media may be audio only: either line being open counts.
+        early_open = any(proto is not None and proto.remote_addr
+                         for proto in (media.audio_proto, media.video_proto))
+        if not (p["early"] and early_open):
             await media.setup_media(remote, _local_crypto_key, _local_video_crypto_key)
         else:
             media.enable_tx()  # l'anteprima riceveva soltanto
 
     await broadcast("call_started", "Chiamata attiva!")
-    # Request keyframe for video
-    await send_keyframe_request()
+    # Ask for a keyframe without waiting for the INFO's answer: it is a round
+    # trip through the relay (more with a 407), and the caller (a view, the
+    # card's Answer, HomeKit's Talk) would wait for it before anything else.
+    _spawn(send_keyframe_request())
     return True, "Risposto!"
 
 
@@ -2099,62 +2556,107 @@ async def request_processor():
 
     while True:
         raw = await incoming_requests.get()
-        kind, hdrs, body, first = _parse(raw)
-        if kind == "INVITE":
-            _fire(handle_incoming_invite(raw), "INVITE")
-        elif kind == "CANCEL":
-            _fire(handle_incoming_cancel(raw), "CANCEL")
-        elif kind == "BYE":
-            _fire(handle_incoming_bye(raw), "BYE")
-        elif kind == "OPTIONS":
-            _fire(handle_incoming_options(raw), "OPTIONS")
-        elif kind == "MESSAGE":
-            _LOGGER.debug("SIP MESSAGE body=%r from=%s", body, hdrs.get("from",""))
-            # Cap generoso (era 200: troncava GET_INIT_STATUS_REPLY ~266B → perdeva dnd/voicemail).
-            await broadcast("message", (body or "")[:4096])
-            from_hdr = hdrs.get("from", "")
-            to_hdr = hdrs.get("to", "")
-            msg_cid = hdrs.get("call-id", "")
-            msg_cseq = hdrs.get("cseq", "1 MESSAGE")
-            await send(
-                f"SIP/2.0 200 OK\r\n"
-                f"{_via_block(hdrs)}To: {to_hdr}\r\nFrom: {from_hdr}\r\n"
-                f"Call-ID: {msg_cid}\r\nCSeq: {msg_cseq}\r\n"
-                f"Content-Length: 0\r\n\r\n")
-        elif kind in ("INFO", "UPDATE"):  # UPDATE: refresh di sessione, annunciato in Allow
-            from_hdr = hdrs.get("from", "")
-            to_hdr = hdrs.get("to", "")
-            info_cid = hdrs.get("call-id", "")
-            info_cseq = hdrs.get("cseq", "1 INFO")
-            await send(
-                f"SIP/2.0 200 OK\r\n"
-                f"{_via_block(hdrs)}To: {to_hdr}\r\nFrom: {from_hdr}\r\n"
-                f"Call-ID: {info_cid}\r\nCSeq: {info_cseq}\r\n"
-                f"Content-Length: 0\r\n\r\n")
-        elif kind == "NOTIFY":
-            # Il Tab può notificare cambi di stato (segreteria, DND, ...) via
-            # NOTIFY. Catturiamo body + evento SIP e rispondiamo 200 OK.
-            ev = hdrs.get("event", "")
-            _LOGGER.info("SIP NOTIFY event=%s body=%s hdrs=%s",
-                         ev, (body or "")[:300], first[:80])
-            await broadcast("message", f"NOTIFY {ev}: {(body or '')[:200]}")
-            from_hdr = hdrs.get("from", "")
-            to_hdr = hdrs.get("to", "")
-            n_cid = hdrs.get("call-id", "")
-            n_cseq = hdrs.get("cseq", "1 NOTIFY")
-            await send(
-                f"SIP/2.0 200 OK\r\n"
-                f"{_via_block(hdrs)}To: {to_hdr}\r\nFrom: {from_hdr}\r\n"
-                f"Call-ID: {n_cid}\r\nCSeq: {n_cseq}\r\n"
-                f"Content-Length: 0\r\n\r\n")
-        elif kind == "ACK":
-            # Offerta ritardata (INVITE senza SDP): l'offerta era nel nostro 200 OK
-            # e la risposta della targa arriva qui. Senza, chiamata muta e senza video.
-            if (body.strip() and in_call and _call_id(hdrs) == call_state["call_id"]
-                    and not call_state["remote_sdp"]):
-                _fire(_media_from_ack(body, _call_id(hdrs)), "ACK")
+        try:
+            await _process_request(raw, _fire)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            # A reply that cannot be sent (connection down during a reconnect)
+            # used to end this loop for good: no ring was processed after it.
+            _LOGGER.warning("SIP request not handled: %s", e)
+
+
+# The relay delivers some requests twice (and a lost 200 brings a
+# retransmission): a door, status or phonebook MESSAGE seen again within this
+# window is answered but not broadcast a second time.
+DUPLICATE_WINDOW = 30.0
+_seen_requests: dict[tuple, float] = {}
+_last_sweep = 0.0  # monotonic time of the last sweep of _seen_requests
+
+
+def _is_duplicate(kind: str, hdrs) -> bool:
+    """True when this request is a copy of one already handled."""
+    key = (kind, _call_id(hdrs), hdrs.get("cseq", ""))
+    if not key[1]:
+        return False
+    global _last_sweep
+    now = time.monotonic()
+    if now - _last_sweep >= 1.0:  # at most once a second, not on every request
+        _last_sweep = now
+        for old_key, seen_at in list(_seen_requests.items()):
+            if now - seen_at > DUPLICATE_WINDOW:
+                del _seen_requests[old_key]
+    seen_at = _seen_requests.get(key)
+    duplicate = seen_at is not None and now - seen_at <= DUPLICATE_WINDOW
+    _seen_requests[key] = now
+    return duplicate
+
+
+async def _process_request(raw, _fire):
+    kind, hdrs, body, first = _parse(raw)
+    try:
+        DEVICES.note_peer(hdrs, own_device_id=R.DEVICE_IMEI)
+    except Exception as e:  # noqa: BLE001
+        _LOGGER.debug("Device inventory (peer) skipped: %s", e)
+    if kind == "INVITE":
+        _fire(handle_incoming_invite(raw), "INVITE")
+    elif kind == "CANCEL":
+        _fire(handle_incoming_cancel(raw), "CANCEL")
+    elif kind == "BYE":
+        _fire(handle_incoming_bye(raw), "BYE")
+    elif kind == "OPTIONS":
+        _fire(handle_incoming_options(raw), "OPTIONS")
+    elif kind == "MESSAGE":
+        _LOGGER.debug("SIP MESSAGE body=%r from=%s", body, hdrs.get("from",""))
+        # Cap generoso (era 200: troncava GET_INIT_STATUS_REPLY ~266B → perdeva dnd/voicemail).
+        if _is_duplicate(kind, hdrs):
+            _LOGGER.debug("Duplicate MESSAGE, answered but not broadcast")
         else:
-            _LOGGER.debug("Unhandled SIP request: %s", kind)
+            await broadcast("message", (body or "")[:4096])
+        from_hdr = hdrs.get("from", "")
+        to_hdr = hdrs.get("to", "")
+        msg_cid = hdrs.get("call-id", "")
+        msg_cseq = hdrs.get("cseq", "1 MESSAGE")
+        await send(
+            f"SIP/2.0 200 OK\r\n"
+            f"{_via_block(hdrs)}To: {to_hdr}\r\nFrom: {from_hdr}\r\n"
+            f"Call-ID: {msg_cid}\r\nCSeq: {msg_cseq}\r\n"
+            f"Content-Length: 0\r\n\r\n")
+    elif kind in ("INFO", "UPDATE"):  # UPDATE: refresh di sessione, annunciato in Allow
+        from_hdr = hdrs.get("from", "")
+        to_hdr = hdrs.get("to", "")
+        info_cid = hdrs.get("call-id", "")
+        info_cseq = hdrs.get("cseq", "1 INFO")
+        await send(
+            f"SIP/2.0 200 OK\r\n"
+            f"{_via_block(hdrs)}To: {to_hdr}\r\nFrom: {from_hdr}\r\n"
+            f"Call-ID: {info_cid}\r\nCSeq: {info_cseq}\r\n"
+            f"Content-Length: 0\r\n\r\n")
+    elif kind == "NOTIFY":
+        # Il Tab può notificare cambi di stato (segreteria, DND, ...) via
+        # NOTIFY. Catturiamo body + evento SIP e rispondiamo 200 OK.
+        ev = hdrs.get("event", "")
+        _LOGGER.info("SIP NOTIFY event=%s body=%s hdrs=%s",
+                     ev, (body or "")[:300], first[:80])
+        if not _is_duplicate(kind, hdrs):
+            await broadcast("message", f"NOTIFY {ev}: {(body or '')[:200]}")
+        from_hdr = hdrs.get("from", "")
+        to_hdr = hdrs.get("to", "")
+        n_cid = hdrs.get("call-id", "")
+        n_cseq = hdrs.get("cseq", "1 NOTIFY")
+        await send(
+            f"SIP/2.0 200 OK\r\n"
+            f"{_via_block(hdrs)}To: {to_hdr}\r\nFrom: {from_hdr}\r\n"
+            f"Call-ID: {n_cid}\r\nCSeq: {n_cseq}\r\n"
+            f"Content-Length: 0\r\n\r\n")
+    elif kind == "ACK":
+        # Offerta ritardata (INVITE senza SDP): l'offerta era nel nostro 200 OK
+        # e la risposta della targa arriva qui. Senza, chiamata muta e senza video.
+        if (body.strip() and in_call and _call_id(hdrs) == call_state["call_id"]
+                and not call_state["remote_sdp"]):
+            _fire(_media_from_ack(body, _call_id(hdrs)), "ACK")
+    else:
+        _LOGGER.debug("Unhandled SIP request: %s", kind)
 
 
 async def _media_from_ack(body: str, cid: str) -> None:

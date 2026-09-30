@@ -128,10 +128,10 @@ def test_testo_del_messaggio_oltre_255_rifiutato(cf):
     assert result["errors"]["away_message_text"] == "text_too_long"
 
 
-def test_view_keepalive_predefinito_segue_il_cambio_di_modalita(cf):
+def test_view_keepalive_predefinito_segue_il_cambio_di_modalita(cf, monkeypatch):
     flow = _flow(cf, {**_base_entry_data(), "use_local_udp": False})
     async def _ok(**kw): return True, ""
-    cf._test_sip_registration = _ok
+    monkeypatch.setattr(cf, "_test_sip_registration", _ok)
     # cloud -> locale con il 120 della vecchia modalità: diventa il 0 della nuova
     r = asyncio.run(flow.async_step_settings({
         "local_proxy": "192.0.2.1", "use_local_udp": True, "view_keepalive": 120}))
@@ -140,3 +140,87 @@ def test_view_keepalive_predefinito_segue_il_cambio_di_modalita(cf):
     r = asyncio.run(flow.async_step_settings({
         "local_proxy": "192.0.2.1", "use_local_udp": True, "view_keepalive": 30}))
     assert r["data"]["view_keepalive"] == 30
+def _form_defaults(cf, monkeypatch, flow) -> dict:
+    """The defaults the settings form offers, by key (voluptuous is a stub here)."""
+    defaults: dict = {}
+
+    def _optional(key, default=None, **_kw):
+        defaults[key] = default
+        return ("optional", key)
+
+    monkeypatch.setattr(cf.vol, "Optional", _optional)
+    result = asyncio.run(flow.async_step_settings(None))
+    assert result["type"] == "form"
+    return defaults
+
+
+def test_camera_target_is_not_prefilled_with_55100(cf, monkeypatch):
+    """Pre-filled 55100 got saved on the first save: CAMERA_TARGET_CONFIGURED
+    became true and the panel learned from the last ring was never used."""
+    defaults = _form_defaults(cf, monkeypatch, _flow(cf, _base_entry_data()))
+    assert defaults["camera_target"] == ""
+
+
+def test_camera_target_prefills_a_configured_value(cf, monkeypatch):
+    flow = _flow(cf, _base_entry_data(), {"camera_target": "55102"})
+    assert _form_defaults(cf, monkeypatch, flow)["camera_target"] == "55102"
+
+
+def test_an_empty_camera_target_is_saved_empty(cf):
+    flow = _flow(cf, _base_entry_data(), {"camera_target": "55102"})
+    result = asyncio.run(flow.async_step_settings({
+        "local_proxy": "192.0.2.1", "use_local_udp": False, "camera_target": ""}))
+    assert result["type"] == "create_entry"
+    assert result["data"]["camera_target"] == ""
+
+
+@pytest.mark.parametrize("extra, expected", [
+    ({"local_domain": "local.test"}, "local.test"),
+    ({}, "example.test"),
+])
+def test_options_sip_test_uses_the_local_domain(cf, monkeypatch, extra, expected):
+    """In local UDP mode runtime.configure registers on local_domain: the
+    options flow must test that domain, as the setup flow does."""
+    seen = {}
+
+    async def _test(**kw):
+        seen.update(kw)
+        return True, "ok"
+
+    monkeypatch.setattr(cf, "_test_sip_registration", _test)
+    flow = _flow(cf, {**_base_entry_data(), **extra})
+    result = asyncio.run(flow.async_step_settings({
+        "local_proxy": "192.0.2.9", "use_local_udp": True}))
+    assert result["type"] == "create_entry"
+    assert seen["sip_domain"] == expected
+
+
+
+@pytest.mark.parametrize("test_ok, registered", [(True, 1), (False, 0)])
+def test_the_options_sip_test_registers_the_live_binding_again(cf, monkeypatch, test_ok, registered):
+    """The test's unregister (Expires: 0, same +sip.instance) can remove the live
+    binding: the running hub registers again at once, even if the form is not
+    saved (review of #31)."""
+    async def _test(**kw):
+        return test_ok, "ok" if test_ok else "503"
+
+    monkeypatch.setattr(cf, "_test_sip_registration", _test)
+    calls, tasks = [], []
+
+    class Hub:
+        async def async_register_now(self):
+            calls.append(True)
+            return True
+
+    flow = _flow(cf, _base_entry_data())
+    flow._entry.entry_id = "e1"
+    flow.hass.data = {cf.DOMAIN: {"e1": {"hub": Hub()}}}
+    flow.hass.async_create_background_task = lambda coro, name: tasks.append(coro)
+
+    async def main():
+        await flow.async_step_settings({"local_proxy": "192.0.2.9", "use_local_udp": True})
+        for coro in tasks:
+            await coro
+
+    asyncio.run(main())
+    assert len(calls) == registered

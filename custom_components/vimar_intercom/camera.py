@@ -11,6 +11,8 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import frame_grabber
+from . import ring_log
+from . import runtime as R
 from .const import DOMAIN
 from .device import device_info
 
@@ -104,17 +106,34 @@ class VimarIntercomCamera(Camera):
 
     async def stream_source(self) -> str | None:
         """AV stream URL (MPEG-TS with H264 video + PCMU audio) for HA's stream worker."""
-        base = self._hass.config.internal_url or "http://127.0.0.1:8123"
-        return f"{base}/api/vimar_intercom/av"
+        # Loopback, on Home Assistant's real port and scheme (8123 and http do
+        # not hold everywhere). Not internal_url: it may point at a reverse
+        # proxy (NGINX add-on), whose X-Forwarded-For makes /av refuse the
+        # request (403, _is_local_request).
+        http = getattr(self._hass, "http", None)
+        scheme = "https" if getattr(http, "ssl_certificate", None) else "http"
+        port = getattr(http, "server_port", None) or 8123
+        return f"{scheme}://127.0.0.1:{port}/api/vimar_intercom/av"
 
     async def async_camera_image(
         self, width: int | None = None, height: int | None = None
     ) -> bytes | None:
         """L'ultimo fotogramma della chiamata o dell'anteprima dello squillo.
 
-        Fuori da lì None: aprire il video per una miniatura farebbe chiamare la
+        Fuori da lì niente video: aprirlo per una miniatura farebbe chiamare la
         targa. Istantaneo: lo tiene aggiornato il frame grabber di media_handler.
+
+        Between calls, the last ring photo when there is one (read in the
+        executor, never a call): HA turns None into a 500/502, a broken tile on
+        dashboards without the custom card. With no photo, None as before.
         """
         if not self._hub.video_active:
+            path = self._hub.stats.get("last_photo_path")
+            if not (path or R.SNAPSHOT_DIR):
+                return None  # photos are off: nothing to read
+            photo = await self._hass.async_add_executor_job(
+                ring_log.read_last_photo, path, R.SNAPSHOT_DIR)
+            if photo:
+                return photo
             return None
         return await frame_grabber.wait_frame(after=1)  # non il primo IDR, scuro

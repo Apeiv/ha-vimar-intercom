@@ -24,6 +24,8 @@ Cosa viene oscurato:
 * le stesse chiavi tra virgolette, cioè JSON (`"token": "…"`, come in
   `action=status`) e repr di un dict (`'token': '…'`);
 * un header Authorization finito dentro una riga sola (messaggio loggato con %r).
+* SRTP keys: `inline:<key>` in an SDP line, any dict/JSON value under a key
+  named `key` or `*_key`, and a 40-character base64 blob after `key:`/`key=`.
 
 Il nome della chiave resta visibile — serve a capire cosa stava succedendo —
 mentre il valore diventa `***`.
@@ -36,7 +38,8 @@ import re
 MASK = "***"
 
 # Nomi di campo che nel protocollo Vimar portano un segreto.
-_SECRET_KEYS = ("pwd", "passwd", "password", "secret", "ha1", "token", "pn-tok", "apikey", "api_key")
+_SECRET_KEYS = ("pwd", "passwd", "password", "secret", "ha1", "token", "pn-tok", "apikey", "api_key",
+                "crypto_key", "srtp_key", "a_srtp_key", "v_srtp_key", "key_b64")
 
 # La chiave può essere tra virgolette (JSON `"token": "…"`, repr di un dict
 # `'token': '…'`): la virgoletta di chiusura della chiave fa parte del gruppo 1.
@@ -74,6 +77,18 @@ _AUTH_INLINE = re.compile(
 # Digest sparso in una riga che non è un header completo.
 _DIGEST_FIELD = re.compile(r"(?i)\b(response|cnonce)(\s*=\s*)(\"?)([0-9a-fA-F]{8,})\3")
 
+# SRTP master key in an SDP line: `a=crypto:1 AES_CM_128_HMAC_SHA1_80 inline:<base64>`.
+# Whoever reads a log with that key can decrypt the call's audio and video.
+_SRTP_INLINE = re.compile(r"(?i)(inline:)([A-Za-z0-9+/=]+)")
+
+# A dict or JSON value under a key named `key` or ending in `_key`/`-key`
+# (`{'suite': ..., 'key': '...'}`, `"srtp_key": "..."`): whatever the value.
+_DICT_KEY = re.compile(r"(?i)(([\"'])(?:[\w-]*[_-])?key\2\s*:\s*)([\"'])(.*?)\3")
+
+# A bare base64 blob of SRTP-key length (30 bytes = 40 characters) after
+# `key:` or `key=`, quoted or not.
+_KEY_B64 = re.compile(r"(?i)(\bkey[\"']?\s*[:=]\s*[\"']?)([A-Za-z0-9+/]{40}[A-Za-z0-9+/=]*)")
+
 # GET_INIT_STATUS_REPLY: {"PARAM":"token","VALUE":"..."}
 _PARAM_VALUE = re.compile(
     r"(?i)(\"PARAM\"\s*:\s*\"(?:token|pwd|password)\"\s*,\s*\"VALUE\"\s*:\s*\")([^\"]*)(\")"
@@ -101,6 +116,9 @@ def redact(text: str) -> str:
         out = _DIGEST_FIELD.sub(lambda m: f"{m.group(1)}{m.group(2)}{m.group(3)}{MASK}{m.group(3)}", out)
         out = _PARAM_VALUE.sub(lambda m: f"{m.group(1)}{MASK}{m.group(3)}", out)
         out = _VALUE_PARAM.sub(lambda m: f"{m.group(1)}{MASK}{m.group(3)}", out)
+        out = _SRTP_INLINE.sub(lambda m: f"{m.group(1)}{MASK}", out)
+        out = _DICT_KEY.sub(lambda m: f"{m.group(1)}{m.group(3)}{MASK}{m.group(3)}", out)
+        out = _KEY_B64.sub(lambda m: f"{m.group(1)}{MASK}", out)
         return out
     except Exception:  # noqa: BLE001 - mai far fallire il logging
         return MASK

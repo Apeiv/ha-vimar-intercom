@@ -13,6 +13,7 @@ from collections.abc import Callable
 RING_LOG = "squillo.json"
 RING_LOG_MAX = 200
 RING_FILE = re.compile(r"squillo_\d{8}_\d{6}(_\d{3})?\.(jpg|mp4)")  # foto o clip di uno squillo
+LAST_PHOTO = "ultimo_squillo.jpg"  # copy of the latest ring photo, kept across restarts
 _lock = threading.Lock()  # letture/scritture dal pool dell'executor
 
 
@@ -21,10 +22,24 @@ def write_photo(folder: str, name: str, jpeg: bytes) -> int:
     versione della foto (mtime in ms): cambia quando la foto migliore sostituisce la
     prima sullo stesso nome, e la card non tiene quella vecchia in cache."""
     os.makedirs(folder, exist_ok=True)
-    for n in (name, "ultimo_squillo.jpg"):
+    for n in (name, LAST_PHOTO):
         with open(os.path.join(folder, n), "wb") as fh:
             fh.write(jpeg)
     return int(os.path.getmtime(os.path.join(folder, name)) * 1000)
+
+
+def read_last_photo(path: str | None, folder: str | None) -> bytes | None:
+    """The last ring photo: `path` (the hub's last_photo_path), else LAST_PHOTO in
+    `folder`, which survives a restart. None when neither can be read."""
+    for candidate in (path, os.path.join(folder, LAST_PHOTO) if folder else None):
+        if not candidate:
+            continue
+        try:
+            with open(candidate, "rb") as fh:
+                return fh.read()
+        except OSError:
+            continue
+    return None
 
 
 def update_ring_log(folder: str, change: Callable[[list], None]) -> None:

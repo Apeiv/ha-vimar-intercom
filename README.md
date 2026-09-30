@@ -30,6 +30,7 @@ reported so far.
 | Elvox Tab 7S 2F+ WiFi | 40507 | 2F | — | local UDP | Development platform: ring, call, answer/hang up, door open, on-demand video, actuators |
 | Elvox Tab 5S UP 2 Wire WiFi | 40515 | 2FV2 | 2.1.0203 | cloud TLS | Working, reported by @CPietro — see the notes below |
 | Elvox Tab 5S UP 2 Wire WiFi | 40515 | — | — | cloud TLS | Cloud registration working after the 1.0.1 fix, reported by @gtarraran992 ([#1](../../issues/1)) |
+| Elvox Tab 7S Up | 40517 | Due Fili Plus EVO (2FV2) | 2.1.0203 | cloud TLS | Working over the cloud relay, media in SRTP: ring, two-way audio, video, door. Local UDP is refused by the Tab with 503. Reported by @m4r1k |
 
 **What differs between plants.** Both Tab 5S reports, plus the development plant, point at the same
 practical conclusion: *what matters is the address you send to, and how much the Tab tells you back*.
@@ -60,7 +61,8 @@ everything just worked are as useful as the ones where something broke.
 - ffmpeg on the Home Assistant host (declared in the manifest) for the camera.
 - The plant's **pairing QR code** (from the VIEW app) **or** the SIP parameters entered by hand
   (id, password, domain, cloud proxy).
-- Python requirements: only `pycryptodome` and `requests` — no external SIP library, the stack is custom.
+- Python requirements, installed by Home Assistant: `pycryptodome` and `requests`, plus `HAP-python`
+  and `PyQRCode` for the optional HomeKit doorbell. There is no external SIP library; the stack is custom.
 
 ---
 
@@ -74,10 +76,6 @@ everything just worked are as useful as the ones where something broke.
 ### Manual
 Copy `custom_components/vimar_intercom/` into your Home Assistant `config/custom_components/` folder
 and restart.
-
-> **If you reinstall or update by hand**: `__init__.py` and `sip_client.py` carry local logging
-> patches (not present upstream — see the *Logging* section below). If you overwrite those files with
-> a copy from somewhere else, reapply the patches: outside HACS nothing preserves them for you.
 
 ---
 
@@ -111,7 +109,7 @@ Settings → Vimar Intercom → **Configure**:
 | **Actuators (JSON)** (`actuators`) | JSON list of `{name, msg, target, icon}`; creates dynamic buttons. Empty = no buttons |
 | **SGA** (`sga_target`) | Recipient of `VOICEMAIL;`/`DND;`, and of the door command when `door_target` is empty. Empty = default `55001` |
 | **PICG** (`picg_target`) | Recipient of `GET_INIT_STATUS`. On the development plant it matches the SGA; on others it does not (60001 on a 40515). Empty = default `55001` |
-| **Video entrance panel** (`camera_target`) | Panel called by the camera, *Call* and *Call Video (outdoor)*: the `PHONEBOOK` row with `TYPE='PE'`. **Not the SGA.** Empty = default `55100` |
+| **Video entrance panel** (`camera_target`) | Panel called by the camera, *Call* and *Call Video (outdoor)*: the `PHONEBOOK` row with `TYPE='PE'`. **Not the SGA.** Empty = the panel learned from the last ring (a panel that rang with video, used when `55100` does not exist on the plant), otherwise the default `55100` |
 | **Internal panel** (`internal_panel_target`) | Target of *Call Home (indoor)*. The phonebook does not say which one it is: set it by hand. Empty = default `55002` |
 | **Entrance panel that opens the door** (`door_target`) | Recipient of the door command (lock, *Open Door*, `open_door` without `target`, actuators with target `AUTO`): the `GID_PE` of the door actuator in the phonebook. **Not always the SGA**: on a 2FV2 the SGA is `61000` and the door is opened by panel `55001`. Empty = the saved door actuator's panel, otherwise the SGA |
 | **Ring snapshot folder** (`snapshot_dir`) | Where the visitor's photo (`squillo_YYYYMMDD_HHMMSS_mmm.jpg` + `ultimo_squillo.jpg`) and the ring clip (`squillo_YYYYMMDD_HHMMSS_mmm.mp4`: the preview video, and the call if answered from HA, up to 60 s, no audio) are saved on every ring, e.g. `/config/media/citofono`. Must be writable by HA. Empty = off |
@@ -123,6 +121,8 @@ Settings → Vimar Intercom → **Configure**:
 | **Media encryption (SRTP)** (`media_enc`) | **Automatic** (default since 1.0.11): follows the `media_enc` the plant declares in its `GET_INIT_STATUS` reply (`"srtp"` on a cloud 40515); plants with the short reply (the 40507) stay on plain RTP. **On** / **Off** force it. Entries saved as "on" by 1.0.10 or earlier stay on; "off" becomes automatic. Try **On** if the camera stays black or the call fails with `488` |
 | **Voice answer** (`voice_answer`) | Who can answer a ringing call by talking on `/audio_ws`: **Declared** (default, only with `?voice_answer=1`), **Off** (never), **Any** (any connection with a mic; a wall tablet with its mic left open can answer by itself on household noise) |
 | **Ring webhooks** (`ring_webhook_url`, `ring_end_webhook_url`) | Optional GET (fire-and-forget, 5 s timeout) fired when a ring starts and when it ends (answered, cancelled or missed) — e.g. the `turnOn`/`turnOff` URLs of a Scrypted Dummy Switch (see [docs/EXTERNAL.md](docs/EXTERNAL.md)). A failure only logs a warning, never blocks the ring. Empty = off |
+
+The camera image between calls (the last ring photo) is visible to every Home Assistant user who can see the camera entity; `allowed_users` limits the ring history and live media, not the camera entity.
 
 **Voicemail.** There is one *Voicemail* switch (Configuration, device page). Turned on, it uses Home
 Assistant's away message if a text or an audio file is set (and turns the Tab's own voicemail off);
@@ -166,6 +166,7 @@ already know your plant's SGA or want to tweak the imported actuator list.
 | Intercom In Call | `binary_sensor` | A call is up |
 | Intercom Ringing | `binary_sensor` | ON while an outdoor unit is calling (attribute: caller) |
 | Intercom Outgoing Call | `binary_sensor` | ON while Home Assistant is calling |
+| Intercom Dispositivi | `sensor` | Number of devices seen on the plant (phones sharing the SIP account, panels); attribute `dispositivi` lists them with the identifier masked and no address, kept across restarts. Every Home Assistant user can read the attribute, device names included (a phone's name is often its owner's) |
 | Intercom State | `sensor` (enum) | offline / idle / ringing / in_call / calling (plus network attributes, and on plants with the long reply the apartment `GID`, `apt_names` and the declared `media_enc`) |
 | Intercom Last Caller | `sensor` | Outdoor unit or monitor of the last ring |
 | Intercom Last Ring | `sensor` (timestamp) | Time of the last ring |
@@ -224,7 +225,7 @@ where the buttons go while it is live:
 
 After a hang-up the last picture stays 1.5 s with the buttons off, so a second tap does not land
 on whatever moves in below when the card shrinks. **Vedi esterno** calls the video panel; the
-view lasts as long as the panel allows (about 10 s on the Tab 5S Up 40515), then the video ends
+view lasts as long as the panel allows (about 30 s with the silence frames the integration sends; measured 30.1 s on a 2FV2), then the video ends
 and the card closes. To look again, press **Vedi esterno** again, as on the in-home monitor.
 The buttons change with the state:
 
@@ -425,38 +426,29 @@ The video pane shows live video while a call or a ring is up. For voice, use the
 
 ## Logging
 
-The component keeps an internal circular buffer (`_debug_log`, in `__init__.py`) for its own
-diagnostics, and raises its logger to `DEBUG` to fill it. By default that would propagate every
-`DEBUG` line to the Home Assistant log too, overriding the level set in `logger:` in
-`configuration.yaml` (Python loggers propagate to the root).
+The component keeps its own circular buffer (`log_buffer.py`, the last 3000 lines, `DEBUG`
+included), readable by administrators at `/api/vimar_intercom/debug?lines=N` (100 lines by default).
 
-The patch: the `custom_components.vimar_intercom` logger stays at `DEBUG` for the internal buffer, but
-with `propagate = False`; a dedicated handler forwards only `WARNING` and above to the HA log. Result:
-internal diagnostics intact, HA log clean.
+The Home Assistant log receives the component's records from the level set for
+`custom_components.vimar_intercom` under `logger:` in `configuration.yaml` (or with the
+`logger.set_level` service), and `WARNING` and above when no level is set. To see everything there:
 
-**"Stale response 407" on the SIP keepalive**: the periodic OPTIONS (`_send_options_ping` in
-`sip_client.py`) did not register its own Call-ID among the expected responses, so the proxy's reply
-(typically a `407`) was logged as `WARNING "Stale response ..."` even though it is the normal outcome
-of the keepalive. `_dispatch_message` now recognises Call-IDs prefixed with `ping-` and logs them at
-`DEBUG` instead. With this fix and the one above, **no** `logger:` filter in `configuration.yaml` is
-needed any more to silence these messages.
+```yaml
+logger:
+  logs:
+    custom_components.vimar_intercom: debug
+```
 
-**Known limitation**: the trade-off cuts both ways. Because the component keeps its own logger at
-`DEBUG` and forwards only `WARNING` and above, setting
-`logger: logs: custom_components.vimar_intercom: debug` in `configuration.yaml` will *not* put this
-component's `DEBUG` lines in the Home Assistant log — read them from
-`/api/vimar_intercom/debug` instead. Making the forwarded level configurable is on the list.
-
-If you update `__init__.py` or `sip_client.py` from an external source (not HACS, not versioned for
-this component), check that both patches are still in place — see the note under
-*Installation → Manual*.
+Both destinations mask passwords, digest responses, phonebook tokens and SRTP keys before writing.
+The SIP keepalive's expected replies (the periodic OPTIONS) are logged at `DEBUG`, so no `logger:`
+filter is needed to keep the log quiet.
 
 ---
 
 ## Security
 
-- SIP credentials (password / `ha1`) are stored **encrypted** in the Home Assistant config entry, never
-  in plain text in the repo.
+- SIP credentials (password and `ha1`) are stored in the Home Assistant config entry under
+  `.storage`, in plain text like every other integration's secrets. They are never logged.
 - Internal HTTP endpoint: `/av` is **LAN-only** (`_is_local_request`); the `/audio_ws`
   WebSocket requires Home Assistant authentication, and its debug actions (`command`, `probe`,
   `scan`, `register`, `reconnect`) are admin-only. The QR payload is never logged at INFO level.
@@ -474,6 +466,8 @@ this component), check that both patches are still in place — see the note und
   even a clip still being written); the folder is never exposed under `/local`.
 - In local UDP mode, SIP packets from any host other than the intercom are dropped, so another
   device on the LAN can't fake a ring.
+- Plain RTP (no SRTP) is accepted only from the other end of the current call.
+- The HomeKit pairing code (optional HomeKit doorbell) is stored in a file with mode 0600.
 - No mandatory cloud dependency when running in local UDP mode.
 
 ---

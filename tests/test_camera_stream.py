@@ -155,3 +155,30 @@ def test_camera_disponibile_e_stream_fermato_a_fine_chiamata():
 
     asyncio.run(run())
     assert fermati == [True]
+
+
+@pytest.mark.parametrize("http, expected", [
+    (dict(server_port=8124, ssl_certificate=None), "http://127.0.0.1:8124/api/vimar_intercom/av"),
+    (dict(server_port=443, ssl_certificate="/ssl/fullchain.pem"),
+     "https://127.0.0.1:443/api/vimar_intercom/av"),
+    (None, "http://127.0.0.1:8123/api/vimar_intercom/av"),
+])
+def test_stream_source_is_loopback_on_the_real_http_port(http, expected):
+    """internal_url may point at a reverse proxy: its X-Forwarded-For makes
+    /av refuse the request (403, _is_local_request)."""
+    import asyncio
+    import sys
+    from types import SimpleNamespace
+
+    ha_camera = sys.modules.get("homeassistant.components.camera")
+    if getattr(sys.modules.get("homeassistant"), "_is_stub", False) and ha_camera is not None:
+        ha_camera.Camera = object
+        ha_camera.CameraEntityFeature = SimpleNamespace(STREAM=2)
+        sys.modules.pop("custom_components.vimar_intercom.camera", None)
+    camera_mod = pytest.importorskip("custom_components.vimar_intercom.camera")
+
+    cam = camera_mod.VimarIntercomCamera.__new__(camera_mod.VimarIntercomCamera)
+    cam._hass = SimpleNamespace(
+        config=SimpleNamespace(internal_url="https://proxy.example.test"),
+        **({"http": SimpleNamespace(**http)} if http else {}))
+    assert asyncio.run(cam.stream_source()) == expected
