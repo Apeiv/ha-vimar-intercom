@@ -2,7 +2,9 @@
 
 import array
 import asyncio
+import base64
 import logging
+import math
 import os
 import random
 import socket
@@ -76,6 +78,18 @@ def ulaw_encode(pcm_data: bytes) -> bytes:
         mantissa = (sample >> (exp + 3)) & 0x0F
         out[i] = (~(sign | (exp << 4) | mantissa)) & 0xFF
     return bytes(out)
+
+
+# Voce sul WS mentre squilla = «Rispondi»: RMS del PCM16 sopra VOICE_RMS per almeno
+# VOICE_ANSWER_MS di fila (il rumore del microfono sta sotto i 300, la voce a 8 kHz
+# sopra i 2000). Serve a chi risponde parlando da Echo Show o HomeKit via Scrypted.
+VOICE_RMS = 800
+VOICE_ANSWER_MS = 200
+
+
+def rms(pcm: bytes) -> float:
+    a = array.array("h", pcm[:len(pcm) & ~1])
+    return math.sqrt(sum(x * x for x in a) / len(a)) if a else 0.0
 
 
 # ─── RTP Protocols ──────────────────────────────────────────────────
@@ -154,6 +168,8 @@ class RTPAudioProtocol(asyncio.DatagramProtocol):
             _LOGGER.info("First %s audio from %s (%dB)",
                          "SRTP" if self.srtp_rx else "RTP", addr, len(payload))
         pcm = ulaw_decode(payload)
+        for tap in pcm_taps:
+            tap(pcm)
         try:
             self.audio_buffer.put_nowait(pcm)
         except asyncio.QueueFull:
@@ -198,6 +214,9 @@ class RTPVideoProtocol(asyncio.DatagramProtocol):
 
     # Riceve ogni NAL riassemblato (frame grabber delle foto), se impostato.
     frame_sink = None
+    # Chiamato quando la targa ne manda di diversi: restore_sps_pps salva
+    # _ps_by_panel nello storage di HA.
+    on_sps_pps = None
 
     REORDER_BUF_SIZE = 5  # Hold up to 5 packets for reordering (~30ms at 15fps)
 
@@ -229,8 +248,12 @@ class RTPVideoProtocol(asyncio.DatagramProtocol):
         # Restano fra le chiamate (non cambiano): la 40515 dopo il 200 OK manda
         # PPS+IDR subito ma l'SPS solo ogni ~6 s, e chiude dopo ~10 s. Con quelli
         # della chiamata prima /av (sprop) e le foto partono dal primo IDR.
+        # Una coppia per targa (id SIP): due targhe (portone e cancello) hanno
+        # risoluzioni diverse, e con l'SPS dell'altra ffmpeg decodifica spazzatura.
         self._last_sps = None
         self._last_pps = None
+        self.panel: str | None = None                      # targa di questa chiamata
+        self._ps_by_panel: dict[str, tuple[bytes, bytes]] = {}
         self._sps_pps_sent = False  # True after first SPS+PPS pair sent
         self._pending_idr = None   # IDR waiting for SPS+PPS
         # GOP corrente già in forma di messaggi WS (SPS, PPS, IDR e i P dopo): a un
@@ -250,10 +273,21 @@ class RTPVideoProtocol(asyncio.DatagramProtocol):
         self._nal_count = 0
         self._nal_types = {}  # type -> count
 
-    def sps_pps(self) -> tuple[bytes, bytes] | None:
-        """Gli ultimi SPS e PPS visti (anche della chiamata prima), se ci sono entrambi:
-        con quelli ffmpeg (/av, foto) decodifica dal primo IDR."""
-        return (self._last_sps, self._last_pps) if self._last_sps and self._last_pps else None
+    def sps_pps(self, own_only: bool = False) -> tuple[bytes, bytes] | None:
+        """Gli ultimi SPS e PPS di questa targa (anche dalla chiamata prima), se ci sono
+        entrambi: con quelli ffmpeg (/av, foto) decodifica dal primo IDR. Se questa targa
+        non ne ha ancora mai mandati (mai chiamata prima, o cache persa a un aggiornamento),
+        quelli di un'altra: la risoluzione cambia raramente, meglio una foto con quelli
+        che nessuna foto ad aspettare l'SPS in banda (fino a 6 s sulla 40515).
+        own_only: mai quelli di un'altra targa (il clip li userebbe per tutta la durata)."""
+        if self._last_sps and self._last_pps:
+            return self._last_sps, self._last_pps
+        return None if own_only else next((ps for ps in self._ps_by_panel.values() if all(ps)), None)
+
+    def set_panel(self, panel: str | None) -> None:
+        """Chiamata (o anteprima) con questa targa: si riparte dai suoi SPS/PPS."""
+        self.panel = panel
+        self._last_sps, self._last_pps = self._ps_by_panel.get(panel or "", (None, None))
 
     def connection_made(self, transport):
         self.transport = transport
@@ -483,10 +517,17 @@ class RTPVideoProtocol(asyncio.DatagramProtocol):
             return  # riferisce un fotogramma perso: né WS, né foto, né GOP
         # SPS/PPS servono anche a /av (sprop nell'SDP di ffmpeg): memorizzali
         # anche quando non c'è nessun client WebSocket.
-        if nal_data and nal_data[0] & 0x1F == 7:
-            self._last_sps = nal_data
-        elif nal_data and nal_data[0] & 0x1F == 8:
-            self._last_pps = nal_data
+        if t in (7, 8):
+            old = (self._last_sps, self._last_pps)
+            if t == 7:
+                self._last_sps = nal_data
+            else:
+                self._last_pps = nal_data
+            new = (self._last_sps, self._last_pps)
+            if new != old and all(new):
+                self._ps_by_panel[self.panel or ""] = new
+                if self.on_sps_pps:
+                    self.on_sps_pps()
         if nal_data and self.frame_sink:
             self.frame_sink(nal_data)
         if not nal_data or not ws_send_bytes or not self._nal_queue:
@@ -633,13 +674,50 @@ async def setup_transports():
         RTPVideoProtocol, sock=video_sock)
 
 
+async def restore_sps_pps(store) -> None:
+    """SPS/PPS dell'ultima chiamata dallo storage di HA (Store, uno per entry) al
+    protocollo video, e da qui in poi ogni coppia diversa che la targa manda viene
+    salvata. Senza, la prima /av dopo un riavvio di HA non ha sprop nell'SDP e aspetta
+    l'SPS in banda (~6 s sulla 40515 se la richiesta di keyframe tarda)."""
+    saved = await store.async_load()
+    try:  # {"panels": {"55001": {"sps": b64, "pps": b64}, ...}}
+        video_proto._ps_by_panel = {
+            str(k): (base64.b64decode(v["sps"]), base64.b64decode(v["pps"]))
+            for k, v in saved["panels"].items()}
+    except (TypeError, KeyError, ValueError, AttributeError):
+        try:  # formato di prima di 787bb87 (una sola coppia, non per targa): tenuta
+            # come fallback generico invece di perderla al primo riavvio dopo
+            # l'aggiornamento (altrimenti la prima targa a chiamare non ha nulla,
+            # né sua né di un'altra, finché non manda l'SPS in banda).
+            video_proto._ps_by_panel = {
+                "": (base64.b64decode(saved["sps"]), base64.b64decode(saved["pps"]))}
+        except (TypeError, KeyError, ValueError):
+            pass  # niente di salvato (o rotto): si aspetta la targa come prima
+    video_proto.on_sps_pps = lambda: store.async_delay_save(
+        lambda: {"panels": {k: {"sps": base64.b64encode(s).decode(), "pps": base64.b64encode(p).decode()}
+                            for k, (s, p) in video_proto._ps_by_panel.items()}}, 5)
+
+
+def _current_panel() -> str | None:
+    """Id SIP della targa di questa chiamata: chi suona (anche in anteprima), o chi
+    abbiamo chiamato. Import in ritardo: sip_client importa questo modulo."""
+    from . import sip_client as sip
+    pi = sip.pending_incoming
+    uri = (pi.get("caller_uri") if pi.get("active") else None) or sip.call_state.get("original_target")
+    return uri.split(":")[-1].split("@")[0].split(";")[0] if uri else None
+
+
 async def setup_media(remote_sdp, local_crypto_key=None, local_video_crypto_key=None,
-                      early=False):
+                      early=False, silence_limit=None):
     """Start media after SIP call established. Called by sip.py.
 
     early: anteprima dello squillo (183): si riceve soltanto, la voce parte
-    con enable_tx() alla risposta."""
-    global _stun_task, _audio_task, _tx_task
+    con enable_tx() alla risposta.
+    silence_limit: secondi di silenzio PCMU dopo cui il pacer smette di mandarlo
+    (vista in uscita "Vedi esterno", 0 = mai silenzio); None = senza limite, come
+    in ogni chiamata risposta (la targa chiude se non riceve RTP)."""
+    global _stun_task, _audio_task, _tx_task, _silence_limit
+    _silence_limit = silence_limit
     audio = remote_sdp.get("audio", {})
     video = remote_sdp.get("video", {})
     remote_ip = remote_sdp.get("conn", "")
@@ -681,7 +759,8 @@ async def setup_media(remote_sdp, local_crypto_key=None, local_video_crypto_key=
     if video.get("port") and video_proto:
         vip = video.get("ip", remote_ip)
         video_proto.remote_addr = (vip, video["port"])
-        # Reset ALL state for new call (tranne SPS/PPS: vedi __init__)
+        # Reset ALL state for new call (tranne SPS/PPS: vedi __init__, per targa)
+        video_proto.set_panel(_current_panel())
         video_proto.pkt_count = 0
         video_proto._fua_buf = bytearray()
         video_proto._fua_started = False
@@ -717,6 +796,12 @@ async def setup_media(remote_sdp, local_crypto_key=None, local_video_crypto_key=
     if _tx_task:
         _tx_task.cancel()
     _tx_task = asyncio.create_task(_tx_loop())
+
+
+def claim_voice() -> None:
+    """Parla una persona: la chiamata non è più una semplice vista, silenzio senza limite."""
+    global _silence_limit
+    _silence_limit = None
 
 
 def enable_tx():
@@ -780,6 +865,15 @@ def close_transports():
 # Tetto della voce in attesa: oltre, il browser manda più in fretta del tempo reale.
 _TX_MAX = 8000  # 1 s di μ-law
 
+# 20 ms di silenzio PCMU: keepalive quando non c'è voce in coda. La targa
+# chiude un "Vedi esterno" se non riceve RTP per ~10 s, anche se il video
+# continua ad arrivare — verificato sul campo il 2026-09-29: l'app VIEW
+# ufficiale (linphone) manda audio in continuo, muto o no, e la chiamata
+# dura i 20+ s configurati; senza RTP in uscita HA veniva chiuso dalla
+# targa a ~10 s indipendentemente dal timer di autoaccensione.
+SILENCE_ULAW = ulaw_encode(bytes(320))
+_silence_limit: float | None = None  # vedi setup_media
+
 
 def send_audio(pcm_data: bytes):
     """PCM16LE 8 kHz (microfono della card, messaggio di assenza) → coda del pacer.
@@ -818,11 +912,13 @@ def _note_tx_level(pcm_data: bytes) -> None:
 
 
 async def _tx_loop():
-    """Un pacchetto da 20 ms (160 B) ogni 20 ms, solo quando c'è voce in coda
-    (microfono o messaggio di assenza). Niente silenzio di keepalive: la targa
-    chiude comunque un "Vedi esterno" dopo ~10 s, anche con l'app ufficiale."""
+    """Un pacchetto da 20 ms (160 B) ogni 20 ms: voce in coda (microfono o
+    messaggio di assenza) se c'è, altrimenti silenzio PCMU (SILENCE_ULAW)
+    come keepalive — come fa l'app ufficiale, che non lascia mai il canale
+    audio muto durante una chiamata."""
     loop = asyncio.get_running_loop()
     nxt = loop.time()
+    t_view = None  # da quando si può trasmettere: il silenzio dura _silence_limit s da qui
     try:
         while True:
             nxt += 0.02
@@ -830,39 +926,48 @@ async def _tx_loop():
             if nxt < loop.time() - 0.2:
                 nxt = loop.time()  # event loop rimasto fermo: niente raffica di recupero
             ap = audio_proto
-            if not ap or not ap.remote_addr or not ap.tx_enabled or len(ap.tx_buf) < 160:
+            if not ap or not ap.remote_addr or not ap.tx_enabled:
                 continue
-            frame = bytes(ap.tx_buf[:160])
-            del ap.tx_buf[:160]
+            if t_view is None:
+                t_view = loop.time()
+            if len(ap.tx_buf) >= 160:
+                frame = bytes(ap.tx_buf[:160])
+                del ap.tx_buf[:160]
+            else:
+                if _silence_limit is not None and loop.time() - t_view >= _silence_limit:
+                    continue  # solo la vista: 0 = mai silenzio; poi si chiude da sola, come prima
+                frame = SILENCE_ULAW
             ap.send_rtp(frame)
     except asyncio.CancelledError:
         pass
 
 
-async def load_pcm(path: str, max_seconds: int = 30) -> bytes | None:
+async def load_pcm(path: str | bytes, max_seconds: int = 30) -> bytes | None:
     """Decodifica un file audio (mp3, wav, ...) in PCM 8 kHz mono 16 bit.
+    `path` può essere anche l'audio stesso (bytes, es. dal TTS): va a ffmpeg da stdin.
 
     Si fa PRIMA di rispondere: un file sparito o illeggibile non deve
     trasformarsi in una risposta muta. Tetto di durata: la linea è occupata.
     """
+    data = path if isinstance(path, bytes) else None
     try:
         # `file:`: un nome che comincia con «-» non diventa un'opzione di ffmpeg.
         proc = await asyncio.create_subprocess_exec(
-            "ffmpeg", "-loglevel", "error", "-i", f"file:{path}", "-t", str(max_seconds),
+            "ffmpeg", "-loglevel", "error", "-i", "pipe:0" if data else f"file:{path}", "-t", str(max_seconds),
             "-f", "s16le", "-ac", "1", "-ar", "8000", "pipe:1",
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            stdin=subprocess.PIPE if data else None, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except OSError as e:
         _LOGGER.warning("Messaggio audio: ffmpeg non avviabile (%s)", e)
         return None
     try:
-        pcm, err = await proc.communicate()
+        pcm, err = await proc.communicate(data)
     finally:
         if proc.returncode is None:  # annullato a metà (unload, squillo finito)
             proc.kill()
             await proc.wait()
     if proc.returncode or not pcm:
         _LOGGER.warning("Messaggio audio non leggibile (%s): %s",
-                        path, err.decode(errors="replace").strip()[-200:])
+                        "tts" if data else path, err.decode(errors="replace").strip()[-200:])
         return None
     return pcm
 
@@ -898,6 +1003,23 @@ async def _stun_keepalive():
 
 # ws_send_bytes: set by main.py — async fn(data) to send binary to all clients
 ws_send_bytes = None
+# pcm_taps: lista di fn(pcm), una per ogni pacchetto PCM della targa (av_passive: audio
+# nello stream continuo; frame_grabber: audio del clip dello squillo), in più rispetto
+# alla coda per il WS. Una lista invece di un solo slot: più tap possono essere agganciati
+# insieme (es. squillo e stream passivo continuo in parallelo) senza incatenarsi a vicenda.
+pcm_taps: list = []
+
+
+def add_pcm_tap(fn) -> None:
+    """Aggancia un tap PCM (chiamato ad ogni pacchetto, oltre a quelli già agganciati)."""
+    pcm_taps.append(fn)
+
+
+def remove_pcm_tap(fn) -> None:
+    """Sgancia un tap PCM aggiunto con add_pcm_tap; gli altri restano agganciati."""
+    pcm_taps.remove(fn)
+
+
 # request_keyframe: set by hub — fn() che chiede subito un keyframe alla targa (INFO SIP)
 request_keyframe = None
 

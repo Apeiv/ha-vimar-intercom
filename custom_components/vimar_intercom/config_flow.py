@@ -21,6 +21,7 @@ from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import selector
 
 from .const import (
+    AWAY_TEXT_MAX,
     CAMERA_TARGET,
     DEFAULT_SNAPSHOT_DELAY,
     DOMAIN,
@@ -34,7 +35,9 @@ from . import qr_decoder
 from . import rest_client
 from . import rubrica_import
 from . import validate
-from .runtime import MEDIA_ENC_MODES, media_enc_mode
+from .runtime import (
+    MEDIA_ENC_MODES, VOICE_ANSWER_MODES, media_enc_mode, view_keepalive_default, voice_answer_mode,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -54,15 +57,22 @@ KEY_USE_LOCAL_UDP  = "use_local_udp"
 KEY_LOCAL_UDP_PORT = "local_udp_port"
 KEY_ACTUATORS      = "actuators"
 KEY_MEDIA_ENC      = "media_enc"
+KEY_VOICE_ANSWER   = "voice_answer"
 KEY_SGA_TARGET     = "sga_target"
 KEY_PICG_TARGET    = "picg_target"
 KEY_CAMERA_TARGET  = "camera_target"
 KEY_INTERNAL_PANEL_TARGET = "internal_panel_target"
 KEY_DOOR_TARGET    = "door_target"
 KEY_AWAY_FILE      = "away_message_file"
+KEY_AWAY_TEXT      = "away_message_text"
+KEY_AWAY_TTS       = "away_message_tts"
 KEY_AWAY_DELAY     = "away_message_delay"
 KEY_SNAP_DIR       = "snapshot_dir"
 KEY_SNAP_DELAY     = "snapshot_delay"
+KEY_VIEW_KA        = "view_keepalive"
+KEY_ALLOWED_USERS  = "allowed_users"
+KEY_RING_WEBHOOK_URL     = "ring_webhook_url"
+KEY_RING_END_WEBHOOK_URL = "ring_end_webhook_url"
 
 DEFAULT_CLOUD_PROXY    = "ipvdes.vimar.cloud"
 DEFAULT_LOCAL_SIP_PORT = 5060
@@ -589,6 +599,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             use_local_udp  = user_input.get("use_local_udp", True)
             local_udp_port = int(user_input.get("local_udp_port", DEFAULT_LOCAL_UDP_PORT))
             media_enc      = media_enc_mode(user_input.get(KEY_MEDIA_ENC))
+            voice_answer   = voice_answer_mode(user_input.get(KEY_VOICE_ANSWER))
             actuators_raw  = user_input.get(KEY_ACTUATORS, "")
             actuators_default = actuators_raw  # rimostra ciò che l'utente ha scritto
 
@@ -603,7 +614,11 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     errors[key] = "invalid_target"
 
             away_file  = str(user_input.get(KEY_AWAY_FILE, "")).strip()
+            away_text  = str(user_input.get(KEY_AWAY_TEXT, "")).strip()
+            away_tts   = str(user_input.get(KEY_AWAY_TTS) or "").strip()
             away_delay = user_input.get(KEY_AWAY_DELAY, 0)
+            if len(away_text) > AWAY_TEXT_MAX:
+                errors[KEY_AWAY_TEXT] = "text_too_long"
             # Come snapshot_dir: solo cartelle che HA può leggere (allowlist_external_dirs,
             # media). Il percorso va dritto a `ffmpeg -i`.
             if away_file and not self.hass.config.is_allowed_path(away_file):
@@ -613,6 +628,17 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
             snap_dir   = str(user_input.get(KEY_SNAP_DIR, "")).strip()
             snap_delay = user_input.get(KEY_SNAP_DELAY, DEFAULT_SNAPSHOT_DELAY)
+            view_ka    = user_input.get(KEY_VIEW_KA, view_keepalive_default(use_local_udp))
+            if (use_local_udp != current.get(KEY_USE_LOCAL_UDP, True)
+                    and view_ka == view_keepalive_default(current.get(KEY_USE_LOCAL_UDP, True))):
+                view_ka = view_keepalive_default(use_local_udp)  # era il predefinito: segue la modalità
+            allowed_users = [str(u) for u in user_input.get(KEY_ALLOWED_USERS) or []]
+            ring_webhook_url     = str(user_input.get(KEY_RING_WEBHOOK_URL) or "").strip()
+            ring_end_webhook_url = str(user_input.get(KEY_RING_END_WEBHOOK_URL) or "").strip()
+            for key, url in ((KEY_RING_WEBHOOK_URL, ring_webhook_url),
+                             (KEY_RING_END_WEBHOOK_URL, ring_end_webhook_url)):
+                if not validate.http_url(url):
+                    errors[key] = "invalid_url"
             if snap_dir and not self.hass.config.is_allowed_path(snap_dir):
                 errors[KEY_SNAP_DIR] = "path_not_allowed"
             elif snap_dir and await self.hass.async_add_executor_job(
@@ -658,12 +684,19 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                         KEY_USE_LOCAL_UDP:  use_local_udp,
                         KEY_LOCAL_UDP_PORT: local_udp_port,
                         KEY_MEDIA_ENC:      media_enc,
+                        KEY_VOICE_ANSWER:   voice_answer,
                         KEY_ACTUATORS:      actuators,
                         **targets,
                         KEY_AWAY_FILE:      away_file,
+                        KEY_AWAY_TEXT:      away_text,
+                        KEY_AWAY_TTS:       away_tts,
                         KEY_AWAY_DELAY:     away_delay,
                         KEY_SNAP_DIR:       snap_dir,
                         KEY_SNAP_DELAY:     snap_delay,
+                        KEY_VIEW_KA:        view_ka,
+                        KEY_ALLOWED_USERS:  allowed_users,
+                        KEY_RING_WEBHOOK_URL:     ring_webhook_url,
+                        KEY_RING_END_WEBHOOK_URL: ring_end_webhook_url,
                     },
                 )
 
@@ -673,6 +706,10 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         # validazione. `current` resta intatto perché serve ai confronti sopra
         # (sip_changed) per capire cosa è davvero cambiato.
         form = {**current, **(user_input or {})}
+        # HA non ha un selettore di utenti: elenco a scelta multipla dagli utenti veri
+        # (non quelli di sistema). Un utente cancellato sparisce dalla lista al salvataggio.
+        users = [{"value": u.id, "label": u.name or u.id}
+                 for u in await self.hass.auth.async_get_users() if not u.system_generated]
 
         return self.async_show_form(
             step_id="settings",
@@ -696,6 +733,15 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 ): selector.SelectSelector(selector.SelectSelectorConfig(
                     options=list(MEDIA_ENC_MODES),
                     translation_key="media_enc",
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )),
+                # Chi può rispondere a voce su /audio_ws: dichiarato / mai / chiunque.
+                vol.Optional(
+                    KEY_VOICE_ANSWER,
+                    default=voice_answer_mode(form.get(KEY_VOICE_ANSWER)),
+                ): selector.SelectSelector(selector.SelectSelectorConfig(
+                    options=list(VOICE_ANSWER_MODES),
+                    translation_key="voice_answer",
                     mode=selector.SelectSelectorMode.DROPDOWN,
                 )),
                 vol.Optional(
@@ -729,6 +775,16 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     default=form.get(KEY_AWAY_FILE, ""),
                 ): str,
                 vol.Optional(
+                    KEY_AWAY_TEXT,
+                    default=form.get(KEY_AWAY_TEXT, ""),
+                ): selector.TextSelector(selector.TextSelectorConfig(multiline=True)),
+                # Niente default: un EntitySelector non accetta "" (vuoto = motore
+                # predefinito di HA); il valore salvato torna come suggerimento.
+                vol.Optional(
+                    KEY_AWAY_TTS,
+                    description={"suggested_value": form.get(KEY_AWAY_TTS) or None},
+                ): selector.EntitySelector(selector.EntitySelectorConfig(domain="tts")),
+                vol.Optional(
                     KEY_AWAY_DELAY,
                     default=form.get(KEY_AWAY_DELAY, 0),
                 ): vol.All(vol.Coerce(int), vol.Range(min=0, max=60)),
@@ -740,6 +796,26 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     KEY_SNAP_DELAY,
                     default=form.get(KEY_SNAP_DELAY, DEFAULT_SNAPSHOT_DELAY),
                 ): vol.All(vol.Coerce(int), vol.Range(min=0, max=30)),
+                vol.Optional(
+                    KEY_VIEW_KA,
+                    default=form.get(KEY_VIEW_KA, view_keepalive_default(
+                        form.get(KEY_USE_LOCAL_UDP, True))),
+                ): vol.All(vol.Coerce(int), vol.Range(min=0, max=3600)),
+                vol.Optional(
+                    KEY_ALLOWED_USERS,
+                    default=[u for u in form.get(KEY_ALLOWED_USERS) or [] if any(u == x["value"] for x in users)],
+                ): selector.SelectSelector(selector.SelectSelectorConfig(
+                    options=users, multiple=True, mode="list")),  # caselle, non un menu
+                # password: l'URL può portare un token segreto (es. Scrypted), non va
+                # mostrato in chiaro nel form.
+                vol.Optional(
+                    KEY_RING_WEBHOOK_URL,
+                    default=form.get(KEY_RING_WEBHOOK_URL, ""),
+                ): selector.TextSelector(selector.TextSelectorConfig(type="password")),
+                vol.Optional(
+                    KEY_RING_END_WEBHOOK_URL,
+                    default=form.get(KEY_RING_END_WEBHOOK_URL, ""),
+                ): selector.TextSelector(selector.TextSelectorConfig(type="password")),
             }),
             errors=errors,
             description_placeholders={

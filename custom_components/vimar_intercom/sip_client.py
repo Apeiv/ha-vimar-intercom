@@ -73,6 +73,7 @@ call_state = {
     "remote_contact": None, "remote_sdp": None, "original_target": None,
     "route_set": None,   # Record-Route del dialogo, già nell'ordine per il nostro Route
     "local_sdp": None,   # il nostro SDP: riusato nel 200 a un re-INVITE
+    "silence_limit": None,  # s di silenzio verso la targa (solo "Vedi esterno"); None = senza limite
 }
 
 pending_responses: dict[str, asyncio.Queue] = {}
@@ -1246,8 +1247,10 @@ async def do_system_message(target_uri, body_text, extra_headers=None, timeout=1
     return False, "Timeout"
 
 
-async def do_call(target=None):
-    """INVITE a SIP target (default: intercom targa 55001)."""
+async def do_call(target=None, silence_limit=None):
+    """INVITE a SIP target (default: intercom targa 55001).
+
+    silence_limit: solo per la vista in uscita ("Vedi esterno"), vedi media.setup_media."""
     if not registered:
         _LOGGER.error("do_call: NOT registered")
         return False, "Non registrato"
@@ -1268,6 +1271,7 @@ async def do_call(target=None):
     call_state["from_tag"] = ftag
     call_state["original_target"] = target_uri
     call_state["local_sdp"] = sdp
+    call_state["silence_limit"] = silence_limit
 
     vimar_callid = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
     inv_branch = ""
@@ -1442,7 +1446,8 @@ async def do_call(target=None):
                 if remote:
                     call_state["remote_sdp"] = remote
                     _LOGGER.info("SDP: audio=%s video=%s", remote.get('audio', {}), remote.get('video', {}))
-                    await media.setup_media(remote, _local_crypto_key, _local_video_crypto_key)
+                    await media.setup_media(remote, _local_crypto_key, _local_video_crypto_key,
+                                            silence_limit=call_state["silence_limit"])
                     if not calling:
                         return await _annullata(acked=True)
 
@@ -1482,13 +1487,22 @@ async def send_keyframe_request():
     L'INFO è in-dialog: request-URI = Contact del peer (55100/targa), non
     l'hardcode R.INTERCOM (55001). Gestisce la challenge 407/401 rispedendo
     con Proxy-Authorization (come MESSAGE/INVITE) invece di lasciare il proxy
-    a rifiutare a ripetizione ("Stale response 407")."""
-    if not in_call or not call_state["call_id"]:
+    a rifiutare a ripetizione ("Stale response 407").
+
+    Anche nell'anteprima dello squillo (dialogo early del nostro 183, RFC 3261 §12.1.1):
+    foto, clip e card non aspettano l'IDR della targa (~3 s), e un pacchetto perso
+    durante l'anteprima si recupera subito (media_handler._lost)."""
+    if in_call and call_state["call_id"]:
+        cid, to_uri = call_state["call_id"], call_state.get("original_target") or R.INTERCOM
+        to_tag, from_tag = call_state["to_tag"], call_state["from_tag"]
+        contact, route_set = call_state.get("remote_contact"), call_state.get("route_set")
+    elif early_media():
+        p = pending_incoming
+        cid, to_uri, to_tag, from_tag = p["cid"], p["caller_uri"], p["caller_tag"], p["my_tag"]
+        contact, route_set = p["contact"], p["route_set"]
+    else:
         return
-    to_uri = call_state.get("original_target") or R.INTERCOM
-    info_target, route = _dialog_target(call_state.get("remote_contact"), to_uri,
-                                        call_state.get("route_set"))
-    cid = call_state["call_id"]
+    info_target, route = _dialog_target(contact, to_uri, route_set)
     body = ('<?xml version="1.0" encoding="utf-8" ?>'
             '<media_control><vc_primitive><to_encoder>'
             '<picture_fast_update></picture_fast_update>'
@@ -1503,8 +1517,8 @@ async def send_keyframe_request():
             f"{_via_line(_gen())}"
             f"{route}"
             f"Max-Forwards: 70\r\n"
-            f"To: <{to_uri}>;tag={call_state['to_tag']}\r\n"
-            f"From: <sip:{R.SIP_USER}@{R.SIP_DOMAIN}>;tag={call_state['from_tag']}\r\n"
+            f"To: <{to_uri}>;tag={to_tag}\r\n"
+            f"From: <sip:{R.SIP_USER}@{R.SIP_DOMAIN}>;tag={from_tag}\r\n"
             f"Call-ID: {cid}\r\n"
             f"CSeq: {seq} INFO\r\n")
         if auth:
@@ -1636,7 +1650,8 @@ async def do_hangup():
 
 def _clear_call_state() -> None:
     call_state.update(call_id=None, from_tag=None, to_tag=None, remote_contact=None,
-                      remote_sdp=None, original_target=None, route_set=None, local_sdp=None)
+                      remote_sdp=None, original_target=None, route_set=None, local_sdp=None,
+                      silence_limit=None)
 
 
 async def do_options(target=None):
@@ -1758,7 +1773,8 @@ async def handle_incoming_invite(raw):
                    f"Content-Length: {_clen(sdp)}\r\n\r\n{sdp}")
         if remote and remote != call_state["remote_sdp"]:
             call_state["remote_sdp"] = remote
-            await media.setup_media(remote, _local_crypto_key, _local_video_crypto_key)
+            await media.setup_media(remote, _local_crypto_key, _local_video_crypto_key,
+                                    silence_limit=call_state["silence_limit"])
         return
 
     if cid == pending_incoming["cid"]:
@@ -1888,8 +1904,7 @@ def early_media() -> bool:
 async def _ring_timeout(cid) -> None:
     if ringing(cid) and not in_call:
         # Risposta finale anche qui: se il CANCEL si è solo perso, la targa smette.
-        await do_decline_incoming("480 Temporarily Unavailable")
-        await broadcast("ring_ended", "Squillo scaduto")
+        await do_decline_incoming("480 Temporarily Unavailable", msg="Squillo scaduto")
 
 
 async def do_answer_incoming():
@@ -1933,6 +1948,9 @@ async def do_answer_incoming():
     except Exception as e:  # connessione caduta: niente chiamata, niente anteprima orfana
         if p["early"]:
             await media.stop_media()
+        # Lo squillo è chiuso: senza ring_ended l'hub resta "in squillo" e il prossimo
+        # non lancia evento né webhook.
+        await broadcast("ring_ended", "Risposta non inviata")
         return False, f"Risposta non inviata: {e}"
 
     _set_in_call(True)
@@ -1962,9 +1980,10 @@ async def do_answer_incoming():
     return True, "Risposto!"
 
 
-async def do_decline_incoming(reason: str = "603 Decline"):
+async def do_decline_incoming(reason: str = "603 Decline", *, msg: str = "Squillo rifiutato") -> bool:
+    """True se c'era uno squillo da rifiutare."""
     if not ringing():
-        return
+        return False
 
     try:
         await send(_final(pending_incoming, reason))
@@ -1973,11 +1992,17 @@ async def do_decline_incoming(reason: str = "603 Decline"):
         # chiamate e faceva rispondere 486 a ogni squillo nuovo, per sempre.
         _LOGGER.warning("Rifiuto dello squillo non inviato (%s): lo chiudo in locale", e)
     await _end_ring()
+    # Senza ring_ended l'hub resta "in squillo" (_was_ringing) e il prossimo squillo
+    # non lancia evento né webhook. Non per l'eco di una nostra chiamata: non è uno squillo.
+    if not (in_call or calling):
+        await broadcast("ring_ended", msg)
+    return True
 
 
 async def _end_ring():
     """Squillo finito senza risposta nostra: chiude l'eventuale early media."""
     _close_ring()
+    pending_responses.pop(pending_incoming["cid"], None)  # coda dell'INFO di keyframe dell'anteprima
     # Anche se un secondo INVITE ha sovrascritto lo squillo, l'anteprima del primo
     # va chiusa: fuori da una nostra chiamata non deve restare media acceso.
     if not (in_call or calling):

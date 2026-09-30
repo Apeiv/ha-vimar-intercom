@@ -65,6 +65,30 @@ def test_squilla_ancora_risponde_suona_e_riaggancia(hub, monkeypatch):
     assert azioni == ["load", "answer", "send", "alive=True", "hangup"]
 
 
+def test_usa_il_ritardo_del_tab_per_il_messaggio_di_ha(hub, monkeypatch):
+    azioni = _fakes(hub, monkeypatch)
+    attese = []
+
+    orig = asyncio.sleep
+
+    async def _sleep(s):
+        if s >= 1:  # solo il ritardo, non le pause del riproduttore
+            attese.append(s)
+        else:
+            await orig(s)
+
+    monkeypatch.setattr(hub_mod.asyncio, "sleep", _sleep)
+    monkeypatch.setattr(R, "AWAY_MESSAGE_DELAY", 20)
+    asyncio.run(hub._away_message("ring-1"))               # il Tab non ha dato valori: le opzioni
+    hub.stats["vm_timeout"] = 5
+    asyncio.run(hub._away_message("ring-1"))
+    assert attese == [20, 5]
+    hub.stats.pop("vm_timeout")
+    monkeypatch.setattr(R, "AWAY_MESSAGE_DELAY", 0)
+    asyncio.run(hub._away_message("ring-1"))               # né Tab né opzioni: default sicuro
+    assert attese[-1] == hub_mod.C.DEFAULT_AWAY_DELAY == 20
+
+
 def test_se_qualcuno_ha_risposto_non_fa_nulla(hub, monkeypatch):
     azioni = _fakes(hub, monkeypatch)
     sip.pending_incoming["active"] = False  # CANCEL: ha risposto il Tab
@@ -141,7 +165,7 @@ def test_load_pcm_passa_il_file_come_url_file(monkeypatch):
     class _Proc:
         returncode = 0
 
-        async def communicate(self):
+        async def communicate(self, data=None):
             return b"\0" * 320, b""
 
     async def _exec(*args, **kw):

@@ -18,7 +18,7 @@ import socket
 import tempfile
 import time
 
-from custom_components.vimar_intercom import av_stream, frame_grabber
+from custom_components.vimar_intercom import av_passive, av_stream, away_tts, frame_grabber
 from custom_components.vimar_intercom import const as C
 from custom_components.vimar_intercom import hub as hub_mod
 from custom_components.vimar_intercom import media_handler as media
@@ -81,9 +81,12 @@ class Rig:
                          LOCAL_PROXY="127.0.0.1", SIP_PROXY="localhost",
                          USE_LOCAL_UDP=self.transport == "udp", LOCAL_UDP_PORT=0,
                          INTERCOM=f"sip:{PANEL}@{DOMAIN}", DEVICE_UUID="uuid-test",
-                         DEVICE_IMEI="000", AWAY_MESSAGE_FILE="", AWAY_MESSAGE_DELAY=0,
+                         DEVICE_IMEI="000", AWAY_MESSAGE_FILE="", AWAY_MESSAGE_TEXT="",
+                         AWAY_MESSAGE_TTS="", AWAY_MESSAGE_DELAY=0,
                          SNAPSHOT_DIR="", MEDIA_ENC=self.srtp).items():
             mp.setattr(R, k, v, raising=False)
+        mp.setattr(away_tts, "_hass", None)
+        mp.setattr(away_tts, "_cache", None)
         mp.setattr(C, "LOCAL_SIP_PORT", peer.port)
         mp.setattr(C, "PN_TOKEN", "", raising=False)
         a, v = _free_udp_port(), _free_udp_port()
@@ -106,6 +109,10 @@ class Rig:
         for k, val in dict(_av_lock=asyncio.Lock(), _av_clients=set(), _av_pump=None,
                            av_ffmpeg_proc=None).items():
             mp.setattr(av_stream, k, val)
+        for k in ("_grabber", "_clip_q", "_clip_req"):  # niente foto o clip di un test prima
+            mp.setattr(frame_grabber, k, None)
+        for k, val in dict(_lock=asyncio.Lock(), _clients=set(), _task=None, _live=None).items():
+            mp.setattr(av_passive, k, val)
         if self.real_av:
             from .media import free_even_port_pair
             vp = free_even_port_pair()
@@ -117,7 +124,8 @@ class Rig:
             mp.setattr(av_stream, "_AV_SDP_PATH", os.path.join(tempfile.mkdtemp(), "av.sdp"))
         else:
             mp.setattr(frame_grabber, "start", lambda vp: None)
-            mp.setattr(frame_grabber, "stop", lambda vp: None)
+            mp.setattr(frame_grabber, "stop", lambda vp, clip=True: None)
+            mp.setattr(frame_grabber, "record", lambda *a: None)
             self._fake_av_ffmpeg()
         if self.transport == "tls":
             mp.setattr(sip, "_resolve_sip_targets", lambda proxy, port: [("127.0.0.1", peer.port)])

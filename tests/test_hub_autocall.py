@@ -43,7 +43,7 @@ def test_auto_call_chiama_la_targa_video(hub, monkeypatch):
     (vedi test_runtime), non il PICG."""
     chiamate = []
 
-    async def _fake_do_call(target=None):
+    async def _fake_do_call(target=None, silence_limit=None):
         chiamate.append(target)
         return True, "200"
 
@@ -144,7 +144,7 @@ def test_stream_durante_lo_squillo_non_risponde_ne_chiama(hub, monkeypatch):
         azioni.append("answer")
         return True, "200"
 
-    async def _fake_do_call(target=None):
+    async def _fake_do_call(target=None, silence_limit=None):
         azioni.append("call")
         return True, "200"
 
@@ -167,7 +167,7 @@ def test_due_stream_insieme_una_sola_chiamata(hub, monkeypatch):
     """go2rtc e lo stream worker aprono /av nello stesso istante."""
     chiamate = []
 
-    async def _fake_do_call(target=None):
+    async def _fake_do_call(target=None, silence_limit=None):
         chiamate.append(target)
         return True, "200"
 

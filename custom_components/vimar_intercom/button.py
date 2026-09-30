@@ -50,6 +50,7 @@ async def async_setup_entry(
         VimarCallTargetButton(hub, entry.entry_id, R.INTERNAL_PANEL_TARGET,
                               "Chiama Casa (interno)", "call_int"),
         VimarAnswerButton(hub, entry.entry_id),
+        VimarDeclineButton(hub, entry.entry_id),
         VimarHangupButton(hub, entry.entry_id),
         # target=None → stesso default dell'apri-porta di hub.async_door.
         VimarDoorButton(hub, entry.entry_id, None, "Apri Porta", "door_street", "mdi:door-open"),
@@ -147,6 +148,25 @@ class VimarAnswerButton(ButtonEntity):
         ok, msg = await self._hub.async_answer()
         if not ok:
             raise HomeAssistantError(f"Risposta non riuscita: {msg}")
+
+
+class VimarDeclineButton(VimarAnswerButton):
+    """Rifiuta lo squillo (603 Decline): smette di suonare tutta la casa, come l'app.
+
+    Stessa disponibilità di «Rispondi»: solo mentre suona.
+    """
+
+    _attr_name = "Rifiuta"
+    _attr_icon = "mdi:phone-hangup"
+
+    def __init__(self, hub, entry_id: str) -> None:
+        super().__init__(hub, entry_id)
+        self._attr_unique_id = f"{entry_id}_decline"
+
+    async def async_press(self) -> None:
+        ok, msg = await self._hub.async_decline()
+        if not ok:
+            raise HomeAssistantError(f"Rifiuto non riuscito: {msg}")
 
 
 class VimarHangupButton(ButtonEntity):

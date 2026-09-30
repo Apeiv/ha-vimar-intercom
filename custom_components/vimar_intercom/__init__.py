@@ -18,18 +18,23 @@ from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse, cal
 import homeassistant.helpers.config_validation as cv
 from homeassistant.exceptions import ConfigEntryNotReady, Unauthorized
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.service import async_register_admin_service
+from homeassistant.helpers.storage import Store
 
 from .const import DOMAIN
+from . import away_config
+from . import away_tts
 from . import log_buffer as _log_buffer
 from . import validate
 from .hub import VimarIntercomHub
+from . import av_passive
 from . import av_stream
 from . import media_handler as media
 from . import ring_log
-from . import push_sender
 from . import sip_client as sip
 from . import runtime
+from . import webhook
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -37,12 +42,14 @@ _LOGGER = logging.getLogger(__name__)
 _debug_log = _log_buffer.debug_log
 _log_buffer.install()
 
-PLATFORMS = ["camera", "lock", "button", "event", "binary_sensor", "sensor", "switch", "select"]
+PLATFORMS = ["camera", "lock", "button", "event", "binary_sensor", "sensor", "switch", "select",
+             "text"]
 
 # ─── Servizi ──────────────────────────────────────────────────────────────────
 SERVICE_SEND_COMMAND = "send_command"
 SERVICE_CALL = "call"
 SERVICE_ANSWER = "answer"
+SERVICE_DECLINE = "decline"
 SERVICE_HANGUP = "hangup"
 SERVICE_OPEN_DOOR = "open_door"
 SERVICE_FETCH_LOCAL = "fetch_local"
@@ -106,6 +113,15 @@ OPEN_DOOR_SCHEMA = vol.Schema({
     vol.Optional("command", default="OPEN_2F"): vol.All(cv.string, vol.Match(r"^OPEN(_[A-Z0-9_]{1,16})?\Z")),
 })
 
+def _user_allowed(request: web.Request) -> bool:
+    """Opzione `allowed_users`: chi può vedere squilli, foto, clip e media live. Admin
+    sempre; lista vuota = ogni utente autenticato; senza utente (/av in LAN dallo stream
+    worker o da go2rtc, senza token) come oggi."""
+    user = request.get("hass_user")
+    return (user is None or user.is_admin or not runtime.ALLOWED_USERS
+            or getattr(user, "id", None) in runtime.ALLOWED_USERS)
+
+
 def _entry_data(hass: HomeAssistant) -> dict:
     """Dati dell'entry attiva. Le view HTTP restano registrate anche dopo aver
     tolto e riaggiunto l'integrazione (entry_id nuovo), e la prima registrata
@@ -136,6 +152,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         runtime.LOCAL_PROXY, entry.data.get("use_local_udp", True),
     )
 
+    away_tts.setup(hass)  # sintetizza il messaggio di assenza da testo, se configurato
+    webhook.setup(hass)   # GET a inizio/fine squillo, se configurato
+
     hub = VimarIntercomHub()
 
     # Insieme di WS audio attivi: vive in hass.data per evitare globals
@@ -143,7 +162,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     audio_ws_clients: set[web.WebSocketResponse] = set()
 
     hass.data.setdefault(DOMAIN, {})
-    hass.data[DOMAIN][entry.entry_id] = {"hub": hub, "audio_ws_clients": audio_ws_clients}
+    hass.data[DOMAIN][entry.entry_id] = {"hub": hub, "audio_ws_clients": audio_ws_clients,
+                                         "applied": dict(entry.options)}
+    # Il messaggio di assenza si è unito a Segreteria: via l'entità separata rimasta orfana.
+    reg = er.async_get(hass)
+    if orphan := reg.async_get_entity_id("switch", DOMAIN, f"{entry.entry_id}_away_message"):
+        reg.async_remove(orphan)
 
     @callback
     def _on_model_detected(model: str, fw: str, ua: str, priority: int) -> None:
@@ -188,7 +212,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hub.register_event_callback(_on_hub_event)
 
     try:
-        await hub.async_start()
+        # Ultimi SPS/PPS della targa (pochi byte): .storage/vimar_intercom.<entry>.sps_pps
+        await hub.async_start(Store(hass, 1, f"{DOMAIN}.{entry.entry_id}.sps_pps"))
     except OSError as e:
         # Cloud irraggiungibile (dopo un blackout HA riparte prima del router):
         # HA riprova da solo. Un'eccezione qualsiasi lasciava l'entry in errore
@@ -222,20 +247,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hub.set_ws_broadcast(_broadcast)
     hub._has_ws_clients = lambda: len(audio_ws_clients) > 0
 
-    # Initialize APNs VoIP push sender
-    from .const import APNS_KEY_PATH, APNS_KEY_ID, APNS_TEAM_ID, APNS_BUNDLE_ID, APNS_SANDBOX
-    if APNS_KEY_ID and APNS_TEAM_ID:
-        push_sender.init(APNS_KEY_PATH, APNS_KEY_ID, APNS_TEAM_ID, APNS_BUNDLE_ID, APNS_SANDBOX)
-        _LOGGER.info("APNs VoIP push sender initialized")
-    else:
-        _LOGGER.warning("APNs push not configured — set APNS_KEY_ID and APNS_TEAM_ID in const.py")
-
     _register_services(hass)
 
     hass.http.register_view(VimarAVStreamView(hass))
     hass.http.register_view(VimarAudioWSView(hass))
     await _register_card(hass)
-    hass.http.register_view(VimarPushTokenView())
     hass.http.register_view(VimarDebugView())
     hass.http.register_view(VimarRingsView(hass))
     hass.http.register_view(VimarRingPhotoView(hass))
@@ -249,7 +265,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Ricarica l'integrazione al salvataggio delle options."""
+    """Ricarica l'integrazione al salvataggio delle options, tranne quando cambiano
+    solo le chiavi del messaggio di assenza: quelle si applicano in memoria."""
+    data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if data is not None and away_config.apply_options(data, entry.options):
+        return
     await hass.config_entries.async_reload(entry.entry_id)
 
 
@@ -265,8 +285,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             await ws.close()
         await data["hub"].async_stop()
         if not hass.data[DOMAIN]:
+            await av_passive.stop()
             for svc in (SERVICE_SEND_COMMAND, SERVICE_CALL, SERVICE_ANSWER,
-                        SERVICE_HANGUP, SERVICE_OPEN_DOOR, SERVICE_FETCH_LOCAL,
+                        SERVICE_DECLINE, SERVICE_HANGUP, SERVICE_OPEN_DOOR, SERVICE_FETCH_LOCAL,
                         SERVICE_SIMULATE_RING, SERVICE_FIND_SGA):
                 hass.services.async_remove(DOMAIN, svc)
     return ok
@@ -333,6 +354,11 @@ def _register_services(hass: HomeAssistant) -> None:
     async def _svc_answer(call: ServiceCall):
         hub = _entry_data(hass)["hub"]
         ok, msg = await hub.async_answer()
+        return {"ok": ok, "result": msg}
+
+    async def _svc_decline(call: ServiceCall):
+        hub = _entry_data(hass)["hub"]
+        ok, msg = await hub.async_decline()
         return {"ok": ok, "result": msg}
 
     async def _svc_hangup(call: ServiceCall):
@@ -460,6 +486,9 @@ def _register_services(hass: HomeAssistant) -> None:
         DOMAIN, SERVICE_ANSWER, _svc_answer,
         supports_response=SupportsResponse.OPTIONAL)
     hass.services.async_register(
+        DOMAIN, SERVICE_DECLINE, _svc_decline,
+        supports_response=SupportsResponse.OPTIONAL)
+    hass.services.async_register(
         DOMAIN, SERVICE_HANGUP, _svc_hangup,
         supports_response=SupportsResponse.OPTIONAL)
     hass.services.async_register(
@@ -531,6 +560,9 @@ class VimarAudioWSView(HomeAssistantView):
             return ws
         user = request.get("hass_user")
         is_admin = user is not None and user.is_admin
+        if not _user_allowed(request):
+            await ws.close(code=1008, message=b"Not allowed")
+            return ws
         clients = self._ws_clients
         clients.add(ws)
         _LOGGER.info("Audio WS client connected (%d total)", len(clients))
@@ -546,15 +578,36 @@ class VimarAudioWSView(HomeAssistantView):
             "in_call": hub.in_call,
         }))
 
+        loud_ms = 0.0  # voce di fila sopra soglia mentre squilla
+        # Risposta a voce secondo l'opzione voice_answer: "declared" solo chi manda
+        # ?voice_answer=1 (un microfono lasciato aperto non risponde allo squillo dopo),
+        # "off" mai, "any" chiunque.
+        mode = runtime.VOICE_ANSWER
+        voice_answer = mode == "any" or (mode == "declared" and request.query.get("voice_answer") == "1")
+        was_in_call = False  # questa connessione era in chiamata: niente voce finché non torna idle
         try:
             async for msg in ws:
                 if msg.type == web.WSMsgType.TEXT:
                     await self._handle_text(ws, msg.data, is_admin)
                 elif msg.type == web.WSMsgType.BINARY:
                     # Client sending mic audio: 0x02 prefix + PCM16LE
-                    if len(msg.data) > 1 and msg.data[0] == 0x02 and hub.in_call:
+                    if len(msg.data) <= 1 or msg.data[0] != 0x02:
+                        continue
+                    pcm = msg.data[1:]
+                    if hub.in_call:
+                        was_in_call = True
                         hub.claim_call()
-                        media.send_audio(msg.data[1:])
+                        media.send_audio(pcm)
+                    elif not hub.is_ringing:
+                        loud_ms = 0.0
+                        was_in_call = False
+                    elif voice_answer and not was_in_call:
+                        # Parlare mentre squilla risponde (stessa strada di "Rispondi");
+                        # sotto soglia, o a riposo, il PCM si butta.
+                        loud_ms = loud_ms + len(pcm) / 16 if media.rms(pcm) >= media.VOICE_RMS else 0.0
+                        if loud_ms >= media.VOICE_ANSWER_MS:
+                            loud_ms = 0.0
+                            await hub.async_answer()
                 elif msg.type in (web.WSMsgType.ERROR, web.WSMsgType.CLOSE):
                     break
         except Exception as e:
@@ -709,9 +762,10 @@ class VimarAudioWSView(HomeAssistantView):
 
         elif action == "decline":
             try:
-                await hub.async_decline()
-                await self._broadcast({"type": "ring_ended", "msg": "Declined",
-                                       "registered": hub.registered, "in_call": False})
+                # il ring_ended lo manda già do_decline_incoming
+                ok, _ = await hub.async_decline()
+                if not ok:
+                    await ws.send_str(json.dumps({"type": "error", "msg": "No ringing call"}))
             except Exception as e:
                 await ws.send_str(json.dumps({"type": "error", "msg": str(e)}))
 
@@ -727,47 +781,6 @@ class VimarAudioWSView(HomeAssistantView):
                 }))
             except Exception as e:
                 await ws.send_str(json.dumps({"type": "error", "msg": str(e)}))
-
-
-class VimarPushTokenView(HomeAssistantView):
-    """REST endpoint for iOS app to register/unregister VoIP push tokens."""
-
-    url = "/api/vimar_intercom/push_token"
-    name = "api:vimar_intercom:push_token"
-    requires_auth = True
-
-    async def post(self, request: web.Request) -> web.Response:
-        try:
-            data = await request.json()
-        except Exception:
-            return web.json_response({"error": "Invalid JSON"}, status=400)
-
-        token = data.get("token")
-        if not token:
-            return web.json_response({"error": "Missing token"}, status=400)
-
-        sender = push_sender.get_sender()
-        if not sender:
-            return web.json_response({"error": "Push not configured"}, status=503)
-
-        device_name = data.get("device_name", "unknown")
-        sender.register_token(token, device_name)
-        return web.json_response({"status": "ok", "devices": len(sender.registered_devices)})
-
-    async def delete(self, request: web.Request) -> web.Response:
-        try:
-            data = await request.json()
-        except Exception:
-            return web.json_response({"error": "Invalid JSON"}, status=400)
-
-        token = data.get("token")
-        if not token:
-            return web.json_response({"error": "Missing token"}, status=400)
-
-        sender = push_sender.get_sender()
-        if sender:
-            sender.unregister_token(token)
-        return web.json_response({"status": "ok"})
 
 
 class VimarDebugView(HomeAssistantView):
@@ -804,6 +817,8 @@ class VimarRingsView(HomeAssistantView):
         self._hass = hass
 
     async def get(self, request: web.Request) -> web.Response:
+        if not _user_allowed(request):
+            raise Unauthorized()
         if not runtime.SNAPSHOT_DIR:
             return web.json_response([])
         try:  # ?limit=: 10 se manca o non è un numero, fra 1 e 50
@@ -816,8 +831,9 @@ class VimarRingsView(HomeAssistantView):
 
 
 class VimarRingPhotoView(HomeAssistantView):
-    """Foto di uno squillo. Solo squillo_AAAAMMGG_HHMMSS.jpg dentro la cartella foto:
-    nessun altro file è raggiungibile. La card la carica con un percorso firmato."""
+    """Foto (jpg) o clip (mp4) di uno squillo. Solo squillo_AAAAMMGG_HHMMSS[_mmm].{jpg,mp4}
+    dentro la cartella foto: nessun altro file è raggiungibile. La card li carica con un
+    percorso firmato; FileResponse serve il clip anche a pezzi (Range) per il <video>."""
 
     url = "/api/vimar_intercom/rings/{name}"
     name = "api:vimar_intercom:ring_photo"
@@ -827,11 +843,29 @@ class VimarRingPhotoView(HomeAssistantView):
         self._hass = hass
 
     async def get(self, request: web.Request, name: str) -> web.StreamResponse:
+        if not _user_allowed(request):
+            raise Unauthorized()
         path = await self._hass.async_add_executor_job(
             ring_log.ring_photo_path, runtime.SNAPSHOT_DIR, name)
         if path is None:
             return web.Response(status=404)
         return web.FileResponse(path)
+
+
+async def _pump_response(request: web.Request, queue: asyncio.Queue, unsubscribe) -> web.StreamResponse:
+    """MPEG-TS in streaming dalla coda finché non arriva None (client via, o l'ffmpeg è
+    uscito): stessa pompa per /av (chiamata vera, av_stream) e /av?idle=image (av_passive)."""
+    response = web.StreamResponse()
+    response.content_type = "video/mp2t"
+    try:
+        await response.prepare(request)
+        while (chunk := await queue.get()) is not None:
+            await response.write(chunk)
+    except ConnectionResetError:
+        pass
+    finally:
+        await unsubscribe(queue)
+    return response
 
 
 class VimarAVStreamView(HomeAssistantView):
@@ -847,14 +881,22 @@ class VimarAVStreamView(HomeAssistantView):
     async def get(self, request: web.Request) -> web.StreamResponse:
         if not _is_local_request(request):
             return web.Response(status=403, text="Forbidden (local network only)")
+        if not _user_allowed(request):
+            return web.Response(status=403, text="Forbidden (user)")
         hub = _entry_data(self._hass).get("hub")
         if hub is None:
             return web.Response(status=503, text="Integration not loaded")
-        _LOGGER.info("AV stream requested")
-        wait = await hub.stream_opened()
-        queue = None
-        response = web.StreamResponse()
-        response.content_type = "video/mp2t"
+        # ?autocall=0 (o mode=passive): Scrypted, go2rtc, Frigate (docs/EXTERNAL.md).
+        # Mai una chiamata da soli e nessuno spettatore per l'hub (non tiene aperto un
+        # auto-call): video solo se c'è già (squillo o chiamata), altrimenti 503 subito,
+        # così i loro tentativi in ciclo non toccano la targa condominiale.
+        passive = request.query.get("autocall") == "0" or request.query.get("mode") == "passive"
+        if passive and request.query.get("idle") == "image":
+            return await self._idle_image(request, hub)
+        if passive and not hub.video_active:
+            return web.Response(status=503, text="No call (passive)")
+        _LOGGER.info("AV stream requested%s", " (passive)" if passive else "")
+        wait = passive or await hub.stream_opened()
         try:  # tutto dentro: se il client se ne va prima, lo spettatore va comunque tolto
             if not wait:
                 return web.Response(status=503, text="No call")
@@ -876,14 +918,19 @@ class VimarAVStreamView(HomeAssistantView):
             # (con eventuale 407) può durare secondi e ritarderebbe gli header.
             self._hass.async_create_background_task(
                 sip.send_keyframe_request(), "vimar_intercom keyframe")
-
-            await response.prepare(request)
-            while (chunk := await queue.get()) is not None:
-                await response.write(chunk)
-        except ConnectionResetError:
-            pass
+            return await _pump_response(request, queue, av_stream.av_unsubscribe)
         finally:
-            if queue is not None:
-                await av_stream.av_unsubscribe(queue)
-            await hub.stream_closed()
-        return response
+            if not passive:
+                await hub.stream_closed()
+
+    async def _idle_image(self, request: web.Request, hub) -> web.StreamResponse:
+        """`&idle=image`: stream continuo, standby a riposo e video della targa durante
+        squillo o chiamata (av_passive). Mai una chiamata, mai uno spettatore per l'hub."""
+        _LOGGER.info("AV stream requested (passive, idle image)")
+        queue = await av_passive.subscribe(
+            lambda: hub.video_active,
+            lambda: self._hass.async_create_background_task(
+                sip.send_keyframe_request(), "vimar_intercom keyframe"))
+        if queue is None:
+            return web.Response(status=503, text="ffmpeg failed to start")
+        return await _pump_response(request, queue, av_passive.unsubscribe)

@@ -309,9 +309,15 @@ def test_il_select_nasce_solo_quando_arrivano_i_valori():
     sel = _carica("select")
     hub = _Hub()
     aggiunte = []
-    hass = types.SimpleNamespace(data={"vimar_intercom": {"e1": {"hub": hub}}})
+    away = []
+    sel.set_away = lambda hass, entry, key, value: away.append((key, value))
+    async def executor(f, *a): return None
+
+    hass = types.SimpleNamespace(data={"vimar_intercom": {"e1": {"hub": hub}}},
+                                 config=types.SimpleNamespace(media_dirs={}), async_add_executor_job=executor)
     entry = types.SimpleNamespace(entry_id="e1", async_on_unload=lambda f: None)
-    asyncio.run(sel.async_setup_entry(hass, entry, lambda ents: aggiunte.extend(ents)))
+    asyncio.run(sel.async_setup_entry(hass, entry, lambda ents, *_: aggiunte.extend(
+        e for e in ents if not isinstance(e, sel.VimarAwayFileSelect))))
     assert aggiunte == []                                  # risposta corta: niente entità
     hub.touch()
     assert aggiunte == []
@@ -323,6 +329,7 @@ def test_il_select_nasce_solo_quando_arrivano_i_valori():
     assert e.options == ["1", "5", "10", "15", "20"] and e.current_option == "5"
     asyncio.run(e.async_select_option("10"))
     assert hub.param == ("vm_timeout", 10) and e.current_option == "10"
+    assert away == []                                      # il select non riscrive più away_message_delay
     with pytest.raises(_HAError):
         asyncio.run(e.async_select_option("7"))
 
@@ -346,3 +353,152 @@ def test_annuncio_arrivato_durante_l_invio_conta_come_conferma():
         return s.is_on, s.assumed_state
 
     assert asyncio.run(prova()) == (False, False)
+
+
+# --- Non disturbare: disponibilita' ----------------------------------------------------------
+
+def test_dnd_disponibile_da_registrato_anche_senza_stato_del_tab():
+    hub = _Hub()
+    sw, s = _dnd(hub)
+    assert s.available is True and s.is_on is None         # stato ignoto, ma comandabile
+    hub.registered = False
+    assert s.available is False                            # non registrato
+
+
+# --- Segreteria: switch e ritardo -------------------------------------------------------------
+
+def test_segreteria_e_ritardo_disponibili_solo_con_risposta_del_tab(monkeypatch):
+    hub = _Hub()
+    sw = _carica("switch")
+    s = sw.VimarVoicemailSwitch(hub, "e1", key="segreteria", name="Segreteria", icon="x", target="55001",
+                           cmd_on="VOICEMAIL;ON", cmd_off="VOICEMAIL;OFF", state_attr="voicemail",
+                           hname="Panda", hvalue="blue")
+    sel = _carica("select")
+    e = sel.VimarVmTimeoutSelect(types.SimpleNamespace(entry_id="e1"), hub)
+    assert s.available is True and e.available is False   # switch comandabile, select no
+    hub.stats.update(voicemail=False, vm_timeout=5, vm_timeout_values=[5, 10])
+    assert s.available is True and e.available is True
+    monkeypatch.setattr(sel.R, "PICG_TARGET", "")
+    assert e.available is False                            # nessun indirizzo: niente comandi
+
+
+# --- Segreteria unica: messaggio di HA se configurato, altrimenti quella del Tab --------------
+
+def _seg(hub, monkeypatch, testo="ciao", file=""):
+    sw = _carica("switch")
+    monkeypatch.setattr(sw.R, "AWAY_MESSAGE_DELAY", 0)  # il ritardo non conta piu' per "configurato"
+    monkeypatch.setattr(sw.R, "AWAY_MESSAGE_TEXT", testo)
+    monkeypatch.setattr(sw.R, "AWAY_MESSAGE_FILE", file)
+    hub.away_enabled = False
+    hub.set_away_enabled = lambda on: setattr(hub, "away_enabled", on)
+    hub.on_voicemail_on = lambda: hub.set_away_enabled(False)
+    s = sw.VimarVoicemailSwitch(hub, "e1", key="segreteria", name="Segreteria", icon="x", target="55001",
+                           cmd_on="VOICEMAIL;ON", cmd_off="VOICEMAIL;OFF", state_attr="voicemail",
+                           hname="Panda", hvalue="blue")
+    s.async_write_ha_state = lambda: None
+    return s
+
+
+def test_segreteria_on_con_testo_usa_ha_e_spegne_il_tab(monkeypatch):
+    hub = _Hub()
+    s = _seg(hub, monkeypatch)
+    asyncio.run(s.async_turn_on())
+    assert hub.inviati == ["VOICEMAIL;OFF"] and hub.away_enabled is True
+    assert s.is_on is True and s.extra_state_attributes["modo"] == "Home Assistant"
+
+
+def test_segreteria_on_senza_messaggio_accende_quella_del_tab(monkeypatch):
+    hub = _Hub()
+    s = _seg(hub, monkeypatch, testo="")
+    asyncio.run(s.async_turn_on())
+    assert hub.inviati == ["VOICEMAIL;ON"] and hub.away_enabled is False
+    assert s.extra_state_attributes["modo"] == "Tab"
+
+
+def test_segreteria_on_con_solo_file_usa_ha(monkeypatch):
+    hub = _Hub()
+    s = _seg(hub, monkeypatch, testo="", file="/x/a.mp3")
+    asyncio.run(s.async_turn_on())
+    assert hub.inviati == ["VOICEMAIL;OFF"] and hub.away_enabled is True
+
+
+def test_segreteria_off_spegne_entrambe(monkeypatch):
+    hub = _Hub()
+    s = _seg(hub, monkeypatch)
+    hub.away_enabled = True
+    asyncio.run(s.async_turn_off())
+    assert hub.inviati == ["VOICEMAIL;OFF"] and hub.away_enabled is False
+
+
+def test_segreteria_on_con_invio_fallito_non_attiva_away(monkeypatch):
+    hub = _Hub(ok=False)
+    s = _seg(hub, monkeypatch)
+    with pytest.raises(_HAError):
+        asyncio.run(s.async_turn_on())
+    assert hub.away_enabled is False
+
+
+def test_annuncio_del_tab_mentre_si_usa_ha_torna_al_tab(monkeypatch):
+    hub = _Hub()
+    s = _seg(hub, monkeypatch)
+    hub.away_enabled = True
+    hub.stats["voicemail"] = True
+    hub.on_voicemail_on()                                  # come fa l'hub all'annuncio VOICEMAIL;ON
+    assert s.is_on is True and s.extra_state_attributes["modo"] == "Tab"
+
+
+def test_hub_annuncio_voicemail_on_spegne_away():
+    from custom_components.vimar_intercom import hub as hub_mod
+    h = object.__new__(hub_mod.VimarIntercomHub)
+    h.stats = {}
+    h._away_task = None
+    h._state_callbacks = []
+    h._away_enabled = True
+    h._handle_incoming_message("VOICEMAIL;OFF")
+    assert h.away_enabled is True
+    h._handle_incoming_message("VOICEMAIL;ON")
+    assert h.away_enabled is False and h.stats["voicemail"] is True
+
+
+def test_hub_init_status_voicemail_on_spegne_away(hub):
+    hub.set_away_enabled(True)
+    hub._handle_incoming_message(CORTA)                    # voicemail=on
+    assert hub.away_enabled is False
+
+
+def test_restore_segreteria_riprende_il_modo_senza_comandi(monkeypatch):
+    hub = _Hub()
+    s = _seg(hub, monkeypatch)
+
+    def ripristina(modo):
+        async def ultimo():
+            return types.SimpleNamespace(state="on", attributes={"modo": modo})
+        s.async_get_last_state = ultimo
+        s._hub.register_state_callback = lambda cb: None
+        asyncio.run(s.async_added_to_hass())
+
+    ripristina("Home Assistant")
+    assert hub.away_enabled is True
+    hub.stats["voicemail"] = True                          # il Tab ha la segreteria accesa
+    ripristina("Home Assistant")
+    assert hub.away_enabled is False and hub.inviati == []
+
+
+def test_aggiornamento_senza_stato_con_modo_parte_con_away_disattivato(monkeypatch):
+    """Chi aveva testo e ritardo 0 (o lo switch away spento) non si ritrova HA che risponde a ogni squillo."""
+    hub = _Hub()
+    s = _seg(hub, monkeypatch)
+    hub.away_enabled = True
+
+    async def ultimo(): return types.SimpleNamespace(attributes={"stato_reale": False})  # niente "modo"
+
+    s.async_get_last_state = ultimo
+    asyncio.run(s.async_added_to_hass())
+    assert hub.away_enabled is False
+    hub.away_enabled = True
+
+    async def con_modo(): return types.SimpleNamespace(attributes={"modo": "Home Assistant"})
+
+    s.async_get_last_state = con_modo
+    asyncio.run(s.async_added_to_hass())
+    assert hub.away_enabled is True  # dal secondo avvio si riprende com'era

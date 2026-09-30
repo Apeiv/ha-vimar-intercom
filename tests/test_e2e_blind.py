@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
 import time
 import types
 
@@ -19,7 +20,7 @@ from harness.peer import DOMAIN, Msg, answer_200, check_digest, is_, response
 from harness.rig import Rig, run, wait_until
 from harness.web import Request, load_views, make_hass, open_av
 
-from custom_components.vimar_intercom import frame_grabber, ring_log
+from custom_components.vimar_intercom import away_tts, frame_grabber, ring_log
 from custom_components.vimar_intercom import media_handler as media
 from custom_components.vimar_intercom import runtime as R
 from custom_components.vimar_intercom import sip_client as sip
@@ -33,7 +34,7 @@ def snapshots(monkeypatch, tmp_path, delay=0, jpeg=JPEG):
     monkeypatch.setattr(R, "SNAPSHOT_DIR", str(tmp_path))
     monkeypatch.setattr(R, "SNAPSHOT_DELAY", delay)
 
-    async def wait_frame(timeout=6):
+    async def wait_frame(timeout=6, after=0):
         return jpeg
     monkeypatch.setattr(frame_grabber, "wait_frame", wait_frame)
 
@@ -282,6 +283,52 @@ def test_parlare_dalla_card_durante_il_messaggio_lo_ferma_e_tiene_la_linea(monke
     run(s())
 
 
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg non installato")
+def test_messaggio_di_assenza_da_testo_letto_dal_tts(monkeypatch, tmp_path):
+    """Niente file, solo il testo nelle opzioni: il TTS di HA (finto: un wav di 1 s
+    fatto qui) e l'ffmpeg vero; nessuno risponde, la targa riceve la voce a pacchetti
+    PCMU da 20 ms, poi BYE. Registro: «Messaggio di assenza»."""
+    import io
+    import wave
+
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1), w.setsampwidth(2), w.setframerate(16000)
+        w.writeframes(bytes(x % 64 for x in range(2 * 16000)))  # 1 s di dente di sega
+    sintesi = []
+
+    async def audio(hass, media_id):
+        sintesi.append(media_id)
+        return "wav", buf.getvalue()
+
+    async def s():
+        async with Rig(monkeypatch) as rig:
+            snapshots(monkeypatch, tmp_path)
+            monkeypatch.setattr(R, "AWAY_MESSAGE_TEXT", "Non siamo in casa")
+            monkeypatch.setattr(R, "AWAY_MESSAGE_TTS", "tts.google_translate_it_com")
+            monkeypatch.setattr(R, "AWAY_MESSAGE_DELAY", 1)
+            monkeypatch.setattr(away_tts, "_hass", types.SimpleNamespace(
+                config=types.SimpleNamespace(language="it")))
+            monkeypatch.setattr(away_tts, "tts", types.SimpleNamespace(
+                generate_media_source_id=lambda hass, msg, engine, language: f"{engine}/{language}/{msg}",
+                async_get_media_source_audio=audio))
+            await rig.register()
+            rig.ring()
+            await rig.peer.wait_for(is_(code=183))
+            ok200 = await rig.peer.wait_for(is_(code=200, cid="ring-1"), timeout=4)
+            rig.peer.request("ACK", "ring-1", 1, "pnl", to_tag=ok200.h("to").split("tag=")[1])
+            await rig.peer.wait_for(is_("BYE", cid="ring-1"), timeout=4)
+            await wait_until(lambda: rig.hub.status == "idle")
+            assert sintesi == ["tts.google_translate_it_com/it/Non siamo in casa"]
+            assert len(rig.peer.audio_rx) >= 40, f"solo {len(rig.peer.audio_rx)} pacchetti di voce"
+            assert {(p[1] & 0x7F, len(p) - 12) for p in rig.peer.audio_rx} == {(0, 160)}  # PCMU, 20 ms
+            assert len({p[12:] for p in rig.peer.audio_rx}) > 1, "voce piatta: non è il wav"
+            await asyncio.sleep(0.3)
+            assert rings_log(str(tmp_path))[0]["outcome"] == "away"
+            assert away_tts._cache and away_tts._cache[0] == ("Non siamo in casa", "tts.google_translate_it_com", "it")
+    run(s())
+
+
 def test_rispondi_durante_il_messaggio_registro_dice_risposto(monkeypatch, tmp_path):
 
     async def s():
@@ -381,17 +428,21 @@ def test_cloud_sordo_al_bye_squillo_e_risposta_mentre_il_bye_aspetta(monkeypatch
 
 
 def test_squillo_cloud_record_route_rispondi_keyframe_riaggancia_niente_scartato(monkeypatch):
-    """Cloud (proxy con Record-Route e routing rigido): squillo → risposta → INFO di
-    keyframe → BYE nostro. Il proxy non deve scartare niente (Route e Contact giusti)."""
+    """Cloud (proxy con Record-Route e routing rigido): squillo → INFO di keyframe già
+    nell'anteprima (dialogo early: foto e card non aspettano l'IDR della targa) → risposta
+    → INFO → BYE nostro. Il proxy non deve scartare niente (Route e Contact giusti)."""
     async def s():
         async with Rig(monkeypatch, "tls") as rig:
             await rig.register()
             rig.ring("ring-rr")
             await rig.peer.wait_for(is_(code=183))
+            early = await rig.peer.wait_for(is_("INFO", cid="ring-rr"))
+            assert "picture_fast_update" in early.body and not sip.in_call
+            n = len(rig.peer.log)
             assert (await rig.hub.async_answer())[0]
             ok200 = await rig.peer.wait_for(is_(code=200, cid="ring-rr"))
             rig.peer.request("ACK", "ring-rr", 1, "pnl", to_tag=ok200.h("to").split("tag=")[1])
-            await rig.peer.wait_for(is_("INFO", cid="ring-rr"))
+            await rig.peer.wait_for(is_("INFO", cid="ring-rr"), start=n)
             await asyncio.sleep(0.3)
             await rig.hub.async_hangup()
             bye = await rig.peer.wait_for(is_("BYE", cid="ring-rr"))
@@ -555,7 +606,7 @@ def test_foto_vera_dello_squillo_dal_frame_grabber(monkeypatch, tmp_path):
             rig.ring()
             r183 = await rig.peer.wait_for(is_(code=183))
             rig.start_media(r183.body)
-            await wait_until(lambda: any(ring_log.RING_PHOTO.fullmatch(n) for n in os.listdir(tmp_path)),
+            await wait_until(lambda: any(ring_log.RING_FILE.fullmatch(n) for n in os.listdir(tmp_path)),
                              10, "foto dello squillo")
             await asyncio.sleep(0.2)
             rig.peer.request("CANCEL", "ring-1", 1, "pnl")
@@ -567,3 +618,125 @@ def test_foto_vera_dello_squillo_dal_frame_grabber(monkeypatch, tmp_path):
             assert (tmp_path / "ultimo_squillo.jpg").read_bytes() == jpeg
             assert ring_log.ring_photo_path(str(tmp_path), r["photo"])
     run(s())
+
+
+@pytest.mark.media
+def test_clip_dello_squillo_e_foto_subito_poi_migliore(monkeypatch, tmp_path):
+    """Come un Ring. Suonano, H.264 vero nell'anteprima: la foto di chi ha suonato c'è entro
+    1,5 s dal primo IDR (senza aspettare snapshot_delay), i sensori la indicano, e dopo
+    snapshot_delay la sostituisce quella con l'esposizione regolata (stesso nome, versione
+    nuova). Nessuno risponde (CANCEL): il video dello squillo è in squillo_<ora>.mp4 (H.264
+    copiato, durata reale), nel registro e nei sensori, servito anche a pezzi (Range) alla
+    card; il file a metà (.part) non è mai raggiungibile."""
+    import aiohttp
+    from harness.media import clip_info
+
+    async def s():
+        async with Rig(monkeypatch, real_av=True, http=True) as rig:
+            monkeypatch.setattr(R, "SNAPSHOT_DIR", str(tmp_path))
+            monkeypatch.setattr(R, "SNAPSHOT_DELAY", 2)
+            await rig.register()
+            rig.ring()
+            r183 = await rig.peer.wait_for(is_(code=183))
+            rig.start_media(r183.body)
+            await wait_until(lambda: rig.panel_media.idr_at, 3, "IDR della targa")
+            await wait_until(lambda: any(ring_log.RING_FILE.fullmatch(n) for n in os.listdir(tmp_path)),
+                             5, "foto dello squillo")
+            t_photo = time.time()
+            [r] = ring_log.recent_rings(str(tmp_path), 10)
+            first = (tmp_path / r["photo"]).read_bytes()
+            assert t_photo - rig.panel_media.idr_at < 1.5, "prima foto in ritardo"
+            assert r["clip"] is None, "clip elencato mentre è ancora in scrittura"
+            media_attrs = rig.hub.ring_media()
+            assert media_attrs["foto"] == str(tmp_path / r["photo"]) and media_attrs["clip"] is None
+            assert media_attrs["foto_url"] == f"/api/vimar_intercom/rings/{r['photo']}?v={r['photo_v']}"
+            info = rig.peer.got(is_("INFO", cid="ring-1"))
+            assert info and "picture_fast_update" in info[0].body, "keyframe non chiesto allo squillo"
+            await asyncio.sleep(3.5)                       # snapshot_delay 2 + un IDR (ogni 1 s)
+            [r2] = ring_log.recent_rings(str(tmp_path), 10)
+            better = (tmp_path / r2["photo"]).read_bytes()
+            assert r2["photo"] == r["photo"] and better != first and r2["photo_v"] > r["photo_v"]
+            assert (tmp_path / "ultimo_squillo.jpg").read_bytes() == better
+            assert rig.hub.ring_media()["foto_url"].endswith(f"?v={r2['photo_v']}")
+            clip = r["photo"][:-4] + ".mp4"
+            assert (tmp_path / (clip + ".part")).exists()
+            async with aiohttp.ClientSession() as http:
+                async with http.get(f"{rig.base}/api/vimar_intercom/rings/{clip}.part") as resp:
+                    assert resp.status == 404
+            rig.peer.request("CANCEL", "ring-1", 1, "pnl")
+            await wait_until(lambda: rig.hub.status == "idle")
+            await wait_until(lambda: (tmp_path / clip).exists(), 15, "clip chiuso")
+            assert not (tmp_path / (clip + ".part")).exists()
+            codec, dur, n = clip_info(str(tmp_path / clip))
+            assert codec == "h264" and dur > 3 and n > 40, (codec, dur, n)
+            [r3] = ring_log.recent_rings(str(tmp_path), 10)
+            assert r3["clip"] == clip and r3["outcome"] == "missed"
+            await wait_until(lambda: rig.hub.stats["last_clip"] == clip, 2, "clip nei sensori")
+            assert rig.hub.ring_media()["clip_url"] == f"/api/vimar_intercom/rings/{clip}"
+            async with aiohttp.ClientSession() as http:
+                async with http.get(f"{rig.base}/api/vimar_intercom/rings/{clip}",
+                                    headers={"Range": "bytes=0-99"}) as resp:
+                    assert resp.status == 206 and resp.headers["Content-Type"] == "video/mp4"
+                    part = await resp.read()
+                    assert len(part) == 100 and part[4:8] == b"ftyp"
+    run(s())
+
+
+# ─── risposta a voce (/audio_ws): solo se dichiarata, mai con un mic rimasto aperto ──
+
+LOUD_FRAME = b"\x02" + b"\x00\x40" * 341   # RMS ~16000, ben sopra VOICE_RMS
+
+
+def _voice_answer(monkeypatch, query, before=None, ring="ring-v", frames=10):
+    """Squilla, il WS manda voce forte: True se l'hub ha risposto da solo."""
+    async def s():
+        async with Rig(monkeypatch) as rig:
+            await rig.register()
+            views = load_views(monkeypatch)
+            view = views.VimarAudioWSView(make_hass(rig))
+            ws = views.web.WebSocketResponse()
+            monkeypatch.setattr(views.web, "WebSocketResponse", lambda: ws)
+            wst = asyncio.create_task(view.get(Request(admin=False, query=query)))
+            if before:
+                await before(rig, ws)
+            rig.ring(ring)
+            await wait_until(lambda: rig.hub.is_ringing)
+            for _ in range(frames):
+                ws.inbox.put_nowait(types.SimpleNamespace(type="binary", data=LOUD_FRAME))
+                await asyncio.sleep(0.02)
+            answered = rig.hub.in_call
+            ws.inbox.put_nowait(None)
+            await wst
+            return answered
+    return run(s())
+
+
+def test_voce_non_risponde_senza_flag(monkeypatch):
+    assert _voice_answer(monkeypatch, {}) is False
+
+
+def test_voce_risponde_con_flag(monkeypatch):
+    assert _voice_answer(monkeypatch, {"voice_answer": "1"}) is True
+
+
+def test_voce_da_connessione_gia_in_chiamata_non_risponde_al_giro_dopo(monkeypatch):
+    async def before(rig, ws):
+        # la connessione ha parlato in una chiamata precedente, poi l'hub e' tornato a riposo
+        rig.ring("ring-0")
+        await wait_until(lambda: rig.hub.is_ringing)
+        assert (await rig.hub.async_answer())[0]
+        ws.inbox.put_nowait(types.SimpleNamespace(type="binary", data=MIC_FRAME))
+        await asyncio.sleep(0.1)
+        await rig.hub.async_hangup()
+        await wait_until(lambda: rig.hub.status == "idle")
+    # mai un frame a riposo: e' ancora "in chiamata" per il server, quindi tace
+    assert _voice_answer(monkeypatch, {"voice_answer": "1"}, before, ring="ring-v") is False
+
+
+def test_voce_a_riposo_non_si_accumula_per_lo_squillo_dopo(monkeypatch):
+    async def before(rig, ws):  # 3 frame forti a riposo (~127 ms)
+        for _ in range(3):
+            ws.inbox.put_nowait(types.SimpleNamespace(type="binary", data=LOUD_FRAME))
+        await asyncio.sleep(0.2)
+    # altri 3 allo squillo: da soli (127 ms) sotto VOICE_ANSWER_MS, insieme (254) no
+    assert _voice_answer(monkeypatch, {"voice_answer": "1"}, before, frames=3) is False

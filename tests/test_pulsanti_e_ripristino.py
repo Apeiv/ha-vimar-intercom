@@ -204,6 +204,11 @@ def test_la_camera_dice_alla_card_le_entita_vere(monkeypatch):
         ("sensor", "e1_status"): "sensor.ufficio_vimar_intercom_intercom_stato",
         ("sensor", "e1_last_ring"): "sensor.ufficio_vimar_intercom_intercom_ultimo_squillo",
         ("lock", "e1_lock"): "lock.vimar_intercom_street_gate",
+        ("switch", "e1_dnd"): "switch.non_disturbare",
+        ("switch", "e1_segreteria"): "switch.segreteria",
+        ("select", "e1_vm_timeout"): "select.ritardo",
+        ("select", "e1_away_file"): "select.file",
+        ("text", "e1_away_text"): "text.testo",
     }
 
     class _Reg:
@@ -217,6 +222,8 @@ def test_la_camera_dice_alla_card_le_entita_vere(monkeypatch):
         "status": "sensor.ufficio_vimar_intercom_intercom_stato",
         "last_ring": "sensor.ufficio_vimar_intercom_intercom_ultimo_squillo",
         "lock": "lock.vimar_intercom_street_gate",
+        "dnd": "switch.non_disturbare", "segreteria": "switch.segreteria",
+        "delay": "select.ritardo", "file": "select.file", "text": "text.testo",
     }}
 
 
@@ -247,3 +254,55 @@ def test_il_livello_della_voce_distingue_il_silenzio(monkeypatch, caplog):
     assert righe == ["Voce verso la targa: picco 40/32767 (silenzio)",
                      "Voce verso la targa: picco 9000/32767 (voce)",
                      "Voce verso la targa: picco 0/32767 (silenzio)"]
+
+
+# --- Rifiuta (603, come l'app) ----------------------------------------------------
+
+def test_rifiuta_disponibile_solo_durante_lo_squillo():
+    hub = _Hub()
+    b = button.VimarDeclineButton(hub, "e1")
+    assert b.available is False and b._attr_unique_id == "e1_decline"
+    hub.is_ringing = True
+    assert b.available is True
+
+
+def test_rifiuta_chiama_l_hub_e_segnala_l_errore():
+    hub = _Hub()
+    chiamate = []
+
+    async def decline():
+        chiamate.append(1)
+        return hub.ok, "Nessuna chiamata in arrivo"
+
+    hub.async_decline = decline
+    b = button.VimarDeclineButton(hub, "e1")
+    with pytest.raises(_HAError):
+        asyncio.run(b.async_press())
+    hub.ok = True
+    asyncio.run(b.async_press())
+    assert len(chiamate) == 2
+
+
+def test_hub_decline_risponde_603_solo_se_squilla(monkeypatch):
+    """Stesso 603 dell'app (Via/To;tag/From/Call-ID/CSeq, senza corpo), inviato una volta."""
+    from custom_components.vimar_intercom import hub as hub_mod, sip_client as sip
+    inviati = []
+
+    async def send(m):
+        inviati.append(m)
+
+    async def bc(*a, **k):
+        pass
+
+    monkeypatch.setattr(sip, "send", send)
+    monkeypatch.setattr(sip, "broadcast", bc)
+    monkeypatch.setattr(sip.media, "stop_media", bc)
+    monkeypatch.setattr(sip, "pending_incoming", {
+        "active": True, "via_block": "Via: v\r\n", "to_hdr": "<sip:a>", "from_hdr": "<sip:b>;tag=x",
+        "cid": "c1", "cseq": "1 INVITE", "my_tag": "t"})
+    h = object.__new__(hub_mod.VimarIntercomHub)
+    h._touch = lambda: None
+    ok, _ = asyncio.run(h.async_decline())
+    assert ok and inviati[0].startswith("SIP/2.0 603 Decline\r\n") and "Content-Length: 0" in inviati[0]
+    ok, _ = asyncio.run(h.async_decline())   # ormai non squilla più
+    assert not ok and len(inviati) == 1

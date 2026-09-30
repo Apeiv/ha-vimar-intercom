@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import collections
+import contextlib
 import logging
 import os
 import struct
@@ -81,6 +82,20 @@ def _write_av_sdp():
     return _AV_SDP_PATH
 
 
+def _seed_silence(audio_proto) -> None:
+    """3 pacchetti PCMU di silenzio (60 ms) subito dopo l'avvio: l'encoder AAC non
+    parte, e con lui l'uscita di ffmpeg, finché non riceve il primo audio, e se la
+    targa non ne manda (anteprima 183 muta, SRTP audio che fallisce) /av restava a
+    0 byte. Passano da av_rtp: l'audio vero poi continua da qui (SSRC nuovo)."""
+    for i in range(3):
+        rtp = struct.pack("!BBHII", 0x80, 0, i, i * 160, 0) + media.SILENCE_ULAW
+        try:
+            audio_proto.ffmpeg_av_sock.sendto(
+                audio_proto.av_rtp.fix(rtp, 0), ("127.0.0.1", FFMPEG_AV_AUDIO_PORT))
+        except OSError:
+            pass
+
+
 async def _start_av_ffmpeg_locked():
     """Start ffmpeg that reads H264+PCMU RTP and outputs MPEG-TS to pipe.
 
@@ -110,7 +125,19 @@ async def _start_av_ffmpeg_locked():
         "-fpsprobesize", "0", "-max_ts_probe", "0",
         "-i", sdp_path,
         "-c:v", "copy",
-        "-c:a", "copy",
+        # G.711 non è un codec valido in MPEG-TS: con «copy» finiva come dati
+        # privati (bin_data) e lo stream worker di HA (HLS, camera.record) e
+        # HomeKit non lo vedevano. AAC-LC mono a 32 kb/s, come nella PR #21
+        # (@m4r1k). La frequenza non aggiunge nulla a una sorgente a 8 kHz ma
+        # decide quanto il mux trattiene il primo pacchetto video: esce solo con
+        # il primo AAC, e l'encoder ne dà uno dopo 2048 campioni (priming). A
+        # 24 kHz sono 85 ms di audio, a 48 kHz 43. Misurato (test_av_latency):
+        # primo fotogramma decodificabile +60 ms a 24 kHz, +10 ms a 48 kHz.
+        "-c:a", "aac", "-b:a", "32k", "-ar", "48000", "-ac", "1",
+        # Mux senza attese: niente ritardo iniziale (default 0,7 s), le due
+        # tracce escono al massimo 0,1 s l'una dall'altra, ogni pacchetto è
+        # scritto subito sulla pipe (PR #21).
+        "-muxdelay", "0", "-max_interleave_delta", "100000", "-flush_packets", "1",
         "-f", "mpegts",
         "pipe:1",
     ]
@@ -137,6 +164,7 @@ async def _start_av_ffmpeg_locked():
         if media.audio_proto:
             media.audio_proto.av_rtp = AvRtp(160)
             media.audio_proto.forward_av = True
+            _seed_silence(media.audio_proto)
         _LOGGER.info("AV ffmpeg started (MPEG-TS output), RTP forwarding enabled")
     else:
         # Il motivo sta nello stderr (es. «bind failed» con porte che si
@@ -158,11 +186,22 @@ _av_clients: set[asyncio.Queue] = set()
 _av_pump: asyncio.Task | None = None
 
 
-def _av_end(q: asyncio.Queue) -> None:
-    _av_clients.discard(q)
+def end_client(q: asyncio.Queue, clients: set[asyncio.Queue]) -> None:
+    """Stacca un client: None in coda = fine dello stream."""
+    clients.discard(q)
     if q.full():
         q.get_nowait()
     q.put_nowait(None)
+
+
+def fanout(chunk: bytes, clients: set[asyncio.Queue]) -> None:
+    """Lo stesso pezzo a tutti i client; uno troppo lento va staccato, non si
+    corrompe il TS (anche per av_passive)."""
+    for q in list(clients):
+        if q.full():
+            end_client(q, clients)
+        else:
+            q.put_nowait(chunk)
 
 
 async def _av_pump_run(proc) -> None:
@@ -172,23 +211,28 @@ async def _av_pump_run(proc) -> None:
             chunk = await loop.run_in_executor(None, proc.stdout.read1, 4096)
             if not chunk:
                 break
-            for q in list(_av_clients):
-                if q.full():
-                    _av_end(q)  # client troppo lento: staccarlo, non corrompere il TS
-                else:
-                    q.put_nowait(chunk)
+            fanout(chunk, _av_clients)
     except (OSError, ValueError) as e:
         _LOGGER.debug("AV pump ended: %s", e)
     finally:
-        for q in list(_av_clients):
-            _av_end(q)
+        # _stop_av_ffmpeg_locked() stacca già i client per conto suo (vedi lì): non
+        # aspetta questo pump, che può restare bloccato in read1() per secondi dopo il
+        # kill. Se nel frattempo è ripartito un ffmpeg nuovo (_av_pump punta già a
+        # un'altra pump) questa è quella vecchia: non deve toccare i client della nuova.
+        if asyncio.current_task() is _av_pump:
+            for q in list(_av_clients):
+                end_client(q, _av_clients)
 
 
 async def av_subscribe() -> asyncio.Queue | None:
     """Aggancia un client allo stream MPEG-TS; None se ffmpeg non parte."""
     global _av_pump
     async with _av_lock:
-        if _av_pump is None or _av_pump.done():
+        # av_ffmpeg_proc is None: lo stop precedente ha già ucciso il processo, anche se
+        # la pump vecchia non se n'è ancora accorta (bloccata in read1(), vedi sopra) —
+        # non aspettarla per ripartire, o una chiamata veloce dopo l'altra resterebbe
+        # agganciata a una pump morente invece che a un ffmpeg nuovo.
+        if av_ffmpeg_proc is None or _av_pump is None or _av_pump.done():
             await _start_av_ffmpeg_locked()
             proc = av_ffmpeg_proc
             if not proc or proc.poll() is not None:
@@ -204,13 +248,21 @@ async def av_unsubscribe(q: asyncio.Queue) -> None:
         _av_clients.discard(q)
         if not _av_clients:
             await _stop_av_ffmpeg_locked()
-            if _av_pump:
-                await asyncio.wait([_av_pump])
 
 
 async def stop_av_ffmpeg():
     async with _av_lock:
         await _stop_av_ffmpeg_locked()
+
+
+def _close_av_pipes(proc) -> None:
+    """proc.stdout/stderr.close(), fuori dal loop. Se il thread che le legge (la pump,
+    lo stderr reader) è ancora bloccato in una read1()/readline(), close() qui aspetta
+    la stessa lock del BufferedReader e può restare ferma per secondi — misurato fino a
+    ~11 s a testa. Farlo sul thread del loop bloccava tutto asyncio; qui no."""
+    for pipe in (proc.stdout, proc.stderr):
+        with contextlib.suppress(Exception):
+            pipe.close()
 
 
 async def _stop_av_ffmpeg_locked():
@@ -231,7 +283,15 @@ async def _stop_av_ffmpeg_locked():
             await asyncio.get_running_loop().run_in_executor(None, proc.wait, 2)
         except Exception:  # noqa: BLE001 — già uscito
             pass
+        # I client non aspettano che la pump se ne accorga da sola (può restare bloccata
+        # in read1() per secondi dopo il kill, vedi _close_av_pipes): staccati subito.
+        for q in list(_av_clients):
+            end_client(q, _av_clients)
         _LOGGER.info("AV ffmpeg stopped")
+        # In background: può bloccare per secondi (vedi sopra), mai sul thread del loop.
+        # ponytail: fire-and-forget voluto (vedi docstring); a raffica di riconnessioni può occupare
+        # thread dell executor per secondi: un semaforo se succede davvero.
+        asyncio.get_running_loop().run_in_executor(None, _close_av_pipes, proc)
 
 
 async def _read_av_ffmpeg_stderr(proc, tail: collections.deque[str]):

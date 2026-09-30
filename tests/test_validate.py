@@ -115,3 +115,13 @@ def test_i_nomi_dns_non_bastano(host):
 ])
 def test_solo_http_e_https(dato, atteso):
     assert v.http_scheme(dato) == atteso
+
+
+# ─── http_url: i due webhook squillo ─────────────────────────────────────────
+
+@pytest.mark.parametrize("url, ok", [
+    ("", True), ("  ", True), ("http://h:1/x?t=1", True), ("https://h/x", True),
+    ("ftp://h/x", False), ("javascript:alert(1)", False), ("h/x", False), ("http://", False),
+])
+def test_http_url(url, ok):
+    assert v.http_url(url) is ok

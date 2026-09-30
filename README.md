@@ -114,10 +114,24 @@ Settings → Vimar Intercom → **Configure**:
 | **Video entrance panel** (`camera_target`) | Panel called by the camera, *Call* and *Call Video (outdoor)*: the `PHONEBOOK` row with `TYPE='PE'`. **Not the SGA.** Empty = default `55100` |
 | **Internal panel** (`internal_panel_target`) | Target of *Call Home (indoor)*. The phonebook does not say which one it is: set it by hand. Empty = default `55002` |
 | **Entrance panel that opens the door** (`door_target`) | Recipient of the door command (lock, *Open Door*, `open_door` without `target`, actuators with target `AUTO`): the `GID_PE` of the door actuator in the phonebook. **Not always the SGA**: on a 2FV2 the SGA is `61000` and the door is opened by panel `55001`. Empty = the saved door actuator's panel, otherwise the SGA |
-| **Ring snapshot folder** (`snapshot_dir`) | Where the visitor's photo is saved on every ring (`squillo_YYYYMMDD_HHMMSS_mmm.jpg` + `ultimo_squillo.jpg`), e.g. `/config/media/citofono`. Must be writable by HA. Empty = off |
-| **Seconds after the ring** (`snapshot_delay`) | Wait before the photo (preview start + exposure). Default 3 (Tab 5S Up 40515) |
-| **Away message** (`away_message_file`, `away_message_delay`) | Audio file (mp3, wav…) played to the visitor if nobody answers within N seconds (0 = off, max 60); then the integration hangs up |
+| **Ring snapshot folder** (`snapshot_dir`) | Where the visitor's photo (`squillo_YYYYMMDD_HHMMSS_mmm.jpg` + `ultimo_squillo.jpg`) and the ring clip (`squillo_YYYYMMDD_HHMMSS_mmm.mp4`: the preview video, and the call if answered from HA, up to 60 s, no audio) are saved on every ring, e.g. `/config/media/citofono`. Must be writable by HA. Empty = off |
+| **Seconds for the better photo** (`snapshot_delay`) | The first photo is saved as soon as the first frame arrives (~1 s after the ring); after this many seconds it is replaced by a frame with the exposure settled (the panel's first keyframe is dark). Default 3 (Tab 5S Up 40515), 0 = keep the first |
+| **View silence** (`view_keepalive`) | Seconds of audio silence sent during "Vedi esterno" (0 = none). Over the cloud the panel closes the view after ~10 s without it; on the 2-wire plant in local mode it keeps the apartment busy (up to 300 s). Default: 120 over the cloud, 0 in local mode; on a 2-wire plant use 0 or 30 |
+| **Allowed users** (`allowed_users`) | Limits the card, the ring history (`GET /api/vimar_intercom/rings`, photos and clips) and `/audio_ws` to these HA users. Admins are always allowed. Empty = every logged-in user (default). It is **not** per user for the camera entity nor for `/av` from the local network (HA's own camera stream, go2rtc: no token, local network only): anyone who can open the camera sees and hears the stream. If the photo folder is under an HA media directory (e.g. `/config/media/citofono`), photos and clips also show up in the media browser for every user |
+| **Away message** (`away_message_file`, `away_message_delay`) | Audio file (mp3, wav…) played to the visitor if nobody answers within N seconds; then the integration hangs up. If the Tab exposes the voicemail delay, that one is used instead (*Voicemail · delay*) |
+| **Away message from text** (`away_message_text`, `away_message_tts`) | If the file field is empty, this text is read by Home Assistant's text-to-speech (`away_message_tts` = a `tts.*` entity; empty = HA's default engine) in HA's language, max 30 s. The audio is generated at startup and cached; if TTS fails the doorbell keeps ringing as usual |
 | **Media encryption (SRTP)** (`media_enc`) | **Automatic** (default since 1.0.11): follows the `media_enc` the plant declares in its `GET_INIT_STATUS` reply (`"srtp"` on a cloud 40515); plants with the short reply (the 40507) stay on plain RTP. **On** / **Off** force it. Entries saved as "on" by 1.0.10 or earlier stay on; "off" becomes automatic. Try **On** if the camera stays black or the call fails with `488` |
+| **Voice answer** (`voice_answer`) | Who can answer a ringing call by talking on `/audio_ws`: **Declared** (default, only with `?voice_answer=1`), **Off** (never), **Any** (any connection with a mic; a wall tablet with its mic left open can answer by itself on household noise) |
+| **Ring webhooks** (`ring_webhook_url`, `ring_end_webhook_url`) | Optional GET (fire-and-forget, 5 s timeout) fired when a ring starts and when it ends (answered, cancelled or missed) — e.g. the `turnOn`/`turnOff` URLs of a Scrypted Dummy Switch (see [docs/EXTERNAL.md](docs/EXTERNAL.md)). A failure only logs a warning, never blocks the ring. Empty = off |
+
+**Voicemail.** There is one *Voicemail* switch (Configuration, device page). Turned on, it uses Home
+Assistant's away message if a text or an audio file is set (and turns the Tab's own voicemail off);
+otherwise it turns the Tab's voicemail on. Turned off, both are off. If the Tab switches its voicemail
+on by itself, the Tab's wins. There is a single delay, *Voicemail · delay* (from the Tab; if the Tab does
+not expose it, the `away_message_delay` option, 0 = 20 s): the away message starts after that many seconds.
+The message is set from the same page: *Voicemail · message text* and *Voicemail · audio file* (a pick-list of the files in
+`<first HA media folder>/citofono/messaggi`, created on demand; upload from Media > Local media; refreshed every minute).
+These are the integration's options, applied at once without a reload. The card's settings dialog hides the text and file rows from non-admin users; this is a UI limitation only, the entities themselves are not restricted.
 
 Example, Tab 5S Up 40515 (Due Fili Plus, cloud): SGA `61000`, PICG `60001`, video and door panel
 `55001`. These values come from the VIEW app's phonebook, not from the defaults.
@@ -142,11 +156,12 @@ already know your plant's SGA or want to tweak the imported actuator list.
 | Call | `button` | SIP call to the default outdoor unit |
 | Call Video (outdoor) / Call Home (indoor) | `button` | Call to `camera_target` / `internal_panel_target` |
 | Answer / Hang up | `button` | Answer (200 OK) / end the call (BYE) |
+| Decline | `button` | Only while it rings: refuses the call with `603 Decline`, so the whole house stops ringing, as in the app. Also the `vimar_intercom.decline` service |
 | Open Door | `button` | `OPEN_2F` to `door_target` |
 | *Dynamic actuators* | `button` | One per entry in `options["actuators"]` (F1/F2, stair lights, relays…); sends `MSG` with `Panda: command` |
 | Voicemail | `switch` | `VOICEMAIL;ON/OFF` (Panda: blue) to the SGA; state read from the Tab's announcements and from `GET_INIT_STATUS`, asked after every command. The commanded value is shown for 10 s at most: with no confirmation the state becomes *unknown* ([#9](../../issues/9)) |
 | Do Not Disturb | `switch` | `DND;ON/OFF` (Panda: blue) to the SGA; same rules as Voicemail |
-| Voicemail delay | `select` | Only on plants that send the long `GET_INIT_STATUS` reply: `vm_timeout`, one of the plant's own `vm_timeout_values`, written with `SET_APT_PARAMS` ([#4](../../issues/4)). It does not appear on plants with the short reply |
+| Voicemail · delay | `select` | Only on plants that send the long `GET_INIT_STATUS` reply: `vm_timeout`, one of the plant's own `vm_timeout_values`, written with `SET_APT_PARAMS` ([#4](../../issues/4)). It does not appear on plants with the short reply |
 | Intercom SIP | `binary_sensor` | SIP registration active (connectivity) |
 | Intercom In Call | `binary_sensor` | A call is up |
 | Intercom Ringing | `binary_sensor` | ON while an outdoor unit is calling (attribute: caller) |
@@ -169,6 +184,16 @@ already know your plant's SGA or want to tweak the imported actuator list.
 
 *The card at rest with the ring history, during a ring (video preview before answering) and in a call. The camera picture is a demo scene.*
 
+**Layouts** (all with demo pictures): `overlay`, `sotto` and `popup` while the doorbell rings, the ring history, and the visual editor.
+
+| `overlay` | `sotto` |
+|---|---|
+| ![overlay layout](docs/images/card-overlay.png) | ![sotto layout](docs/images/card-below.png) |
+
+| `popup`: compact card above, live popup open | History drawer | `compact_style: tile` |
+|---|---|---|
+| ![popup layout](docs/images/card-popup.png) | ![ring history](docs/images/card-history.png) | ![compact tile](docs/images/card-compact-tile.png) |
+
 The integration ships a dashboard card and loads it itself, so there is nothing to add under
 Resources. Pick **Citofono Vimar** in the card picker (camera, name, layout and history have a
 visual editor; the rest stays in YAML) or add it by hand:
@@ -183,7 +208,8 @@ lock: lock.vimar_intercom_serratura
 last_ring: sensor.vimar_intercom_intercom_ultimo_squillo
 anchor: citofono   # "" = off
 history: 8         # 0 = off
-layout: overlay    # or "sotto"
+layout: overlay    # or "sotto" or "popup"
+compact_style: pillola   # "popup" layout only: the compact card is a "pillola" (pill) or a "tile"
 ```
 
 Opening the card never calls the panel. The live video starts only while the doorbell rings or
@@ -233,8 +259,13 @@ into view, e.g. `/lovelace/camera#citofono` as the tap action of a ring notifica
 row is the history button (during a call the button is on the video): the latest rings
 (option `history`, default 8) with photo, time and outcome: *Risposto* (answered from HA),
 *Messaggio di assenza* (away message), *Nessuna risposta* (not answered from HA; a ring answered
-on the panel counts here too). Tap a photo to see it large. The integration keeps the list in
-`squillo.json` next to the photos (last 200 rings). Without the folder there is no history.
+on the panel counts here too). Tap a photo to see it large; a ring with a clip shows a play
+icon on its thumbnail and the tap plays the video instead. The photo appears about a second
+after the ring and is replaced by a better one after `snapshot_delay`; the clip when the ring
+(or the call) ends. The integration keeps the list in `squillo.json` next to the files (last 200
+rings). Without the folder there is no history. For notifications, the "Intercom Ultimo Squillo"
+sensor carries `foto` / `clip` (paths on disk) and `foto_url` / `clip_url` (relative URLs the
+companion app fetches with its own login) as soon as each file exists.
 
 ---
 
@@ -335,6 +366,12 @@ automation: set **Ring snapshot folder** in the options. Test your automations w
 `vimar_intercom.simulate_ring`. Don't point a `camera: platform: ffmpeg` at `/api/vimar_intercom/av`:
 that hangs Home Assistant until the ffmpeg probe times out.
 
+**Scrypted (Alexa chime, Echo Show), go2rtc, Frigate**: use
+`/api/vimar_intercom/av?autocall=0&idle=image`, a continuous stream that never calls the panel
+(standby frame while idle, live video during rings and calls; `?autocall=0` alone answers 503
+while idle instead), and forward the doorbell `event` with an automation. Setup in
+[`docs/EXTERNAL.md`](docs/EXTERNAL.md).
+
 `docs/lovelace_example.yaml` has a basic Lovelace card with the answer / open door / hang up buttons.
 The video pane shows live video while a call or a ring is up. For voice, use the intercom card below.
 
@@ -423,10 +460,18 @@ this component), check that both patches are still in place — see the note und
 - Internal HTTP endpoint: `/av` is **LAN-only** (`_is_local_request`); the `/audio_ws`
   WebSocket requires Home Assistant authentication, and its debug actions (`command`, `probe`,
   `scan`, `register`, `reconnect`) are admin-only. The QR payload is never logged at INFO level.
+- Talking on `/audio_ws?voice_answer=1` while the doorbell rings answers the call (mic RMS above a threshold
+  for 200 ms): how Echo Show and HomeKit answer through Scrypted. Who may answer is the **Voice answer**
+  option (`voice_answer`): `declared` (default, only with the flag), `off` (never), `any` (any connection
+  with a mic: a wall tablet with the mic left open can answer by itself on household noise). In every mode
+  a connection that was in a call never answers until it goes back to idle. While idle, mic frames are dropped.
+  External clients using a signed URL (`auth/sign_path`): put `voice_answer=1` in the path *before* signing;
+  appending it afterwards gets a 401, because HA validates the signed query. Or pick the `any` option.
 - Ring history for the card: `GET /api/vimar_intercom/rings` (list, `?limit=` up to 50) and
-  `GET /api/vimar_intercom/rings/<name>` (the photo) require Home Assistant authentication (the
-  card loads photos through signed paths). The second serves only `squillo_YYYYMMDD_HHMMSS_mmm.jpg`
-  files inside `snapshot_dir`, nothing else; the folder is never exposed under `/local`.
+  `GET /api/vimar_intercom/rings/<name>` (the photo or the clip, with HTTP ranges) require Home
+  Assistant authentication (the card loads them through signed paths). The second serves only
+  `squillo_YYYYMMDD_HHMMSS[_mmm].jpg` / `.mp4` files inside `snapshot_dir`, nothing else (not
+  even a clip still being written); the folder is never exposed under `/local`.
 - In local UDP mode, SIP packets from any host other than the intercom are dropped, so another
   device on the LAN can't fake a ring.
 - No mandatory cloud dependency when running in local UDP mode.

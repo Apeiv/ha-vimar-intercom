@@ -3,6 +3,7 @@ reale, e ffprobe per contare i fotogrammi decodificabili che escono da /av."""
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import random
 import shutil
@@ -128,6 +129,57 @@ def decodable_frames(ts: bytes) -> int:
         return int(first) if first.isdigit() else 0
     finally:
         os.unlink(path)
+
+
+def audio_info(ts: bytes) -> dict:
+    """Traccia audio di un MPEG-TS vista da ffprobe (codec_name, sample_rate, channels) e
+    nb_read_frames decodificati: ciò che lo stream worker di HA vede con PyAV. Vuoto se
+    ffprobe non riconosce un audio (PCMU in TS = bin_data)."""
+    fd, path = tempfile.mkstemp(suffix=".ts")
+    os.write(fd, bytes(ts))
+    os.close(fd)
+    try:
+        out = subprocess.run(["ffprobe", "-v", "error", "-count_frames", "-select_streams", "a:0",
+                              "-show_entries", "stream=codec_name,sample_rate,channels,nb_read_frames",
+                              "-of", "json", path], capture_output=True, text=True, timeout=60).stdout
+        streams = json.loads(out or "{}").get("streams") or [{}]
+        return streams[0]
+    finally:
+        os.unlink(path)
+
+
+def clip_info(path: str) -> tuple[str, float, int]:
+    """(codec video, durata in s, fotogrammi decodificabili) di un file secondo ffprobe."""
+    out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-count_frames",
+                          "-show_entries", "stream=codec_name,nb_read_frames:format=duration",
+                          "-of", "default=nw=1:nk=1", path], capture_output=True, text=True, timeout=60).stdout.split()
+    codec, frames, duration = (out + ["", "0", "0"])[:3]
+    return codec, float(duration or 0), int(frames) if frames.isdigit() else 0
+
+
+def clip_audio_codec(path: str) -> str:
+    """Codec audio (o "" se non c'è traccia audio) di un file secondo ffprobe."""
+    return subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a:0",
+                           "-show_entries", "stream=codec_name", "-of", "csv=p=0", path],
+                          capture_output=True, text=True, timeout=60).stdout.strip()
+
+
+def luma_means(ts: bytes) -> list[float]:
+    """Luminanza media di ogni fotogramma di un MPEG-TS (per distinguere lo standby
+    scuro dal testsrc della targa), nell'ordine in cui escono dal decoder."""
+    out = subprocess.run(["ffmpeg", "-v", "error", "-f", "mpegts", "-i", "pipe:0", "-an",
+                          "-vf", "scale=16:16", "-pix_fmt", "gray", "-f", "rawvideo", "pipe:1"],
+                         input=bytes(ts), capture_output=True, timeout=60).stdout
+    return [sum(out[i:i + 256]) / 256 for i in range(0, len(out) - 255, 256)]
+
+
+def frame_sizes(ts: bytes) -> set[str]:
+    """«larghezza,altezza» di ogni fotogramma video: un solo valore = niente cambio di
+    parametri a metà stream."""
+    out = subprocess.run(["ffprobe", "-v", "error", "-f", "mpegts", "-select_streams", "v:0",
+                          "-show_entries", "frame=width,height", "-of", "csv=p=0", "-i", "pipe:0"],
+                         input=bytes(ts), capture_output=True, timeout=60).stdout.decode()
+    return {line.strip().rstrip(",") for line in out.splitlines() if line.strip()}
 
 
 def free_even_port_pair() -> int:

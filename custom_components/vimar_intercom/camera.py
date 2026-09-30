@@ -23,6 +23,12 @@ CARD_ENTITIES = {
     "status": ("sensor", "status"),
     "last_ring": ("sensor", "last_ring"),
     "lock": ("lock", "lock"),
+    # Impostazioni del dialogo della card (Configurazione).
+    "dnd": ("switch", "dnd"),
+    "segreteria": ("switch", "segreteria"),
+    "delay": ("select", "vm_timeout"),
+    "file": ("select", "away_file"),
+    "text": ("text", "away_text"),
 }
 
 
@@ -82,7 +88,7 @@ class VimarIntercomCamera(Camera):
 
     @property
     def extra_state_attributes(self) -> dict:
-        """`card_entities`: gli entity_id veri di stato, ultimo squillo e serratura,
+        """`card_entities`: gli entity_id veri delle entità che la card legge (stato, serratura, impostazioni),
         per la card (`custom:vimar-intercom-card`) quando la sua config non li scrive."""
         reg = er.async_get(self._hass)
         found = {
@@ -111,4 +117,4 @@ class VimarIntercomCamera(Camera):
         """
         if not self._hub.video_active:
             return None
-        return await frame_grabber.wait_frame()
+        return await frame_grabber.wait_frame(after=1)  # non il primo IDR, scuro

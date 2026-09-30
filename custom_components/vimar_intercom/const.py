@@ -69,13 +69,6 @@ PN_TOKEN = ""
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CA_PATH    = os.path.join(SCRIPT_DIR, "vimar_rootca.pem")
 
-# ─── APNs VoIP Push (opzionale — solo per push iOS) ──────────────────────────
-APNS_KEY_PATH  = os.path.join(SCRIPT_DIR, "AuthKey.p8")
-APNS_KEY_ID    = ""
-APNS_TEAM_ID   = ""
-APNS_BUNDLE_ID = "noiseheroes.Home"
-APNS_SANDBOX   = True
-
 # ─── Segreteria (answering machine) — comando DA CONFERMARE ──────────────────
 # SGA (MAGIC_APT_INTERCOM) = destinatario di VOICEMAIL;ON/OFF e DND;ON/OFF con Panda: blue.
 # CONFERMATO 19/08/2026 dalla rubrica.db reale (SYSTEM.MAGIC_APT_INTERCOM = "55001", PICG "Casa CG")
@@ -128,8 +121,16 @@ ACTUATORS = []  # RIMOSSI 18/08/2026: i token ipotizzati (OPEN_F1/OPEN_2/OPEN_2F
 # proprio appartamento, altrimenti la prima riga PE) — rubrica_import.py.
 CAMERA_TARGET = "55100"
 
-# Secondi fra lo squillo e la foto: avvio anteprima + esposizione (Tab 5S Up 40515).
+# Secondi fra lo squillo e la foto migliore (la prima si salva subito): la telecamera
+# della targa regola l'esposizione (Tab 5S Up 40515). 0 = solo la prima.
 DEFAULT_SNAPSHOT_DELAY = 3
+# Ritardo del messaggio di assenza se né il Tab né le opzioni ne danno uno: mai rispondere subito.
+DEFAULT_AWAY_DELAY = 20
+# Lunghezza massima del testo del messaggio di assenza (limite di un'entità text di HA).
+AWAY_TEXT_MAX = 255
+# Secondi di silenzio PCMU a "Vedi esterno" (0 = nessuno): via cloud la targa chiude la vista a ~10 s
+# senza audio; sul 2 fili in locale (UDP) il silenzio tiene l'appartamento occupato fino a 300 s.
+DEFAULT_VIEW_KEEPALIVE_CLOUD = 120
 
 # ─── Comandi di stato (in USCITA, Panda: blue) ───────────────────────────────
 GET_INIT_STATUS = "GET_INIT_STATUS"   # → PICG_TARGET; risposta GET_INIT_STATUS_REPLY

@@ -49,6 +49,16 @@ MEDIA_ENC_OPTION: str = "auto"
 MEDIA_ENC_PLANT: bool | None = None   # None = l'impianto non l'ha dichiarato
 MEDIA_ENC: bool = False
 
+# Risposta a voce su /audio_ws: "declared" (default) solo chi manda ?voice_answer=1,
+# "off" mai, "any" qualsiasi connessione con microfono.
+VOICE_ANSWER_MODES = ("declared", "off", "any")
+VOICE_ANSWER_DEFAULT = "declared"
+VOICE_ANSWER: str = VOICE_ANSWER_DEFAULT
+
+
+def voice_answer_mode(value) -> str:
+    return value if value in VOICE_ANSWER_MODES else VOICE_ANSWER_DEFAULT
+
 
 def media_enc_mode(value) -> str:
     """Valore salvato nelle options → "auto" | "on" | "off".
@@ -98,11 +108,44 @@ ACTUATORS: list = []
 SGA_TARGET:  str = _const.SGA_TARGET
 PICG_TARGET: str = _const.PICG_TARGET
 # Messaggio di assenza: file audio fatto sentire se dopo N s squilla ancora (0 = mai).
+# Senza file, un testo letto dal TTS di HA (motore AWAY_MESSAGE_TTS; vuoto = il
+# predefinito di HA): vedi away_tts.py.
 AWAY_MESSAGE_FILE: str = ""
+AWAY_MESSAGE_TEXT: str = ""
+AWAY_MESSAGE_TTS: str = ""
 AWAY_MESSAGE_DELAY: int = 0
+
+
+AWAY_KEYS = ("away_message_file", "away_message_text", "away_message_delay")
+
+
+def set_away_option(key: str, value) -> None:
+    """Applica in memoria una delle AWAY_KEYS (senza ricaricare l'integrazione)."""
+    globals()[key.upper()] = int(value or 0) if key == "away_message_delay" else str(value or "").strip()
+
+
+def away_message_configured() -> bool:
+    return bool(AWAY_MESSAGE_FILE or AWAY_MESSAGE_TEXT)
+
+
 # Foto di chi suona: cartella (vuoto = non salvare) e secondi dopo lo squillo.
 SNAPSHOT_DIR: str = ""
 SNAPSHOT_DELAY: int = _const.DEFAULT_SNAPSHOT_DELAY
+VIEW_KEEPALIVE: float = _const.DEFAULT_VIEW_KEEPALIVE_CLOUD   # s di silenzio a "Vedi esterno", 0 = nessuno
+
+
+def view_keepalive_default(use_local_udp: bool) -> int:
+    """Locale (UDP, il 2 fili): niente silenzio, occuperebbe l'appartamento; cloud: 120 s."""
+    return 0 if use_local_udp else _const.DEFAULT_VIEW_KEEPALIVE_CLOUD
+# Id degli utenti HA ammessi a squilli, foto, clip e media live (vuoto = tutti).
+ALLOWED_USERS: list[str] = []
+
+# ─── Webhook squillo (da options flow; opzionale) ────────────────────────────
+# GET fire-and-forget per accendere/spegnere un interruttore fittizio (es.
+# Scrypted "Dummy Switch" collegato a un Custom Doorbell Button), o qualsiasi
+# altro automatismo esterno. Vuoto = disattivato. Vedi hub.py/webhook.py.
+RING_WEBHOOK_URL: str = ""
+RING_END_WEBHOOK_URL: str = ""
 
 # ─── Targhe da chiamare (da options flow; issue #3) ──────────────────────────
 # CAMERA_TARGET = targa video (PE) chiamata dalla camera, da «Chiama» e da
@@ -171,12 +214,14 @@ def configure(data: dict) -> None:
     global SIP_PROXY, LOCAL_PROXY
     global GID, PLANT_TYPE, MAC_CITOFONO
     global USE_LOCAL_UDP, LOCAL_UDP_PORT, MEDIA_ENC_OPTION, MEDIA_ENC_PLANT
-    global INTERCOM, DOOR_ESTERNO
+    global INTERCOM, DOOR_ESTERNO, VOICE_ANSWER
     global DETECTED_MODEL, DETECTED_FW, DETECTED_UA, DETECTED_PRIORITY
     global ACTUATORS
     global SGA_TARGET, PICG_TARGET
     global CAMERA_TARGET, INTERNAL_PANEL_TARGET, DOOR_TARGET
-    global AWAY_MESSAGE_FILE, AWAY_MESSAGE_DELAY, SNAPSHOT_DIR, SNAPSHOT_DELAY
+    global AWAY_MESSAGE_FILE, AWAY_MESSAGE_TEXT, AWAY_MESSAGE_TTS, AWAY_MESSAGE_DELAY
+    global SNAPSHOT_DIR, SNAPSHOT_DELAY, VIEW_KEEPALIVE, ALLOWED_USERS
+    global RING_WEBHOOK_URL, RING_END_WEBHOOK_URL
     global DEVICE_IMEI, DEVICE_UUID
 
     SIP_USER     = data.get("sip_user", "")
@@ -192,6 +237,7 @@ def configure(data: dict) -> None:
     USE_LOCAL_UDP  = bool(data.get("use_local_udp", True))
     LOCAL_UDP_PORT = int(data.get("local_udp_port", 5060))
     MEDIA_ENC_OPTION = media_enc_mode(data.get("media_enc"))
+    VOICE_ANSWER = voice_answer_mode(data.get("voice_answer"))
     MEDIA_ENC_PLANT  = None   # lo ridice l'impianto al prossimo GET_INIT_STATUS_REPLY
     _recompute_media_enc()
 
@@ -253,9 +299,16 @@ def configure(data: dict) -> None:
     DOOR_ESTERNO = f"sip:{DOOR_TARGET}@{SIP_DOMAIN}"
 
     AWAY_MESSAGE_FILE  = str(data.get("away_message_file") or "").strip()
+    AWAY_MESSAGE_TEXT  = str(data.get("away_message_text") or "").strip()
+    AWAY_MESSAGE_TTS   = str(data.get("away_message_tts") or "").strip()
     AWAY_MESSAGE_DELAY = int(data.get("away_message_delay") or 0)
     SNAPSHOT_DIR   = str(data.get("snapshot_dir") or "").strip()
     SNAPSHOT_DELAY = int(data.get("snapshot_delay", _const.DEFAULT_SNAPSHOT_DELAY))
+    _ka = data.get("view_keepalive")
+    VIEW_KEEPALIVE = int(_ka) if _ka is not None else view_keepalive_default(USE_LOCAL_UDP)
+    ALLOWED_USERS  = [str(u) for u in data.get("allowed_users") or []]
+    RING_WEBHOOK_URL     = str(data.get("ring_webhook_url") or "").strip()
+    RING_END_WEBHOOK_URL = str(data.get("ring_end_webhook_url") or "").strip()
 
     # Identità dispositivo: salvata nell'entry al primo avvio. Se manca (entry
     # creato da una versione precedente, o probe/test senza entry) se ne genera

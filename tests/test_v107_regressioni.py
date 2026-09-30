@@ -126,6 +126,8 @@ switch_mod = _import_switch()
 
 
 class _Hub:
+    away_enabled = False
+
     def __init__(self, ok, reale=None):
         self.stats = {"voicemail": reale}
         self._ok = ok
@@ -136,6 +138,12 @@ class _Hub:
     async def async_request_status(self):
         pass
 
+    def set_away_enabled(self, on):
+        pass
+
+    def on_voicemail_on(self):
+        pass
+
 
 class _HAError(Exception):
     pass
@@ -143,7 +151,7 @@ class _HAError(Exception):
 
 def _switch(hub):
     switch_mod.HomeAssistantError = _HAError  # negli stub è un jolly, non un'eccezione
-    sw = switch_mod.VimarModeSwitch(
+    sw = switch_mod.VimarVoicemailSwitch(
         hub, "e1", key="segreteria", name="Segreteria", icon="mdi:voicemail",
         target="55001", cmd_on="VOICEMAIL;ON", cmd_off="VOICEMAIL;OFF",
         state_attr="voicemail", hname="Panda", hvalue="blue")

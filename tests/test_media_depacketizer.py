@@ -38,6 +38,8 @@ def _mk_proto():
     p._fua_expected_seq = None
     p._last_sps = None
     p._last_pps = None
+    p.panel = None
+    p._ps_by_panel = {}
     p._sps_pps_sent = False
     p._pending_idr = None
     p._drop_until_idr = False

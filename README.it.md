@@ -116,10 +116,24 @@ Impostazioni → Vimar Intercom → **Configura**:
 | **Targa video** (`camera_target`) | targa chiamata dalla camera, da *Chiama* e da *Chiama Video (esterno)*: la riga `PHONEBOOK` con `TYPE='PE'`. **Non è l'SGA.** Vuoto = default `55100` |
 | **Pannello interno** (`internal_panel_target`) | destinatario di *Chiama Casa (interno)*. La rubrica non lo dice: va inserito a mano. Vuoto = default `55002` |
 | **Targa che apre la porta** (`door_target`) | destinatario del comando di apertura (serratura, *Apri Porta*, `open_door` senza `target`, attuatori con target `AUTO`): il `GID_PE` dell'attuatore porta nella rubrica. **Non sempre è l'SGA**: su un 2FV2 l'SGA è `61000` e la porta la apre la targa `55001`. Vuoto = la targa dell'attuatore porta salvato, altrimenti l'SGA |
-| **Cartella foto squillo** (`snapshot_dir`) | dove salvare la foto di chi suona a ogni squillo (`squillo_AAAAMMGG_HHMMSS_mmm.jpg` + `ultimo_squillo.jpg`), es. `/config/media/citofono`. Deve essere scrivibile da HA. Vuoto = disattivato |
-| **Secondi dopo lo squillo** (`snapshot_delay`) | attesa prima della foto (avvio anteprima + esposizione). Default 3 (Tab 5S Up 40515) |
-| **Messaggio di assenza** (`away_message_file`, `away_message_delay`) | file audio (mp3, wav…) fatto sentire al visitatore se nessuno risponde entro N secondi (0 = mai, max 60); poi l'integrazione riaggancia |
+| **Cartella foto squillo** (`snapshot_dir`) | dove salvare, a ogni squillo, la foto di chi suona (`squillo_AAAAMMGG_HHMMSS_mmm.jpg` + `ultimo_squillo.jpg`) e il clip dello squillo (`squillo_AAAAMMGG_HHMMSS_mmm.mp4`: il video dell'anteprima, e della chiamata se si risponde da HA, fino a 60 s, senza audio), es. `/config/media/citofono`. Deve essere scrivibile da HA. Vuoto = disattivato |
+| **Secondi per la foto migliore** (`snapshot_delay`) | la prima foto si salva appena arriva il primo fotogramma (~1 s dallo squillo); dopo questi secondi la sostituisce un fotogramma con l'esposizione regolata (il primo keyframe della targa è scuro). Default 3 (Tab 5S Up 40515), 0 = resta la prima |
+| **Silenzio della vista** (`view_keepalive`) | secondi di silenzio audio mandati durante «Vedi esterno» (0 = nessuno). Via cloud senza silenzio la targa chiude la vista a ~10 s; sul 2 fili in locale tiene occupato l'appartamento (fino a 300 s). Default: 120 via cloud, 0 in locale; sul 2 fili metti 0 o 30 |
+| **Utenti ammessi** (`allowed_users`) | Limita la card, lo storico squilli (`GET /api/vimar_intercom/rings`, foto e clip) e `/audio_ws` a questi utenti HA. Gli amministratori sempre. Vuoto = ogni utente autenticato (default). **Non** è per utente per l'entità camera né per `/av` dalla rete locale (la camera di HA, go2rtc: senza token, solo rete locale): chi può aprire la camera vede e sente lo stream. Se la cartella foto è sotto una cartella media di HA (es. `/config/media/citofono`), foto e clip compaiono nel browser media per tutti gli utenti |
+| **Messaggio di assenza** (`away_message_file`, `away_message_delay`) | file audio (mp3, wav…) fatto sentire al visitatore se nessuno risponde entro N secondi; poi l'integrazione riaggancia. Se il Tab espone il ritardo della segreteria si usa quello (*Segreteria · ritardo*) |
+| **Messaggio di assenza da testo** (`away_message_text`, `away_message_tts`) | se il campo file è vuoto, questo testo lo legge la sintesi vocale di Home Assistant (`away_message_tts` = un'entità `tts.*`; vuoto = il motore predefinito di HA) nella lingua di HA, max 30 s. L'audio si genera all'avvio e resta in cache; se il TTS fallisce il citofono squilla come sempre |
 | **Cifratura del media (SRTP)** (`media_enc`) | **Automatico** (default dalla 1.0.11): segue il `media_enc` che l'impianto dichiara nella risposta a `GET_INIT_STATUS` (`"srtp"` su un 40515 in cloud); gli impianti con la risposta corta (il 40507) restano in RTP chiaro. **Attivo** / **Disattivo** lo forzano. Chi aveva salvato «attivo» con la 1.0.10 o prima resta attivo; «spento» diventa automatico. Prova **Attivo** se la camera resta nera o la chiamata fallisce con `488` |
+| **Risposta a voce** (`voice_answer`) | Chi può rispondere a uno squillo parlando su `/audio_ws`: **Solo dichiarato** (default, solo con `?voice_answer=1`), **Mai**, **Chiunque** (qualsiasi connessione con microfono; un tablet a muro col microfono rimasto aperto può rispondere da solo coi rumori di casa) |
+| **Webhook squillo** (`ring_webhook_url`, `ring_end_webhook_url`) | GET opzionale (fire-and-forget, timeout 5 s) inviata quando inizia uno squillo e quando finisce (risposto, annullato o non risposto) — es. gli URL `turnOn`/`turnOff` di un Dummy Switch Scrypted (vedi [docs/EXTERNAL.md](docs/EXTERNAL.md)). Un fallimento logga solo un warning, mai blocca lo squillo. Vuoto = disattivato |
+
+**Segreteria.** C'è un solo switch *Segreteria* (Configurazione, pagina del dispositivo). Acceso, usa il
+messaggio di assenza di Home Assistant se c'è un testo o un file audio (e spegne la segreteria del Tab);
+altrimenti accende quella del Tab. Spento, sono spente entrambe. Se il Tab accende da solo la propria
+segreteria, vale quella del Tab. Il ritardo è uno solo, *Segreteria · ritardo* (quello del Tab; se il Tab non lo
+espone, l'opzione `away_message_delay`, 0 = 20 s): il messaggio di HA parte dopo quei secondi.
+Il messaggio si imposta dalla stessa pagina: *Segreteria · testo del messaggio* e *Segreteria · file audio* (elenco dei file in
+`<prima cartella media di HA>/citofono/messaggi`, creata se manca; si carica da Media > Local media; l'elenco si aggiorna ogni minuto).
+Sono le stesse opzioni dell'integrazione, applicate subito senza ricaricarla. Il dialog delle impostazioni della card nasconde le righe di testo e file a chi non è admin: è solo una limitazione della UI, le entità non sono limitate.
 
 Esempio, Tab 5S Up 40515 (Due Fili Plus, cloud): SGA `61000`, PICG `60001`, targa video e apri‑porta
 `55001`. Sono i valori della rubrica dell'app VIEW, non i default.
@@ -143,18 +157,19 @@ tuo impianto o vuoi modificare la lista attuatori prodotta dall'import).
 | Chiama | `button` | Chiamata SIP verso la targa di default |
 | Chiama Video (esterno) / Chiama Casa (interno) | `button` | Chiamata verso `camera_target` / `internal_panel_target` |
 | Rispondi / Riaggancia | `button` | Rispondi (200 OK) / termina (BYE) |
+| Rifiuta | `button` | Solo mentre suona: rifiuta con `603 Decline`, così smette di suonare tutta la casa, come nell'app. Anche il servizio `vimar_intercom.decline` |
 | Apri Porta | `button` | `OPEN_2F` verso `door_target` |
 | *Attuatori dinamici* | `button` | Uno per voce in `options["actuators"]` (F1/F2, luci scala, relè…); invia `MSG` con `Panda: command` |
 | Segreteria | `switch` | `VOICEMAIL;ON/OFF` (Panda: blue) verso l'SGA; stato letto dagli annunci del Tab e da `GET_INIT_STATUS`, chiesto dopo ogni comando. Il valore comandato si vede per 10 s al massimo: senza conferma lo stato diventa *sconosciuto* ([#9](../../issues/9)) |
 | Non Disturbare | `switch` | `DND;ON/OFF` (Panda: blue) verso l'SGA; stesse regole della Segreteria |
-| Ritardo segreteria | `select` | Solo sugli impianti con la risposta lunga di `GET_INIT_STATUS`: `vm_timeout`, uno dei `vm_timeout_values` dichiarati dall'impianto, scritto con `SET_APT_PARAMS` ([#4](../../issues/4)). Sugli impianti con la risposta corta non compare |
+| Segreteria · ritardo | `select` | Solo sugli impianti con la risposta lunga di `GET_INIT_STATUS`: `vm_timeout`, uno dei `vm_timeout_values` dichiarati dall'impianto, scritto con `SET_APT_PARAMS` ([#4](../../issues/4)). Sugli impianti con la risposta corta non compare |
 | Intercom SIP | `binary_sensor` | Registrazione SIP attiva (connectivity) |
 | Intercom In Call | `binary_sensor` | Chiamata attiva |
 | Intercom Squillo | `binary_sensor` | ON mentre una targa chiama (attr: chiamante) |
 | Intercom Chiamata In Uscita | `binary_sensor` | ON mentre HA chiama |
 | Intercom Stato | `sensor` (enum) | offline / idle / ringing / in_call / calling (+ attributi rete; sugli impianti con la risposta lunga anche il `GID` dell'appartamento, `apt_names` e il `media_enc` dichiarato) |
 | Intercom Ultimo Chiamante | `sensor` | targa/monitor dell'ultimo squillo |
-| Intercom Ultimo Squillo | `sensor` (timestamp) | ora dell'ultimo squillo |
+| Intercom Ultimo Squillo | `sensor` (timestamp) | ora dell'ultimo squillo (attr: chiamante, foto/foto_url e clip/clip_url con `snapshot_dir`) |
 | Intercom Squilli | `sensor` (contatore) | squilli dall'avvio |
 | Intercom Chiamate | `sensor` (contatore) | chiamate connesse |
 | Intercom Durata Ultima Chiamata | `sensor` (s) | durata ultima chiamata |
@@ -170,6 +185,16 @@ tuo impianto o vuoi modificare la lista attuatori prodotta dall'import).
 
 *La card a riposo con la cronologia degli squilli, durante uno squillo (anteprima video prima di rispondere) e in chiamata. L'immagine della telecamera è una scena dimostrativa.*
 
+**Layout** (immagini dimostrative): `overlay`, `sotto` e `popup` durante lo squillo, la cronologia degli squilli e l'editor visuale.
+
+| `overlay` | `sotto` |
+|---|---|
+| ![layout overlay](docs/images/card-overlay.png) | ![layout sotto](docs/images/card-below.png) |
+
+| `popup`: card compatta sopra, popup in diretta aperto | Cronologia | `compact_style: tile` |
+|---|---|---|
+| ![layout popup](docs/images/card-popup.png) | ![cronologia squilli](docs/images/card-history.png) | ![tile compatto](docs/images/card-compact-tile.png) |
+
 L'integrazione include una card per le dashboard e la carica da sola: non va aggiunta tra le
 Risorse. Si sceglie **Citofono Vimar** dall'elenco delle card (telecamera, nome, layout e
 cronologia hanno l'editor visuale; il resto resta in YAML) oppure si scrive a mano:
@@ -184,7 +209,8 @@ lock: lock.vimar_intercom_serratura
 last_ring: sensor.vimar_intercom_intercom_ultimo_squillo
 anchor: citofono   # "" = disattivato
 history: 8         # 0 = disattivato
-layout: overlay    # oppure "sotto"
+layout: overlay    # oppure "sotto" o "popup"
+compact_style: pillola   # solo layout "popup": la card compatta è una "pillola" o un "tile"
 ```
 
 Aprire la card non chiama mai la targa. Il video dal vivo parte solo durante lo squillo o una
@@ -235,8 +261,13 @@ squillo.
 sulla riga è il tasto della cronologia (in chiamata il tasto sta sul video): gli ultimi squilli
 (opzione `history`, predefinito 8) con foto, ora ed esito: *Risposto* (risposto da HA),
 *Messaggio di assenza*, *Nessuna risposta* (nessuna risposta da HA; anche uno squillo risposto
-dal Tab finisce qui). Un tocco sulla foto la apre in grande. L'integrazione tiene l'elenco in
-`squillo.json` accanto alle foto (ultimi 200 squilli). Senza cartella non c'è cronologia.
+dal Tab finisce qui). Un tocco sulla foto la apre in grande; uno squillo col clip ha il tasto
+play sulla miniatura e il tocco fa partire il video al posto della foto. La foto compare circa
+un secondo dopo lo squillo e dopo `snapshot_delay` la sostituisce quella migliore; il clip a
+squillo (o chiamata) finiti. L'integrazione tiene l'elenco in `squillo.json` accanto ai file
+(ultimi 200 squilli). Senza cartella non c'è cronologia. Per le notifiche, il sensore
+«Intercom Ultimo Squillo» porta `foto` / `clip` (percorsi su disco) e `foto_url` / `clip_url`
+(URL relativi, che l'app companion scarica col suo login) appena ogni file esiste.
 
 ---
 
@@ -336,6 +367,12 @@ serve un'automazione: imposta **Cartella foto squillo** nelle opzioni. Prova le 
 `vimar_intercom.simulate_ring`. Non puntare una `camera: platform: ffmpeg` su `/api/vimar_intercom/av`:
 blocca Home Assistant finché la sonda di ffmpeg non scade.
 
+**Scrypted (campanello Alexa, Echo Show), go2rtc, Frigate**: usa
+`/api/vimar_intercom/av?autocall=0&idle=image`, uno stream continuo che non chiama mai la targa
+(immagine di standby a riposo, video dal vivo durante squilli e chiamate; `?autocall=0` da solo
+risponde invece 503 a riposo), e inoltra l'`event` del campanello con un'automazione. Istruzioni
+in [`docs/EXTERNAL.md`](docs/EXTERNAL.md) (in inglese).
+
 In `docs/lovelace_example.yaml` c'è una card Lovelace di base con i pulsanti rispondi / apri porta /
 riaggancia. Il riquadro del video mostra il video dal vivo durante una chiamata o uno squillo. Per
 parlare usa la card del citofono qui sotto.
@@ -426,10 +463,19 @@ questo componente), ricontrolla che entrambe le patch siano ancora presenti (ved
   `/audio_ws` richiede autenticazione HA, e le sue azioni di debug (`command`, `probe`, `scan`,
   `register`, `reconnect`) sono riservate agli amministratori. Il payload del QR non viene loggato
   a livello INFO.
+- Parlare su `/audio_ws?voice_answer=1` mentre squilla risponde alla chiamata (RMS del microfono sopra soglia
+  per 200 ms): così rispondono Echo Show e HomeKit via Scrypted. Chi può rispondere lo decide l'opzione
+  **Risposta a voce** (`voice_answer`): `declared` (default, solo col flag), `off` (mai), `any` (qualsiasi
+  connessione con microfono: un tablet a muro col microfono rimasto aperto può rispondere da solo coi
+  rumori di casa). In ogni modo una connessione che era in chiamata non risponde finché non torna a
+  riposo. A riposo l'audio si butta.
+  Client esterni con URL firmato (`auth/sign_path`): metti `voice_answer=1` nel path *prima* di firmare;
+  aggiungerlo dopo dà 401, perché HA valida la query firmata. Oppure scegli l'opzione `any`.
 - Ultimi squilli per la card: `GET /api/vimar_intercom/rings` (elenco, `?limit=` fino a 50) e
-  `GET /api/vimar_intercom/rings/<nome>` (la foto) richiedono l'autenticazione HA (la card carica
-  le foto con percorsi firmati). Il secondo serve solo file `squillo_AAAAMMGG_HHMMSS_mmm.jpg` dentro
-  `snapshot_dir`, nient'altro; la cartella non viene mai esposta sotto `/local`.
+  `GET /api/vimar_intercom/rings/<nome>` (la foto o il clip, anche a pezzi con Range) richiedono
+  l'autenticazione HA (la card li carica con percorsi firmati). Il secondo serve solo file
+  `squillo_AAAAMMGG_HHMMSS[_mmm].jpg` / `.mp4` dentro `snapshot_dir`, nient'altro (nemmeno un
+  clip ancora in scrittura); la cartella non viene mai esposta sotto `/local`.
 - In modalità UDP locale i pacchetti SIP che non arrivano dal citofono vengono scartati: un altro
   dispositivo in LAN non può simulare uno squillo.
 - Nessuna dipendenza cloud obbligatoria in modalità UDP locale.

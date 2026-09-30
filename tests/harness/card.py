@@ -10,7 +10,7 @@ VideoDecoder (browser senza WebCodecs), `?badwc` ne mette uno che fallisce la
 configurazione (codec non supportato): in entrambi i casi la card deve tornare a /av.
 `?flakywc` ne mette uno che si rompe al 10° chunk (dati corrotti): la card resta sul
 canvas e riparte dal prossimo IDR.
-`?layout=sotto` passa `layout` in setConfig. `ha-form` è un finto minimo (label +
+`?layout=sotto` (o popup) passa `layout` in setConfig. `ha-form` è un finto minimo (label +
 input/select nativi, `value-changed` come quello vero) per provare l'editor visuale.
 """
 from __future__ import annotations
@@ -25,7 +25,7 @@ CARD_JS = Path(__file__).resolve().parents[2] / "custom_components" / "vimar_int
 PAGE = """<!doctype html><html><head><meta name="viewport" content="width=390"></head>
 <body><home-assistant></home-assistant><script>
 window.T = { av: [], avBytes: 0, live: 0, created: [], rx: 0, ws: 0, sent: 0, frames: [],
-             wsClosed: 0, calls: [], errors: [], gumDelay: 0, wcBroken: 0,
+             wsClosed: 0, calls: [], errors: [], gumDelay: 0, wcBroken: 0, gum: 0,
              wsOpenAt: 0, firstNalAt: 0, firstFrameAt: 0 };  // epoca in ms, del player corrente: latenza
 window.onerror = (m) => T.errors.push(String(m));
 window.addEventListener("unhandledrejection", (e) => T.errors.push("REJ " + e.reason));
@@ -56,6 +56,7 @@ if (location.search.includes("flakywc") && window.VideoDecoder) {  // si rompe a
 }
 if (window.AudioContext && navigator.mediaDevices) {  // microfono finto, con il tempo del permesso
   navigator.mediaDevices.getUserMedia = async () => {
+    T.gum++;  // conta le richieste vere di microfono (l'ascolto allo squillo non ne fa)
     await new Promise((r) => setTimeout(r, T.gumDelay));
     const ac = new AudioContext(), osc = ac.createOscillator(), dst = ac.createMediaStreamDestination();
     osc.connect(dst); osc.start();
@@ -108,26 +109,42 @@ window.WebSocket = class extends WS {
   send(b) { T.sent++; if (T.frames.length < 5 && b.byteLength) T.frames.push([new Uint8Array(b)[0], b.byteLength]); super.send(b); }
   close() { T.wsClosed++; super.close(); }
 };
-const mkHass = (status) => ({
+// Le impostazioni del citofono (stesso dispositivo della camera): `?ents=dnd,vm` ne tiene solo alcune, `?noadmin` toglie is_admin.
+const QS = new URLSearchParams(location.search), WANT = QS.get("ents")?.split(",");
+const SET = {
+  "switch.vimar_intercom_non_disturbare": { k: "dnd", state: "off", attributes: { friendly_name: "Non disturbare" } },
+  "switch.vimar_intercom_segreteria": { k: "vm", state: "on", attributes: { friendly_name: "Segreteria", modo: "Home Assistant" } },
+  "select.vimar_intercom_segreteria_ritardo": { k: "delay", state: "10", attributes: { friendly_name: "Segreteria · ritardo", options: ["5", "10", "15"] } },
+  "text.vimar_intercom_segreteria_testo_del_messaggio": { k: "text", state: "Non siamo in casa", attributes: { friendly_name: "Segreteria · testo del messaggio" } },
+  "select.vimar_intercom_segreteria_file_audio": { k: "file", state: "a.wav", attributes: { friendly_name: "Segreteria · file audio", options: ["a.wav", "b.wav"] } },
+};
+const setEnts = Object.entries(SET).filter(([, v]) => !WANT || WANT.includes(v.k));
+const mkHass = (status, lastRing = {}) => ({
+  user: { is_admin: !QS.has("noadmin") },
+  entities: Object.fromEntries([["camera.vimar_intercom_intercom", 0], ...setEnts].map(([id]) => [id, { entity_id: id, device_id: "dev1", platform: "vimar_intercom" }])),
   states: {
+    ...Object.fromEntries(setEnts.map(([id, v]) => [id, { state: v.state, attributes: v.attributes }])),
+    "camera.vimar_intercom_intercom": { state: "idle", attributes: { card_entities: Object.fromEntries(setEnts.map(([id, v]) => [v.k === "vm" ? "segreteria" : v.k, id])) } },
     "sensor.vimar_intercom_intercom_stato": { state: status },
-    "sensor.vimar_intercom_intercom_ultimo_squillo": { state: "unknown" },
+    "sensor.vimar_intercom_intercom_ultimo_squillo": { state: "unknown", attributes: lastRing },
     "lock.vimar_intercom_serratura": { state: "locked" },
+    "button.garage": { state: "unknown", attributes: { friendly_name: "Garage" } },
   },
-  callService: async (d, sv) => {
+  callService: async (d, sv, data) => {
     T.calls.push(d + "." + sv);
+    if (["switch", "select", "text"].includes(d)) { (T.settings ||= []).push([d, sv, data]); return { context: {} }; }
     const j = await (await fetch(`/svc/${d}/${sv}`, { method: "POST" })).json();
     if (d === "lock" && !j.ok) throw new Error(j.result);
     return { context: {}, response: j };
   },
-  callWS: async (m) => ({ path: m.path + "?authSig=x" }),
+  callWS: async (m) => ({ path: m.path + (m.path.includes("?") ? "&" : "?") + "authSig=x" }),  // come HA: firma anche la query
   callApi: async (method, path) => (await fetch("/api/" + path)).json(),
 });
 let last = "";
 setInterval(async () => {
   try {
-    const s = (await (await fetch("/state")).json()).status;
-    if (s !== last && window.card) { last = s; card.hass = mkHass(s); }
+    const j = await (await fetch("/state")).json(), s = JSON.stringify(j);
+    if (s !== last && window.card) { last = s; card.hass = mkHass(j.status, j.last_ring); }
   } catch (e) {}
 }, 100);
 document.querySelector("home-assistant").hass = mkHass("unknown");
@@ -135,8 +152,10 @@ document.querySelector("home-assistant").hass = mkHass("unknown");
 await import("/card.js");
 await customElements.whenDefined("vimar-intercom-card");
 const c = document.createElement("vimar-intercom-card");
-const layout = new URLSearchParams(location.search).get("layout");
-c.setConfig({ type: "custom:vimar-intercom-card", ...(layout && { layout }) });
+const qs = new URLSearchParams(location.search), layout = qs.get("layout");
+c.setConfig({ type: "custom:vimar-intercom-card", ...(layout && { layout }), ...(qs.get("compact") && { compact_style: qs.get("compact") }),
+              ...(qs.has("listen_on_ring") && { listen_on_ring: true }),
+              ...(qs.get("shortcuts") && { shortcuts: qs.get("shortcuts").split(",") }) });
 document.body.appendChild(c);
 window.card = c;
 window.tap = (id) => c.shadowRoot.getElementById(id).click();
@@ -147,7 +166,11 @@ window.info = () => ({ pill: c.shadowRoot.querySelector(".pill").textContent,
     c.shadowRoot.getElementById("video").firstElementChild),
   player: c._player && { frames: c._player.frames, resets: c._player.resets, wait: c._player._wait || 0,
                          ws: T.wsOpenAt, nal: T.firstNalAt, frame: T.firstFrameAt },
-  audio: !c._audio && !c._ws ? "off" : "on" });
+  audio: !c._audio && !c._ws ? "off" : "on",
+  listen: !!c._listenWs,
+  pop: !!c._pop.open,
+  mute: { hidden: c.shadowRoot.getElementById("mute").hidden, muted: !!c._muted,
+          audible: (!!c._ws || !!c._listenWs) && !c._muted, gain: (c._talkGain || c._listenGain)?.gain.value } });
 </script></body></html>"""
 
 
@@ -160,11 +183,15 @@ def engine(request):
 class Card:
     """La pagina della card aperta in `engine` sul server di `rig` (Rig(http=True))."""
 
-    def __init__(self, rig, engine: str, insecure=False, webcodecs=True, badwc=False, flakywc=False, layout=None):
+    def __init__(self, rig, engine: str, insecure=False, webcodecs=True, badwc=False, flakywc=False, layout=None,
+                 listen_on_ring=False, shortcuts=None, compact=None, query=""):
         self.rig, self.engine = rig, engine
         self.query = "?" + "&".join(f for f, on in (("insecure", insecure), ("nowc", not webcodecs),
                                                     ("badwc", badwc), ("flakywc", flakywc),
-                                                    (f"layout={layout}", layout)) if on)
+                                                    (f"layout={layout}", layout),
+                                                    ("listen_on_ring", listen_on_ring),
+                                                    (f"shortcuts={shortcuts}", shortcuts),
+                                                    (f"compact={compact}", compact)) if on) + query
 
     async def __aenter__(self):
         from playwright.async_api import async_playwright
@@ -180,9 +207,11 @@ class Card:
         await self.open()
         return self
 
-    async def open(self):
-        """Apre (o riapre: cambio dashboard, ricarica) la pagina."""
-        await self.page.goto(self.rig.base + "/" + self.query)
+    async def open(self, hash=None):
+        """Apre (o riapre: cambio dashboard, ricarica) la pagina. `hash`: come il link
+        .../camera#citofono di una notifica."""
+        url = self.rig.base + "/" + self.query + (f"#{hash}" if hash else "")
+        await self.page.goto(url)
         await self.page.wait_for_function("window.card && card.shadowRoot && window.info")
 
     async def __aexit__(self, *exc):

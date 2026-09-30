@@ -80,6 +80,7 @@
           "local_proxy": "Intercom IP address",
           "use_local_udp": "Use local SIP UDP",
           "local_udp_port": "Local UDP port",
+          "voice_answer": "Voice answer (mic on /audio_ws)",
           "media_enc": "Media encryption (SRTP)",
           "actuators": "Actuators (JSON)",
           "sga_target": "SGA (voicemail/DND SIP id)",
@@ -88,11 +89,18 @@
           "internal_panel_target": "Internal panel (SIP id for “Chiama Casa”)",
           "door_target": "Entrance panel that opens the door",
           "away_message_file": "Message if nobody answers (audio file)",
-          "away_message_delay": "After how many seconds of ringing (0 = never)",
+          "away_message_text": "Message if nobody answers (text, read by TTS)",
+          "away_message_tts": "Voice (TTS entity)",
+          "away_message_delay": "After how many seconds of ringing (used only if the Tab does not expose the voicemail delay; 0 = 20 s)",
           "snapshot_dir": "Ring snapshot folder",
-          "snapshot_delay": "Seconds after the ring for the snapshot"
+          "snapshot_delay": "Seconds for the better snapshot (0 = first only)",
+          "view_keepalive": "Seconds of silence for “Vedi esterno” (0 = none)",
+          "allowed_users": "Users allowed to see rings and live media (empty = everyone)",
+          "ring_webhook_url": "Ring-start webhook (URL)",
+          "ring_end_webhook_url": "Ring-end webhook (URL)"
         },
         "data_description": {
+          "voice_answer": "Who can answer the call by talking while it rings. Declared only: only connections using /audio_ws?voice_answer=1 (Echo Show, HomeKit via Scrypted). Never: talking never answers. Anyone: any connection with a microphone can answer; beware, a wall tablet whose microphone was left open can answer by itself with household noise.",
           "media_enc": "Automatic: follows what the system declares in its GET_INIT_STATUS reply (\"media_enc\": \"srtp\" on a cloud Tab 5S Up 40515); when the system does not declare it (short reply, as on the 40507) media stays plain. On/Off force it. If the camera stays black or the call fails with 488, try On.",
           "actuators": "JSON list of objects name, msg, target, icon. icon: door|light|switch. target \"AUTO\" uses the panel that opens the door. Empty = no buttons.",
           "sga_target": "Target for VOICEMAIL;/DND;, and for the door-open command when “Entrance panel that opens the door” is empty. Empty = historical default (55001). Change it only if your system uses a different SGA (SYSTEM.MAGIC_APT_INTERCOM in rubrica.db).",
@@ -100,10 +108,16 @@
           "camera_target": "Panel called by the camera, by “Chiama” and by “Chiama Video (esterno)”: the PHONEBOOK row with TYPE='PE' in rubrica.db (the phonebook import fills it in). Empty = historical default (55100). This is not the SGA.",
           "internal_panel_target": "Target of the “Chiama Casa (interno)” button. The phonebook does not say which one it is: enter it by hand. Empty = historical default (55002).",
           "door_target": "Where the door-open command goes: the GID_PE of the door actuator in the phonebook (on a 2FV2 it is not the SGA). Filled in by importing or downloading the phonebook. Empty = the door actuator's panel if actuators were imported, otherwise the SGA.",
-          "away_message_file": "Audio file (mp3, wav...) played to the visitor when nobody answers, e.g. /config/media/citofono/messaggio.mp3. Empty = off.",
-          "away_message_delay": "If it is still ringing after this many seconds (nobody answered from the panel, phone or HA), the integration answers, plays the file and hangs up. Keep it shorter than the Tab's own voicemail, if enabled. 0 = never.",
-          "snapshot_dir": "Folder where the visitor's snapshot is saved (squillo_YYYYMMDD_HHMMSS_mmm.jpg and ultimo_squillo.jpg), e.g. /config/media/citofono. Must be in allowlist_external_dirs or a media folder. Empty = do not save.",
-          "snapshot_delay": "Wait after the ring before the snapshot: the preview must start and the camera adjust its exposure. 3 s suits the Tab 5S Up 40515; increase it if snapshots come out dark."
+          "away_message_file": "Audio file (mp3, wav...) played to the visitor when nobody answers, e.g. /config/media/citofono/messaggio.mp3 (or pick the file on the device page: upload it from Media > Local media > citofono/messaggi). Empty = off.",
+          "away_message_text": "Text read to the visitor by Home Assistant's text-to-speech when the file field is empty (the file takes precedence). In HA's language, max 30 s of audio. Empty = off.",
+          "away_message_tts": "TTS entity that reads the text (e.g. tts.google_translate_en_com, tts.piper). Empty = HA's default TTS engine. If synthesis fails the doorbell keeps ringing as usual.",
+          "away_message_delay": "If it is still ringing after this many seconds (nobody answered from the panel, phone or HA), the integration answers, plays the file and hangs up. If the Tab exposes the delay (Segreteria · ritardo) that one is used; this value only matters when the Tab does not expose it. 0 = 20 s.",
+          "snapshot_dir": "Folder where the visitor's snapshot (squillo_YYYYMMDD_HHMMSS_mmm.jpg and ultimo_squillo.jpg) and the ring clip (.mp4, up to 60 s) are saved, e.g. /config/media/citofono. Must be in allowlist_external_dirs or a media folder. Empty = do not save.",
+          "snapshot_delay": "The first snapshot is saved as soon as the first frame arrives (~1 s after the ring); after this many seconds it is replaced by a frame with the exposure settled (the panel's first one is dark). 3 s suits the Tab 5S Up 40515; increase it if snapshots come out dark, 0 = keep the first.",
+          "view_keepalive": "While viewing the outside the integration sends audio silence; without it, over the cloud the panel closes the view after ~10 s. It stops this many seconds after the view starts (the view then ends by itself). On the 2-wire plant in local mode the silence keeps the apartment busy: the default is 0 in local mode and 120 over the cloud; 0 = no silence (on the 2-wire use 0 or 30).",
+          "allowed_users": "Limits the card, the ring history (photos and clips) and /audio_ws to these Home Assistant users. Admins always. Empty = every logged-in user. It does NOT limit the camera entity or /av from the local network: anyone who can open the camera sees (and hears) the stream; and if the photo folder is under an HA media directory, photos and clips show up in the media browser for every user.",
+          "ring_webhook_url": "GET (fire-and-forget) sent when a ring starts, e.g. to turn on a dummy switch (Scrypted Dummy Switch) linked to a Custom Doorbell Button. A failure is only logged as a warning and never stops the ring. Empty = off.",
+          "ring_end_webhook_url": "GET (fire-and-forget) sent when the ring ends, answered, cancelled or timed out: same idea as above, to turn the switch off. Empty = off."
         }
       },
       "import_rubrica": {
@@ -150,10 +164,12 @@
       "rubrica_import_failed": "Import failed. See description above for details.",
       "rubrica_no_actuators": "No actuators found for the specified GID. See description above.",
       "invalid_target": "Invalid value: digits only (e.g. 55001).",
+      "invalid_url": "Invalid URL: it must start with http:// or https:// and have a host.",
       "no_local_proxy": "The intercom address is missing: set it under \"Network settings and actuators\".",
       "rest_auth_failed": "The intercom rejected the SIP credentials, or does not expose this API. Note: it answers 401 in both cases.",
       "rest_unavailable": "The intercom is not reachable over HTTP on the local network. If the system only works through the cloud, use the file import instead.",
       "file_not_allowed": "File outside the folders Home Assistant may read: add its folder to allowlist_external_dirs or use a media folder.",
+      "text_too_long": "Text too long: 255 characters at most.",
       "file_not_found": "File not found: use the full path, e.g. /config/media/citofono/messaggio.mp3.",
       "path_not_allowed": "Home Assistant cannot write to this folder: add it to allowlist_external_dirs or use a media folder.",
       "path_public": "Public folder: /config/www is served on /local without login. Use e.g. /config/media/citofono.",
@@ -211,6 +227,13 @@
         "name": "Last Missed Call"
       }
     },
+    "select": {
+      "away_file": {
+        "state": {
+          "none": "None (use the text)"
+        }
+      }
+    },
     "switch": {
       "segreteria": {
         "name": "Answering machine"
@@ -256,6 +279,10 @@
     "answer": {
       "name": "Answer",
       "description": "Answer an incoming call."
+    },
+    "decline": {
+      "name": "Decline",
+      "description": "Decline the incoming call (603): the whole house stops ringing."
     },
     "simulate_ring": {
       "name": "Test ring",
@@ -345,6 +372,13 @@
     }
   },
   "selector": {
+    "voice_answer": {
+      "options": {
+        "declared": "Declared only (?voice_answer=1)",
+        "off": "Never",
+        "any": "Anyone with a microphone"
+      }
+    },
     "media_enc": {
       "options": {
         "auto": "Automatic (from the system)",
