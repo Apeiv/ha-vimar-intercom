@@ -4,7 +4,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [semver](ht
 Newest entries on top. **Entries are written in English from 1.0.1 onwards**; earlier ones are in
 Italian and are kept as they were written.
 
-## [Unreleased]
+## [1.0.15] - 2026-09-30
 
 ### Changed
 
@@ -165,7 +165,6 @@ Setup and configuration:
 - Entries from the m4r1k fork keep working: `sip_cloud_domain` is read as the cloud domain, and a
   legacy `device_id` becomes both device identifiers.
 - HA1 is always recomputed from the password on the domain in use.
-- Only one config entry is allowed.
 - The options form no longer pre-fills `camera_target` with 55100: saved once, it counted as a
   user choice and the panel learned from the last ring was never used. Empty stays empty.
 - The SIP test in the options uses the local domain when the plant has one, as setup does.
