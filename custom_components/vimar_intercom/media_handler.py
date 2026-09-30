@@ -155,8 +155,6 @@ class RTPAudioProtocol(asyncio.DatagramProtocol):
         self.srtp_tx: SRTPContext | None = None
         # Voce in uscita: μ-law in attesa del pacer (_tx_loop, 160 B ogni 20 ms).
         self.tx_buf = bytearray()
-        self.tx_primed = False  # voice resumes only with _TX_PREBUFFER queued
-        self.tx_held = 0        # bytes queued at the last tick while not primed
         self.tx_enabled = False   # False durante l'anteprima dello squillo
         self.tx_count = 0
         # Forward decrypted RTP to the AV ffmpeg, only while it's running.
@@ -848,8 +846,6 @@ async def setup_media(remote_sdp, local_crypto_key=None, local_video_crypto_key=
             _LOGGER.warning("La targa non ha accettato PCMU (m=audio %s): la voce non passerà",
                             " ".join(fmts))
         audio_proto.tx_buf.clear()
-        audio_proto.tx_primed = False
-        audio_proto.tx_held = 0
         audio_proto.tx_count = 0
         # La targa dice sendonly/inactive: non vuole ricevere la nostra voce.
         audio_proto.tx_enabled = not early and audio.get("dir") not in ("sendonly", "inactive")
@@ -955,8 +951,6 @@ async def stop_media():
     if audio_proto:
         audio_proto.tx_enabled = False
         audio_proto.tx_buf.clear()
-        audio_proto.tx_primed = False
-        audio_proto.tx_held = 0
         audio_proto.remote_addr = None
         audio_proto.pkt_count = 0
         audio_proto.srtp_rx = None
@@ -997,14 +991,20 @@ def close_transports():
 
 # Cap on queued voice. The pacer sends in real time, so everything queued is
 # delay the person at the panel hears, and it never shrinks back: after one
-# network hiccup a 1 s queue kept the whole rest of the call 1 s late. 200 ms
-# covers the browser's 43-46 ms bursts and the HomeKit decoder's jitter; the
-# oldest audio is dropped first.
-_TX_MAX = 1600  # 200 ms of μ-law
-# After an underrun (nothing queued for a packet) voice resumes only once two
-# packets are queued: the next burst from the browser or HomeKit then plays
-# out whole instead of stuttering one packet of voice, one of silence.
-_TX_PREBUFFER = 320  # 40 ms of μ-law
+# network hiccup a 1 s queue kept the whole rest of the call 1 s late. 80 ms
+# (four packets) holds one of the browser's 43-46 ms bursts plus what is
+# left of the previous one; the oldest audio is dropped first. A frame goes
+# out as soon as 160 bytes are queued.
+#
+# Tried and rejected: a 200 ms cap with a 40 ms pre-buffer after each
+# underrun. The pre-buffer adds 20-40 ms at the start of every talk spurt,
+# and the larger cap lets a standing queue of up to 200 ms build when the
+# phone sends in bursts, which never drains because we send in real time.
+# What it buys is smoother input, but the relay and the panel drop packets
+# anyway (measured while working on the video re-encode), so little of it
+# can be heard. Latency matters more here than an occasional silence frame
+# on an underrun.
+_TX_MAX = 640  # 80 ms of μ-law
 
 # 20 ms di silenzio PCMU: keepalive quando non c'è voce in coda. La targa
 # chiude un "Vedi esterno" se non riceve RTP per ~10 s, anche se il video
@@ -1071,23 +1071,13 @@ async def _tx_loop():
                 continue
             if t_view is None:
                 t_view = loop.time()
-            if not ap.tx_primed:
-                queued = len(ap.tx_buf)
-                # The pre-buffer is there, or one whole packet has waited a
-                # tick with nothing after it (the end of a phrase): send it,
-                # rather than hold it until the next burst or forever.
-                if queued >= _TX_PREBUFFER or (queued >= 160 and queued == ap.tx_held):
-                    ap.tx_primed = True
-                ap.tx_held = queued
-            if ap.tx_primed and len(ap.tx_buf) >= 160:
+            if len(ap.tx_buf) >= 160:
                 frame = bytes(ap.tx_buf[:160])
                 del ap.tx_buf[:160]
             else:
                 if _silence_limit is not None and loop.time() - t_view >= _silence_limit:
                     continue  # solo la vista: 0 = mai silenzio; poi si chiude da sola, come prima
                 frame = SILENCE_ULAW
-                ap.tx_primed = False  # underrun: wait for the pre-buffer again
-                ap.tx_held = len(ap.tx_buf)
             ap.send_rtp(frame)
     except asyncio.CancelledError:
         pass

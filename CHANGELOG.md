@@ -49,8 +49,9 @@ Italian and are kept as they were written.
 
 Call and media:
 
-- The talk queue is capped at 200 ms, oldest audio dropped first: a network hiccup no longer
-  leaves the rest of the call late. After an underrun voice resumes once two packets are queued.
+- The talk queue is capped at 80 ms, oldest audio dropped first: a network hiccup no longer
+  leaves the rest of the call late. There is no pre-buffer: a queued packet goes out on the next
+  tick.
 - The SDP answer mirrors the offer's encryption per media line: RTP/SAVP with the crypto tag and
   suite the offer chose for that line (AES_CM_128_HMAC_SHA1_80 or _32), RTP/AVP for a plain line.
   A line whose suites are all unsupported is refused. Our own offers still follow the plant

@@ -44,8 +44,11 @@ def _run_tx(seconds: float):
     asyncio.run(go())
 
 
-def test_blocchi_del_browser_diventano_pacchetti_da_20ms(audio):
+def test_blocchi_del_browser_diventano_pacchetti_da_20ms(audio, monkeypatch):
     """La card manda 341 campioni (48 kHz / 2048): prima un pacchetto da 341 B."""
+    # Three blocks queued at once are 128 ms, over the 80 ms talk cap: this
+    # test is about packetization, so the cap is out of the way.
+    monkeypatch.setattr(mh, "_TX_MAX", 4096)
     for _ in range(3):
         mh.send_audio(b"\x10\x00" * 341)
     _run_tx(0.3)
@@ -199,25 +202,14 @@ def test_setup_media_uses_the_negotiated_suite_on_each_line(audio, monkeypatch):
     assert asyncio.run(go()) == (4, 4, None)
 
 
-def test_voice_resumes_only_with_two_packets_queued(audio):
-    """One packet of voice alone after an underrun would play as voice, silence,
-    voice: if a second arrives within a tick, both go out back to back."""
-    mh.send_audio(b"\x10\x00" * 160)          # one packet: not enough yet
-    audio.tx_held = 0                          # ...and it has not waited a tick
-    mh.send_audio(b"\x10\x00" * 160)          # the second arrives
-    _run_tx(0.1)
-    voice = [p for p in audio.transport.out if p[12:] != mh.SILENCE_ULAW]
-    assert len(voice) == 2 and audio.transport.out[:2] == voice
-
-
-def test_a_lone_last_packet_is_sent_after_one_tick(audio):
-    """The end of a phrase: one packet queued and nothing after it. It used to
-    wait for a second packet that never came, and the phrase lost its end."""
+def test_a_lone_packet_goes_out_on_the_first_tick(audio):
+    """No pre-buffer: one packet queued is sent at once, not held for a
+    second one (that cost 20-40 ms at the start of every talk spurt)."""
     mh.send_audio(b"\x10\x00" * 160)
     _run_tx(0.1)
     out = audio.transport.out
     voice = [i for i, p in enumerate(out) if p[12:] != mh.SILENCE_ULAW]
-    assert len(voice) == 1 and voice[0] >= 1, "it waited one tick, then went"
+    assert voice == [0]
     assert len(audio.tx_buf) == 0
 
 
