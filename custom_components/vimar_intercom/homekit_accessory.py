@@ -105,6 +105,13 @@ CALL_WAIT = 15.0
 VIDEO_WAIT = 2.0
 # For a complete keyframe in memory before opening direct video.
 KEYFRAME_WAIT = 2.0
+# iOS asks for the notification's picture as the ring goes out, about a
+# second before the first frame is decoded: during a ring or a call the
+# snapshot waits this long for it instead of sending the black placeholder.
+SNAPSHOT_WAIT = 3.0
+# How often the latest frame of a call or ring is copied for the Home tile:
+# the frame grabber drops its picture when the call ends.
+FRAME_KEEP_EVERY = 1.0
 
 # Resolutions offered to the phone. The panel sends 320x240 and direct video is
 # copied as is: the list only lets iOS pick something.
@@ -377,9 +384,17 @@ class VimarDoorbell(Camera):
         """The latest frame of this call or ring, else the last one we saw.
 
         The frame grabber drops its image when the call ends; the Home tile
-        should keep showing who was at the door.
+        should keep showing who was at the door (_keep_last_frame).
         """
         frame = hkm.last_frame()
+        waited = 0.0
+        while not frame and waited < SNAPSHOT_WAIT and (sip.ringing() or self._hub.in_call):
+            await asyncio.sleep(0.1)
+            waited += 0.1
+            frame = hkm.last_frame()
+        if waited:
+            _LOGGER.debug("HomeKit: snapshot waited %.1f s for the first frame (%s)",
+                          waited, "got it" if frame else "none")
         if frame:
             self._last_frame = frame
         elif self._last_frame is None and not self._photo_read and self._hass is not None:
@@ -388,6 +403,19 @@ class VimarDoorbell(Camera):
             self._photo_read = True
             self._last_frame = await self._hass.async_add_executor_job(hkm.last_ring_photo)
         return self._last_frame or hkm.IDLE_IMAGE
+
+    async def _keep_last_frame(self) -> None:
+        """Copy the latest live frame, so the tile outlives the call.
+
+        Snapshots are rarely asked for while a view is open, and the frame
+        grabber drops its picture when the call ends: without this the tile
+        went black once the Home app refreshed it after a view.
+        """
+        while not self._closed:
+            frame = hkm.last_frame()
+            if frame:
+                self._last_frame = frame
+            await asyncio.sleep(FRAME_KEEP_EVERY)
 
     # ── streaming session ──
 
@@ -1102,6 +1130,7 @@ async def async_setup_homekit(hass: HomeAssistant, entry: ConfigEntry, hub):
     # Only now: a ring or the end of a call reaches an accessory that is up.
     hub.register_ring_callback(acc.ring)
     unregister_video_end = hub.register_video_end_callback(acc.on_video_ended)
+    acc._spawn(acc._keep_last_frame())
     _LOGGER.info("HomeKit: video doorbell published on %s:%d (%s, video %s, answer on %s)",
                  address, HOMEKIT_PORT, "paired" if driver.state.paired else "not paired",
                  "re-encoded" if acc._smooth else "direct",

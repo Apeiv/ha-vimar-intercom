@@ -1332,6 +1332,11 @@ def setup_rig(tmp_path, monkeypatch, notes):
         async def _stop_transcoder(self):
             order.append(("transcoder stopped", self._closed))
 
+        _spawn = hk.VimarDoorbell._spawn
+
+        async def _keep_last_frame(self):
+            await asyncio.Event().wait()   # until HomeKit stops and cancels it
+
     async def source_ip(_hass):
         return "127.0.0.1"
 
@@ -1409,6 +1414,57 @@ def test_the_tile_reads_the_ring_photo_once_after_a_restart(acc, monkeypatch):
     assert asyncio.run(a.async_get_snapshot({})) == b"photo"
     assert asyncio.run(a.async_get_snapshot({})) == b"photo"
     assert reads == [hk.hkm.last_ring_photo], "read once, then kept"
+
+
+def test_the_ring_snapshot_waits_for_the_first_frame(acc, monkeypatch):
+    """iOS asks for the notification's picture as the ring goes out, before
+    the first frame is decoded: it used to get the black placeholder."""
+    a, _procs, _gate = acc
+    _ringing(monkeypatch, a)
+    frame = {"jpeg": None}
+    monkeypatch.setattr(hk.hkm, "last_frame", lambda: frame["jpeg"])
+
+    async def scenario():
+        snap = asyncio.create_task(a.async_get_snapshot({}))
+        await asyncio.sleep(0.35)
+        assert not snap.done(), "it waits"
+        frame["jpeg"] = b"first frame"
+        return await asyncio.wait_for(snap, 1)
+    assert asyncio.run(scenario()) == b"first frame"
+
+
+def test_without_a_ring_the_snapshot_does_not_wait(acc, monkeypatch):
+    a, _procs, _gate = acc
+    monkeypatch.setattr(hk.sip, "ringing", lambda: False)
+    a._hub.in_call = False
+    monkeypatch.setattr(hk.hkm, "last_frame", lambda: None)
+    a._last_frame = b"earlier"
+
+    async def scenario():
+        return await asyncio.wait_for(a.async_get_snapshot({}), 0.05)
+    assert asyncio.run(scenario()) == b"earlier"
+
+
+def test_the_tile_keeps_the_calls_last_frame_after_it_ends(acc, monkeypatch):
+    """Nobody asked for a snapshot during the view; once the call ended, the
+    Home app's refresh got the black placeholder."""
+    a, _procs, _gate = acc
+    monkeypatch.setattr(hk.sip, "ringing", lambda: False)
+    a._hub.in_call = False
+    a._photo_read = True
+    frame = {"jpeg": b"the courier"}
+    monkeypatch.setattr(hk.hkm, "last_frame", lambda: frame["jpeg"])
+    monkeypatch.setattr(hk, "FRAME_KEEP_EVERY", 0.01)
+
+    async def scenario():
+        keeper = asyncio.create_task(a._keep_last_frame())
+        await asyncio.sleep(0.05)
+        frame["jpeg"] = None                     # the call ended
+        await asyncio.sleep(0.05)
+        a._closed = True
+        await keeper
+        return await a.async_get_snapshot({})
+    assert asyncio.run(scenario()) == b"the courier"
 
 
 def test_unloading_closes_the_open_views(acc):
