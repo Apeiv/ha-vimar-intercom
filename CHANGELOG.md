@@ -12,6 +12,10 @@ Italian and are kept as they were written.
   view waits for the panel to answer our BYE (at most 6 s) before calling it again, and a view's
   call that the panel leaves unanswered is cancelled after 8 s and tried once more. Cloud plants
   are unchanged: the relay never answers a BYE, and the view still waits only for the local end.
+- The card's Fill/Fit button (#42). It is hidden while the video and its box have the same shape
+  (a 4:3 panel in the default 4:3 box), where filling and fitting draw the same picture and the
+  button seemed to do nothing. When the card falls back to Home Assistant's picture card (no
+  WebCodecs, or the card's player failed), the choice now reaches it as `fit_mode`.
 
 ## [1.0.16] - 2026-09-30
 
