@@ -105,6 +105,33 @@ def test_srtp_audio_that_fails_authentication_is_dropped_and_logged_once(caplog)
     assert logged == {"SRTP audio auth failed from ('192.0.2.1', 4000) (172B)"}
 
 
+def _srtp_pair():
+    import base64
+    import os
+
+    from custom_components.vimar_intercom.srtp import SRTPContext
+
+    key = base64.b64encode(os.urandom(30)).decode()
+    return SRTPContext(key), SRTPContext(key)
+
+
+def test_srtp_audio_is_decrypted_into_voice():
+    tx, rx = _srtp_pair()
+    ap = _audio()
+    ap.srtp_rx = rx
+    ap.datagram_received(tx.protect(_rtp(b"\x00" * 160)), ("198.51.100.7", 5000))
+    assert ap.audio_buffer.get_nowait() == mh.ulaw_decode(b"\x00" * 160)
+
+
+def test_srtp_video_is_decrypted_and_counted():
+    tx, rx = _srtp_pair()
+    vp = _video()
+    nals = _collect(vp)
+    vp.srtp_rx = rx
+    vp.datagram_received(tx.protect(_rtp(SPS, pt=96)), ("198.51.100.7", 5002))
+    assert nals == [SPS] and vp._srtp_ok == 1
+
+
 def test_audio_is_forwarded_to_the_av_ffmpeg_while_it_runs():
     ap = _audio()
     ap.ffmpeg_av_sock = _Sock()
