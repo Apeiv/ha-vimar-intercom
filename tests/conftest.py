@@ -187,11 +187,11 @@ def _fresh_sip_state(monkeypatch):
         yield
         return
     monkeypatch.setattr(sip, "DEVICES", DeviceInventory())
-    for name in ("reader", "writer", "_udp_sock", "_state_change_callback"):
+    for name in ("reader", "writer", "_udp_sock", "_state_change_callback", "MY_IP"):
         monkeypatch.setattr(sip, name, getattr(sip, name))
     yield
     # Nothing to close or notify: those references belong to the test.
-    for name in ("reader", "writer", "_udp_sock", "_state_change_callback"):
+    for name in ("reader", "writer", "_udp_sock", "_state_change_callback", "MY_IP"):
         setattr(sip, name, None)
     sip.reset_state()
 
