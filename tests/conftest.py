@@ -103,6 +103,10 @@ def _stub_ha() -> None:
     ha.core.HomeAssistant = _Any
     ha.core.ServiceCall = _Any
     ha.core.callback = lambda f: f
+    ha.core.SupportsResponse = types.SimpleNamespace(NONE="none", OPTIONAL="optional", ONLY="only")
+    # Real exception classes: code under test raises them and tests expect them.
+    for exc in ("HomeAssistantError", "Unauthorized", "ConfigEntryNotReady"):
+        setattr(ha.exceptions, exc, type(exc, (Exception,), {}))
     ha.config_entries.ConfigEntry = _Any
     ha.config_entries.ConfigFlow = _ConfigFlow
     ha.config_entries.OptionsFlow = _Any
@@ -132,7 +136,8 @@ def _stub_ha() -> None:
     ha.components.camera.CameraEntityFeature = types.SimpleNamespace(STREAM=2)
     # DeviceInfo is a TypedDict in Home Assistant: a plain dict behaves the same.
     ha.helpers.device_registry.DeviceInfo = dict
-    _mod("voluptuous", Schema=_Any, Required=_Any, Optional=_Any, All=_Any, Coerce=_Any, In=_Any, Range=_Any)
+    _mod("voluptuous", Schema=_Any, Required=_Any, Optional=_Any, All=_Any, Coerce=_Any, In=_Any, Range=_Any,
+         Match=_Any, Invalid=type("Invalid", (Exception,), {}))
 
 
 _stub_ha()

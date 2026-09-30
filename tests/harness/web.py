@@ -60,12 +60,25 @@ class _Stream:
 
 
 class _Response:
-    def __init__(self, status=200, text=""):
-        self.status, self.text = status, text
+    def __init__(self, status=200, text="", content_type=None):
+        self.status, self.text, self.content_type = status, text, content_type
+
+
+class _JSONResponse(_Response):
+    def __init__(self, data):
+        super().__init__(text=json.dumps(data), content_type="application/json")
+        self.data = data
+
+
+class _FileResponse(_Response):
+    def __init__(self, path):
+        super().__init__()
+        self.path = path
 
 
 WEB = types.SimpleNamespace(
     WebSocketResponse=_WS, StreamResponse=_Stream, Response=_Response,
+    json_response=_JSONResponse, FileResponse=_FileResponse,
     WSMsgType=types.SimpleNamespace(TEXT="text", BINARY="binary", ERROR="error", CLOSE="close"))
 
 
