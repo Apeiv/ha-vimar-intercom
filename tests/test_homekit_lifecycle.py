@@ -363,6 +363,10 @@ def _open_view(a, gate, info):
         gate["open"] = asyncio.Event()
         gate["open"].set()
         assert await a.start_stream(info, {})
+        # Answer on open runs beside the opening: let it land before
+        # asyncio.run cancels whatever is still pending.
+        answers = [t for t in a._tasks if "_answer_for" in t.get_coro().__qualname__]
+        await asyncio.gather(*answers)
     asyncio.run(scenario())
 
 
@@ -770,8 +774,11 @@ def test_the_stream_start_logs_its_timeline(acc, monkeypatch, caplog):
     assert len(started) == 1
     line = started[0]
     assert " ms (stream_opened " in line
-    for stage in ("call", "answer", "keyframe", "video begin", "ffmpeg"):
+    for stage in ("call", "keyframe", "video begin", "ffmpeg"):
         assert f"{stage} " in line and stage in info["timeline"], stage
+    # The answer runs beside the opening, so it may land before or after
+    # this line (test_answer_on_open_does_not_hold_the_view checks its mark).
+    assert a._hub.log.count("answer") == 1
     order = list(info["timeline"])
     assert order.index("call") < order.index("keyframe") < order.index("ffmpeg")
     marks = [r.getMessage() for r in caplog.records
