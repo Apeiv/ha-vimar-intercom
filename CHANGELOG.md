@@ -4,7 +4,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [semver](ht
 Newest entries on top. **Entries are written in English from 1.0.1 onwards**; earlier ones are in
 Italian and are kept as they were written.
 
-## [1.0.14] - Unreleased
+## [1.0.14] - 2026-09-30
 
 ### Added
 
