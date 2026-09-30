@@ -46,6 +46,7 @@ class FakeBridge:
     def __init__(self, *_a, on_first_voice=None):
         self.stopped = 0
         self.on_first_voice = on_first_voice
+        self.on_first_audio = None
         FakeBridge.instances.append(self)
 
     async def start(self):
@@ -401,6 +402,34 @@ def test_answer_on_open_answers_as_the_view_opens(acc, monkeypatch):
     assert a._hub.log.count("answer") == 1
 
 
+def test_answer_on_open_does_not_hold_the_view(acc, monkeypatch):
+    """The answer is a round trip through the relay: the view goes on opening
+    meanwhile, and the answer still lands."""
+    a, procs, gate = acc
+    _ringing(monkeypatch, a)
+    a._hub.video_active = True
+    a._answer_on_open = True
+    release = asyncio.Event()
+    answer = a._hub.async_answer
+
+    async def slow_answer():
+        await release.wait()
+        return await answer()
+    monkeypatch.setattr(a._hub, "async_answer", slow_answer)
+    info = session()
+
+    async def scenario():
+        gate["open"] = asyncio.Event()
+        gate["open"].set()
+        assert await asyncio.wait_for(a.start_stream(info, {}), 2)
+        assert "answer" not in a._hub.log, "the view opened first"
+        release.set()
+        await asyncio.sleep(0.01)
+
+    asyncio.run(scenario())
+    assert a._hub.log.count("answer") == 1 and "answer" in info["timeline"]
+
+
 def test_closing_the_last_view_of_an_answered_ring_hangs_up(acc, monkeypatch):
     """The Home app has no hang-up button: closing the view ends the call."""
     a, procs, gate = acc
@@ -750,6 +779,12 @@ def test_the_stream_start_logs_its_timeline(acc, monkeypatch, caplog):
     assert any("timeline ffmpeg +" in m for m in marks)
     FakeBridge.instances[0].on_first_voice()
     assert "first voice" in info["timeline"]
+    caplog.clear()
+    with caplog.at_level("INFO", logger=hk.__name__):
+        FakeBridge.instances[0].on_first_audio()
+    assert "first audio" in info["timeline"]
+    assert any("first audio to the phone" in r.getMessage() and "stream_opened " in r.getMessage()
+               for r in caplog.records if r.levelname == "INFO")
     _close(a, info)
 
 

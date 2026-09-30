@@ -266,10 +266,23 @@ class VimarDoorbell(Camera):
             # found nothing to hang up, so it is done here.
             await self._hang_up_if_last()
 
+    async def _answer_for(self, session_info, why: str) -> None:
+        await self._answer(why)
+        if self._answered:
+            _mark(session_info, "answer")
+
     def _live_sessions(self) -> bool:
         """A view is open, or opening, and not closing."""
         return any(("proc" in i or i.get("starting")) and not i.get("stopping")
                    for i in self.sessions.values())
+
+    def _first_audio(self, session_info) -> None:
+        # The stage to compare with the VIEW app: the street is audible on
+        # the phone. It usually comes after "stream started", so it logs the
+        # timeline so far on its own line.
+        _mark(session_info, "first audio")
+        _LOGGER.info("HomeKit: first audio to the phone (session %s): %s",
+                     session_info.get("id"), _timeline_summary(session_info))
 
     def _first_voice(self, session_info) -> None:
         _mark(session_info, "first voice")
@@ -548,9 +561,10 @@ class VimarDoorbell(Camera):
             return False
         _mark(session_info, "call")
         if self._answer_on_open:
-            await self._answer("view opened")
-            if self._answered:
-                _mark(session_info, "answer")
+            # Not awaited: the view goes on opening while the answer travels
+            # (a round trip through the relay). Early media already brings
+            # the picture and the sound.
+            self._spawn(self._answer_for(session_info, "view opened"))
         waited = 0.0
         while not hkm.video_ready(self._hub) and waited < VIDEO_WAIT:
             if session_info.get("stopping"):
@@ -636,6 +650,7 @@ class VimarDoorbell(Camera):
             (session_info["address"], session_info["a_port"]),
             session_info["a_srtp_key"], rate, media.send_audio,
             on_first_voice=lambda: self._first_voice(session_info))
+        bridge.on_first_audio = lambda: self._first_audio(session_info)
         session_info["bridge"] = bridge
         await bridge.start()
         if session_info.get("stopping"):

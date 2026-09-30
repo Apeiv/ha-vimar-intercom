@@ -57,6 +57,8 @@ Italian and are kept as they were written.
   answers; an option answers as soon as the view opens instead. Closing the last HomeKit view ends a
   call HomeKit placed or answered.
 - The ring as a programmable button for Home app automations is an option, off by default.
+- Each HomeKit view logs where its opening time went, at INFO: at "stream started", and when the
+  first audio packet reaches the phone.
 - The gate reports unlocked when it opens and then unknown, never locked: the intercom only pulses
   the strike.
 - `media_handler`: `rtp_sinks` on the audio and video RTP protocols, the taps the doorbell reads the

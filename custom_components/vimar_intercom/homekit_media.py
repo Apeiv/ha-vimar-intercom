@@ -59,8 +59,11 @@ def video_ready(hub) -> bool:
 
 
 def parameter_sets() -> tuple[bytes | None, bytes | None]:
+    # Only the calling panel's own parameters: on a plant with several panels
+    # another panel's SPS/PPS would garble the first frames. A panel never
+    # seen before costs a slower first picture instead, never a wrong one.
     vp = media.video_proto
-    ps = vp.sps_pps() if vp else None
+    ps = vp.sps_pps(own_only=True) if vp else None
     return ps if ps else (None, None)
 
 

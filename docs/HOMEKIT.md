@@ -123,6 +123,8 @@ preview straight away, and with the default answer mode the call is answered onl
 
 ## Measurements (26 September 2026)
 
+On an Elvox Tab 7S Up 40517 (Due Fili Plus EVO), over the cloud relay.
+
 | | At home (Wi-Fi) | Away (5G) |
 |---|---|---|
 | Video, direct | under 2 s | about 3 s |
@@ -132,12 +134,17 @@ Before this work opening took about 5 s. The VIEW app takes 2.5 s. The extra sec
 Apple's path (home hub, then iCloud relay): on our side the video starts after 1.5 to 1.6 s in both
 cases.
 
+Every view logs its own timeline at INFO, measured from the moment the phone asks for the stream: one
+line at "stream started", and one when the first audio packet leaves for the phone. The second is the
+number to compare with the VIEW app.
+
 ## Things to know
 
 - The cloud relay loses packets, two to four in a hundred, before they reach Home Assistant. The phone
   counts exactly as many missing packets as we do, and Wi-Fi loses none. In direct mode a lost packet
-  freezes the picture until the panel's next keyframe, up to 3 s, because the panel ignores keyframe
-  requests (PLI, FIR). That is why re-encoding is the default.
+  freezes the picture until the panel's next keyframe, up to 3 s, on a panel that ignores keyframe
+  requests, as the 40517 does. The 40515 honours them and sends a keyframe about 0.25 s after a
+  request. That is why re-encoding is the default.
 - When the panel hangs up, the view stays open on the last frame. The integration ends the session
   within a millisecond (RTCP BYE, streaming available again), but HomeKit gives an accessory no way to
   close the Home app's viewer. Home Assistant's cameras behave the same. A view still opening when

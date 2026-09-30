@@ -25,7 +25,7 @@ class FakeVideoProto:
         self.rtp_sinks = []
         self.pkt_count = len(gop)
 
-    def sps_pps(self):
+    def sps_pps(self, own_only=False):
         return self._ps
 
 
@@ -427,3 +427,15 @@ def test_no_photo_folder_or_a_file_outside_it_gives_nothing(tmp_path, monkeypatc
     (tmp_path / rl.RING_LOG).write_text(json.dumps([{"photo": "../../etc/passwd"}]))
     monkeypatch.setattr(hkm.R, "SNAPSHOT_DIR", str(tmp_path))
     assert hkm.last_ring_photo() is None
+
+
+def test_parameter_sets_never_borrow_another_panels(monkeypatch):
+    """On a plant with several panels, another panel's SPS/PPS would garble
+    the first frames: HomeKit waits for the calling panel's own instead."""
+    vp = media.RTPVideoProtocol()
+    vp._ps_by_panel = {"55002": (SPS, PPS)}
+    vp.set_panel("55001")
+    monkeypatch.setattr(media, "video_proto", vp)
+    assert hkm.parameter_sets() == (None, None)
+    vp.set_panel("55002")
+    assert hkm.parameter_sets() == (SPS, PPS)

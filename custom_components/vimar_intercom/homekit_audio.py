@@ -184,6 +184,9 @@ class AudioBridge:
         # Called once, at the first voice packet from the phone (Talk pressed):
         # the phone sends no audio at all while Talk is off.
         self._on_first_voice = on_first_voice
+        # Called once, as the first audio packet leaves for the phone (the
+        # view's timeline).
+        self.on_first_audio = None
         self._voice_fired = False
         self._loud_ms = 0
         self._phone_addr = phone_addr
@@ -359,6 +362,11 @@ class AudioBridge:
             self._ssrc = struct.unpack_from("!I", data, 8)[0]
         packet = self._to_phone_clock(data)
         self._phone_tr.sendto(self._tx.protect(bytes(packet)), self._phone_addr)
+        if not self.stats["to_phone"] and self.on_first_audio:
+            try:
+                self.on_first_audio()
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("HomeKit: first-audio callback failed")
         self.stats["to_phone"] += 1
 
     def _from_phone(self, data: bytes, addr) -> None:

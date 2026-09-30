@@ -125,6 +125,19 @@ class TestToThePhone:
         assert plain.endswith(b"strada")
         enc.close()
 
+    def test_the_first_audio_to_the_phone_is_reported_once(self, bridge_rig):
+        """The view's timeline marks when the street becomes audible."""
+        loop, bridge, phone, _ours, _talk, pump = bridge_rig
+        seen = []
+        bridge.on_first_audio = lambda: seen.append(bridge.stats["to_phone"])
+        enc = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        for seq in range(3):
+            enc.sendto(rtp(seq, seq * 960), ("127.0.0.1", bridge.encoder_port))
+        pump()
+        assert bridge.stats["to_phone"] == 3
+        assert seen == [0], "once, as the first packet leaves"
+        enc.close()
+
     def test_only_our_encoder_may_feed_it(self, bridge_rig):
         loop, bridge, phone, _ours, _talk, pump = bridge_rig
         first = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
