@@ -1,0 +1,116 @@
+"""The door lock: unlocking opens the door through the hub, shows "unlocked"
+and locks itself again after a few seconds; a failed opening is an error."""
+from __future__ import annotations
+
+import asyncio
+import types
+
+import pytest
+
+from custom_components.vimar_intercom import const as C
+from custom_components.vimar_intercom import lock as lock_mod
+from custom_components.vimar_intercom.const import DOMAIN
+
+
+class _HAError(Exception):
+    pass
+
+
+class _Hub:
+    def __init__(self, ok=True):
+        self.ok = ok
+        self.doors = []
+
+    async def async_door(self, target=None, command=None):
+        self.doors.append((target, command))
+        return self.ok, "OK (200)" if self.ok else "Timeout"
+
+
+@pytest.fixture
+def relock(monkeypatch):
+    """No real 5 s wait: the relock sleep returns at once and records its delay."""
+    monkeypatch.setattr(lock_mod, "HomeAssistantError", _HAError)
+    delays = []
+
+    async def sleep(seconds):
+        delays.append(seconds)
+
+    monkeypatch.setattr(lock_mod, "asyncio", types.SimpleNamespace(
+        sleep=sleep, create_task=asyncio.create_task))
+    return delays
+
+
+def _lock(hub):
+    added = []
+    hass = types.SimpleNamespace(data={DOMAIN: {"e1": {"hub": hub}}})
+    asyncio.run(lock_mod.async_setup_entry(hass, types.SimpleNamespace(entry_id="e1"), added.extend))
+    (entity,) = added
+    entity.states = []
+    entity.async_write_ha_state = lambda: entity.states.append(entity.is_locked)
+    return entity
+
+
+def test_the_lock_uses_the_default_door_and_starts_locked(relock):
+    lock = _lock(_Hub())
+    assert lock._attr_unique_id == "e1_lock"
+    assert lock.is_locked is True and lock.icon == "mdi:door-closed-lock"
+
+
+def test_unlock_opens_the_default_door_then_relocks_after_five_seconds(relock):
+    hub = _Hub()
+    lock = _lock(hub)
+
+    async def run():
+        await lock.async_unlock()
+        assert lock.is_locked is False and lock.icon == "mdi:door-open"
+        await lock._relock_task
+
+    asyncio.run(run())
+    # target None: hub.async_door picks the door panel from the phonebook.
+    assert hub.doors == [(None, C.DOOR_COMMAND)]
+    assert relock == [5]
+    assert lock.states == [False, True] and lock.is_locked is True
+
+
+def test_a_failed_opening_raises_and_stays_locked(relock):
+    lock = _lock(_Hub(ok=False))
+    with pytest.raises(_HAError, match="Timeout"):
+        asyncio.run(lock.async_unlock())
+    assert lock.is_locked is True and lock.states == [] and lock._relock_task is None
+
+
+def test_a_second_unlock_restarts_the_relock_timer(relock):
+    lock = _lock(_Hub())
+
+    async def run():
+        await lock.async_unlock()
+        first = lock._relock_task
+        await lock.async_unlock()
+        await asyncio.sleep(0)
+        assert first.cancelled()
+        await lock._relock_task
+
+    asyncio.run(run())
+    assert lock.is_locked is True
+
+
+def test_removing_the_entity_cancels_the_pending_relock(relock):
+    lock = _lock(_Hub())
+
+    async def run():
+        await lock.async_unlock()
+        task = lock._relock_task
+        await lock.async_will_remove_from_hass()
+        await asyncio.sleep(0)
+        return task
+
+    task = asyncio.run(run())
+    assert task.cancelled() and lock._relock_task is None
+    asyncio.run(lock.async_will_remove_from_hass())  # nothing pending: no error
+
+
+def test_lock_is_a_no_op_that_shows_locked(relock):
+    lock = _lock(_Hub())
+    lock._is_locked = False
+    asyncio.run(lock.async_lock())
+    assert lock.is_locked is True and lock.states == [True]
