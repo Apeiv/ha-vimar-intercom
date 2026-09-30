@@ -496,6 +496,7 @@ filter is needed to keep the log quiet.
 - Plain RTP (no SRTP) is accepted only from the other end of the current call.
 - The HomeKit pairing code (optional HomeKit doorbell) is stored in a file with mode 0600.
 - No mandatory cloud dependency when running in local UDP mode.
+- Found a vulnerability? Report it privately, not in a public issue: see [SECURITY.md](SECURITY.md).
 
 ---
 

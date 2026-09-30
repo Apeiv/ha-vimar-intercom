@@ -503,6 +503,7 @@ serve alcun filtro `logger:` per tenere pulito il log.
 - Il codice di abbinamento HomeKit (campanello HomeKit facoltativo) è salvato in un file con
   permessi 0600.
 - Nessuna dipendenza cloud obbligatoria in modalità UDP locale.
+- Hai trovato una vulnerabilità? Segnalala in privato, non in una issue pubblica: vedi [SECURITY.md](SECURITY.md) (in inglese).
 
 ---
 
