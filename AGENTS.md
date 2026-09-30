@@ -90,7 +90,8 @@ python -m pytest --cov=custom_components/vimar_intercom --cov-branch --cov-repor
 - User-visible changes get an entry under `## [Unreleased]` in `CHANGELOG.md`
   (Keep a Changelog format, newest on top).
 - `manifest.json` keys: `domain`, `name`, then alphabetical (hassfest rule, checked by
-  `tests/test_manifest_order.py`). Runtime requirements stay `pycryptodome` and `requests`;
+  `tests/test_manifest_order.py`). The only manifest requirement is `pycryptodome`
+  (`requests` is used too, but ships with Home Assistant and hassfest rejects it in the manifest);
   no external SIP library.
 - One logical change per commit. Subject in the `type(scope): summary` form seen in history
   (`fix(sip): ...`, `docs(hardware): ...`); the body explains why.

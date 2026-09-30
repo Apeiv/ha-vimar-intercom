@@ -39,6 +39,11 @@ Italian and are kept as they were written.
 - Saving the network settings page dropped the options it does not show (a HomeKit doorbell that
   was on, for instance, was turned off).
 
+### Changed
+
+- `requests` is no longer listed in the manifest's requirements: it ships with Home Assistant
+  itself, and hassfest now rejects it in a custom integration. Nothing changes on an install.
+
 ### Changed (contributors)
 
 - `AGENTS.md` for coding agents (`CLAUDE.md` points to it). The CI fails below 95% line and branch
