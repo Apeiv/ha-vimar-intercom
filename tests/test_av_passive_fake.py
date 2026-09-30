@@ -232,11 +232,13 @@ def test_audio_input_connects_to_the_encoder_port():
         port = server.sockets[0].getsockname()[1]
         w = await av_passive._audio_in(port)
         await asyncio.wait_for(got.wait(), 5)
+        connected = got.is_set()
         w.close()
         server.close()
         await server.wait_closed()
+        return connected
 
-    asyncio.run(run())
+    assert asyncio.run(run())
 
 
 def test_audio_input_gives_up_when_ffmpeg_never_listens(monkeypatch):

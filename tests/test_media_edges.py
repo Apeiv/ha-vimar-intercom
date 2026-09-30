@@ -62,8 +62,16 @@ def _video():
 
 # ─── broadcast ───────────────────────────────────────────────────────────────
 
-def test_broadcast_without_a_listener_does_nothing():
-    asyncio.run(mh.broadcast("log", "x"))  # no error
+def test_broadcast_after_the_listener_is_removed_reaches_nobody():
+    got = []
+
+    async def listener(t, m):
+        got.append((t, m))
+
+    mh.init(listener)
+    mh.init(None)  # the hub stopped: no listener any more
+    asyncio.run(mh.broadcast("log", "x"))
+    assert got == []
 
 
 def test_broadcast_reaches_the_listener(monkeypatch):
@@ -575,10 +583,15 @@ def test_the_stun_keepalive_pings_both_lines_during_a_call(monkeypatch):
 
 
 def test_the_stun_keepalive_is_quiet_between_calls(monkeypatch):
-    monkeypatch.setattr(mh, "audio_proto", None)
-    monkeypatch.setattr(mh, "video_proto", None)
-    _fast_sleep(monkeypatch, 1)
+    pings = []
+    # Sockets open, but no panel address: no call, nothing to keep alive.
+    ap = type("A", (), {"remote_addr": None, "send_stun": lambda self: pings.append("a")})()
+    vp = type("V", (), {"remote_addr": None, "send_stun": lambda self: pings.append("v")})()
+    monkeypatch.setattr(mh, "audio_proto", ap)
+    monkeypatch.setattr(mh, "video_proto", vp)
+    _fast_sleep(monkeypatch, 2)
     asyncio.run(mh._stun_keepalive())  # ends quietly on cancel
+    assert pings == []
 
 
 def test_the_audio_broadcast_waits_for_a_call_and_sends_to_the_card(monkeypatch):
