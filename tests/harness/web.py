@@ -44,6 +44,7 @@ class _WS:
 
     async def close(self, **k):
         self.closed = True
+        self.close_args = k
         self.inbox.put_nowait(None)
 
 
