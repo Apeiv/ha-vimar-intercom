@@ -154,7 +154,7 @@ async def _record(q: asyncio.Queue, ps, path: str, max_s: float, on_done) -> Non
         while True:
             try:
                 nal = await asyncio.wait_for(q.get(), max(0.0, end - loop.time()))
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 break  # tetto di durata
             if nal is None:
                 break
@@ -180,7 +180,7 @@ async def _record(q: asyncio.Queue, ps, path: str, max_s: float, on_done) -> Non
         proc.stdin.close()  # EOF: ffmpeg scrive il moov ed esce
     try:
         rc = await asyncio.wait_for(proc.wait(), 15)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         proc.kill()
         rc = -1
     ok = started and rc == 0
@@ -219,7 +219,7 @@ async def _add_audio(path: str, pcm: bytes) -> None:
         return
     try:
         await asyncio.wait_for(proc.communicate(pcm), 15)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         proc.kill()
         await proc.wait()
         return

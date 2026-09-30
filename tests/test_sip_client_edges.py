@@ -787,7 +787,7 @@ def test_the_udp_reader_filters_senders_pings_and_survives_errors(monkeypatch, c
     steps = [
         (b"INVITE spoofed", ("198.51.100.7", 5060)),
         (b"INVITE spoofed", ("198.51.100.7", 5060)),
-        asyncio.TimeoutError(),
+        TimeoutError(),
         RuntimeError("socket error"),
         (b"OPTIONS from the panel", ("192.0.2.1", 5060)),
         asyncio.CancelledError(),
@@ -867,9 +867,9 @@ def test_the_tls_reader_keeps_alive_and_reconnects_on_every_failure(monkeypatch)
     monkeypatch.setattr(sip, "_reconnect_after_framing_error", _framing)
     monkeypatch.setattr(sip, "_dispatch_message", _dispatch)
     monkeypatch.setattr(sip, "reader", _Reader([
-        asyncio.TimeoutError(),          # CRLF keepalive on the good writer
+        TimeoutError(),          # CRLF keepalive on the good writer
         b"x" * 300,                      # over MAX_SIP_BODY
-        asyncio.TimeoutError(),          # keepalive fails on the bad writer
+        TimeoutError(),          # keepalive fails on the bad writer
         RuntimeError("tls error"),
         ok_msg + b"SIP/2.0 200 OK\r\nContent-Length: abc\r\n\r\n",  # broken framing
         asyncio.CancelledError(),
@@ -1037,7 +1037,7 @@ def test_a_quiet_udp_socket_sends_no_ping_when_not_registered(monkeypatch):
     async def _ping():
         pings.append(True)
 
-    steps = [asyncio.TimeoutError(), asyncio.CancelledError()]
+    steps = [TimeoutError(), asyncio.CancelledError()]
 
     async def _wait_for(coro, timeout):
         coro.close()
@@ -1076,7 +1076,7 @@ def test_waiting_for_a_final_answer_gives_up_at_the_deadline(monkeypatch):
     async def _wait_for(coro, timeout):
         coro.close()
         waits.append(timeout)
-        raise asyncio.TimeoutError
+        raise TimeoutError
 
     async def _run():
         monkeypatch.setattr(asyncio, "wait_for", _wait_for)

@@ -6,7 +6,6 @@ import asyncio
 import types
 
 import pytest
-
 from harness.web import load_views
 
 

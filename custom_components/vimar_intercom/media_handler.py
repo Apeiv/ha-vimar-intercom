@@ -13,11 +13,9 @@ import struct
 import subprocess
 import time
 
-from .const import RTP_AUDIO_PORT, RTP_VIDEO_PORT
-from . import av_stream
+from . import av_stream, frame_grabber, rtcp
 from . import runtime as R
-from . import frame_grabber
-from . import rtcp
+from .const import RTP_AUDIO_PORT, RTP_VIDEO_PORT
 from .srtp import SRTPContext
 
 _LOGGER = logging.getLogger(__name__)
@@ -1198,7 +1196,7 @@ async def _audio_broadcast():
             try:
                 pcm = await asyncio.wait_for(
                     audio_proto.audio_buffer.get(), timeout=0.5)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
             if ws_send_bytes:
                 await ws_send_bytes(b'\x01' + pcm)

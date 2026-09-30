@@ -9,10 +9,10 @@ import types
 
 import pytest
 import requests
-
 from harness.web import load_views
 
-from custom_components.vimar_intercom import away_tts, media_handler as media, runtime, webhook
+from custom_components.vimar_intercom import away_tts, runtime, webhook
+from custom_components.vimar_intercom import media_handler as media
 
 
 class FakeHub:

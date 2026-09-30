@@ -23,9 +23,8 @@ import struct
 import tempfile
 import time
 
-from . import frame_grabber
+from . import frame_grabber, ring_log
 from . import media_handler as media
-from . import ring_log
 from . import runtime as R
 
 _LOGGER = logging.getLogger(__name__)

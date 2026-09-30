@@ -1,5 +1,6 @@
 """_update_stats del hub: parsing degli annunci VOICEMAIL/DND e (futuro) GET_INIT_STATUS_REPLY."""
 import asyncio
+
 import pytest
 
 hub_mod = pytest.importorskip("custom_components.vimar_intercom.hub")

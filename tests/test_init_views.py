@@ -8,10 +8,10 @@ import sys
 import types
 
 import pytest
-
 from harness.web import Request, load_views
 
-from custom_components.vimar_intercom import media_handler as media, ring_log, runtime
+from custom_components.vimar_intercom import media_handler as media
+from custom_components.vimar_intercom import ring_log, runtime
 
 
 class ViewHub:

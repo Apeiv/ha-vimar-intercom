@@ -6,7 +6,7 @@ SRTP, quindi build_sdp deve offrire RTP/AVP senza a=crypto quando MEDIA_ENC=Fals
 import pytest
 
 sip = pytest.importorskip("custom_components.vimar_intercom.sip_client")
-from custom_components.vimar_intercom import runtime as R
+from custom_components.vimar_intercom import runtime as R  # noqa: E402
 
 
 @pytest.fixture(autouse=True)

@@ -66,7 +66,7 @@ def test_squilla_ancora_risponde_suona_e_riaggancia(hub, monkeypatch):
 
 
 def test_usa_il_ritardo_del_tab_per_il_messaggio_di_ha(hub, monkeypatch):
-    azioni = _fakes(hub, monkeypatch)
+    _fakes(hub, monkeypatch)
     attese = []
 
     orig = asyncio.sleep

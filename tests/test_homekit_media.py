@@ -182,7 +182,7 @@ def test_without_panel_audio_the_tap_sends_silence(monkeypatch):
     # The silence advances with the clock: whole 160-sample slots, one per
     # 20 ms, more when the event loop was late (a busy Pi can be).
     gaps = [((b[0] - a[0]) & 0xFFFF, (b[1] - a[1]) & 0xFFFFFFFF)
-            for a, b in zip(stamps, stamps[1:])]
+            for a, b in zip(stamps, stamps[1:], strict=False)]
     assert all(seq == 1 and gap > 0 and gap % 160 == 0 for seq, gap in gaps), gaps
 
 
@@ -306,7 +306,7 @@ def test_a_packet_lost_upstream_keeps_its_gap(monkeypatch):
     for seq in (0, 1, 3, 4):                     # 2 never arrives
         tap._send(_voice(seq, seq * 160))
     ts = [t for _at, t in _stamps(tap)]
-    assert [(b - a) & 0xFFFFFFFF for a, b in zip(ts, ts[1:])] == [160, 320, 160]
+    assert [(b - a) & 0xFFFFFFFF for a, b in zip(ts, ts[1:], strict=False)] == [160, 320, 160]
 
 
 def test_the_panel_clock_may_wrap(monkeypatch):
@@ -314,7 +314,7 @@ def test_the_panel_clock_may_wrap(monkeypatch):
     for n in range(4):
         tap._send(_voice(n, (1 << 32) - 320 + n * 160))
     ts = [t for _at, t in _stamps(tap)]
-    assert [(b - a) & 0xFFFFFFFF for a, b in zip(ts, ts[1:])] == [160, 160, 160]
+    assert [(b - a) & 0xFFFFFFFF for a, b in zip(ts, ts[1:], strict=False)] == [160, 160, 160]
 
 
 def test_a_restarted_panel_stream_is_followed(monkeypatch):
@@ -325,7 +325,7 @@ def test_a_restarted_panel_stream_is_followed(monkeypatch):
         tap._send(_voice(n, 5 + n * 160, ssrc=0x9999))   # new SSRC, clock far below
     assert tap.late_dropped == 0 and len(tap._sock.sent) == 6
     ts = [t for _at, t in _stamps(tap)]
-    assert all(0 < (b - a) & 0xFFFFFFFF <= 480 for a, b in zip(ts, ts[1:]))
+    assert all(0 < (b - a) & 0xFFFFFFFF <= 480 for a, b in zip(ts, ts[1:], strict=False))
 
 
 def _unwrap(ts, ref):
@@ -384,7 +384,7 @@ def test_a_new_ssrc_with_a_nearby_clock_is_restamped(monkeypatch):
         tap._send(_voice(n, 1000 + n * 160, ssrc=0x9999))
     ts = [t for _at, t in _stamps(tap)]
     assert tap.late_dropped == 0 and len(ts) == 6
-    assert all(hkm._signed32(b - a) > 0 for a, b in zip(ts, ts[1:])), ts
+    assert all(hkm._signed32(b - a) > 0 for a, b in zip(ts, ts[1:], strict=False)), ts
 
 
 def test_after_a_loop_stall_the_silence_does_not_catch_up_in_a_burst(monkeypatch):

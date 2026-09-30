@@ -409,7 +409,7 @@ def test_a_hang_up_that_times_out_is_logged_and_drops_its_guard(hub, caplog):
     async def run():
         done = hub._begin_hanging_up()
         fut = asyncio.get_running_loop().create_future()
-        fut.set_exception(asyncio.TimeoutError())
+        fut.set_exception(TimeoutError())
         hub._hangup_finished(done, fut)
         return done.is_set()
 

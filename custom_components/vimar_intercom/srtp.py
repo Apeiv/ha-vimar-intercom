@@ -35,7 +35,7 @@ def _kdf(master_key: bytes, master_salt: bytes, label: int, length: int) -> byte
     key_id = (label << 48).to_bytes(7, "big")
     salt = master_salt[:14]
     key_id_padded = b"\x00" * 7 + key_id
-    x = bytes(a ^ b for a, b in zip(key_id_padded, salt))
+    x = bytes(a ^ b for a, b in zip(key_id_padded, salt, strict=False))
     iv = x + b"\x00\x00"
     return _aes_cm_keystream(master_key, iv, length)
 
@@ -105,7 +105,7 @@ class SRTPContext:
             + packet_index.to_bytes(6, "big")
             + b"\x00\x00"
         )
-        return bytes(a ^ b for a, b in zip(salt_padded, ssrc_index))
+        return bytes(a ^ b for a, b in zip(salt_padded, ssrc_index, strict=False))
 
     def _compute_auth_tag(self, rtp_packet: bytes, roc: int) -> bytes:
         """HMAC-SHA1 over (packet || ROC), truncated to 80 bits."""
@@ -260,7 +260,7 @@ class SRTCPContext:
             + index.to_bytes(6, "big")
             + b"\x00\x00"
         )
-        return bytes(a ^ b for a, b in zip(salt_padded, ssrc_index))
+        return bytes(a ^ b for a, b in zip(salt_padded, ssrc_index, strict=False))
 
     def unprotect(self, packet: bytes) -> bytes | None:
         """SRTCP to plain RTCP, or ``None`` if it does not authenticate or is

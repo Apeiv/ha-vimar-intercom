@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import hashlib
+import logging
 import os
 import re
 import secrets
@@ -10,14 +11,11 @@ import socket
 import ssl
 import string
 import time
-import logging
 
 from . import const as C
-from . import runtime as R
-from . import log_redact
+from . import log_redact, model_detect, validate
 from . import media_handler as media
-from . import model_detect
-from . import validate
+from . import runtime as R
 from .inventory import DeviceInventory
 
 _LOGGER = logging.getLogger(__name__)
@@ -857,7 +855,7 @@ async def _udp_reader_task():
             raw = data.decode(errors="replace")
             await _dispatch_message(raw)
             last_ping = time.time()
-        except asyncio.TimeoutError:
+        except TimeoutError:
             # Keepalive: OPTIONS ogni 20 s se registrato
             if registered and (time.time() - last_ping) >= 20:
                 await _send_options_ping()
@@ -935,7 +933,7 @@ async def reader_task():
                 await _reconnect_from_reader()
                 buf = b""
                 continue
-        except asyncio.TimeoutError:
+        except TimeoutError:
             # Send CRLF keepalive (RFC 5626) to prevent proxy from
             # considering TLS connection stale
             try:
@@ -1089,7 +1087,7 @@ async def _send_request(msg: str, cid: str, timeout: float = 15,
             try:
                 # ponytail: al massimo 0,25 s per volta, per accorgersi della coda tolta
                 raw = await asyncio.wait_for(q.get(), timeout=max(0.0, min(wake - now, 0.25)))
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 if retransmit and loop.time() >= next_tx and loop.time() < deadline:
                     interval = min(interval * 2, _T2)
                     next_tx = loop.time() + interval
@@ -1129,7 +1127,7 @@ async def _wait_final(cid, timeout=15):
             kind, *_ = _parse(raw)
             if isinstance(kind, int) and kind >= 200:
                 break
-        except asyncio.TimeoutError:
+        except TimeoutError:
             continue
     pending_responses.pop(cid, None)
     return results
@@ -1338,7 +1336,7 @@ def _answer_fits(answer: str, offer: dict | None) -> bool:
     kinds = _offered_kinds(offer)
     if [media for media, _ in ours] != [offer[k].get("media", k) for k in kinds]:
         return False
-    return all(offer[k]["port"] or not live for k, (_, live) in zip(kinds, ours))
+    return all(offer[k]["port"] or not live for k, (_, live) in zip(kinds, ours, strict=False))
 
 
 def _sdp_lines(sdp_text: str) -> list[tuple[str, bool]]:
@@ -1787,7 +1785,7 @@ async def do_call(target=None, silence_limit=None):
             try:
                 wait = min(3, max(0.01, retx_at - time.time())) if retx else 3
                 raw = await asyncio.wait_for(q.get(), timeout=wait)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 if retx and time.time() >= retx_at:
                     await send(inv_msg)
                     retx_iv *= 2
@@ -1846,7 +1844,8 @@ async def do_call(target=None, silence_limit=None):
                     # in coda, o durante ACK/setup_media): ha chiuso media e stato
                     # (call_ended), e la chiamata ripartiva lo stesso, senza nessuno
                     # che la chiudesse. Il dialogo aperto dal 200 si chiude con BYE.
-                    await _close_orphan_invite(code, hdrs, ack=not acked)
+                    # Awaited before the loop moves on, so code/hdrs are this response's.
+                    await _close_orphan_invite(code, hdrs, ack=not acked)  # noqa: B023
                     await media.stop_media()
                     if call_state["call_id"] == cid:
                         _clear_call_state()
@@ -1986,7 +1985,7 @@ async def send_keyframe_request():
                 raw = await asyncio.wait_for(
                     pending_responses[cid].get(), timeout=min(1.0, deadline - loop.time())
                 )
-            except (asyncio.TimeoutError, KeyError):
+            except (TimeoutError, KeyError):
                 break
             if raw is _CANCEL:  # reset_state, or do_hangup for do_call: not ours
                 foreign.append(raw)

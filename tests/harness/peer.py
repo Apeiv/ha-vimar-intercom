@@ -197,8 +197,8 @@ class FakePeer:
                     if not head.strip():
                         buf = buf[end:]
                         continue  # keepalive CRLF
-                    cl = next((int(l.split(":", 1)[1]) for l in head.split("\r\n")
-                               if l.lower().startswith("content-length:")), 0)
+                    cl = next((int(ln.split(":", 1)[1]) for ln in head.split("\r\n")
+                               if ln.lower().startswith("content-length:")), 0)
                     if len(buf) < end + cl:
                         break
                     raw, buf = buf[:end + cl].decode(errors="replace"), buf[end + cl:]

@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections import deque
 import os
 import shutil
 import socket
 import struct
 import tempfile
+from collections import deque
 
 from . import media_handler as media
 from .srtp import SRTCPContext, SRTPContext
@@ -452,7 +452,7 @@ class AudioBridge:
                 pass    # it exited on its own, not reaped yet
             try:
                 await asyncio.wait_for(self._talk_proc.wait(), 2.0)
-            except (TimeoutError, asyncio.TimeoutError):
+            except TimeoutError:
                 pass
         for tr in (self._phone_tr, self._enc_tr, self._talk_tr):
             if tr:
@@ -484,7 +484,7 @@ async def stop_ffmpeg(proc) -> None:
         try:
             await asyncio.wait_for(proc.wait(), wait)
             return
-        except (TimeoutError, asyncio.TimeoutError):
+        except TimeoutError:
             continue
 
 

@@ -50,7 +50,7 @@ class TestClockConversion:
             start = (1 << 32) - 3 * step
             outs = [struct.unpack_from("!I", scale(rtp(n, (start + n * step) & 0xFFFFFFFF)), 4)[0]
                     for n in range(7)]
-            deltas = {(b - a) & 0xFFFFFFFF for a, b in zip(outs, outs[1:])}
+            deltas = {(b - a) & 0xFFFFFFFF for a, b in zip(outs, outs[1:], strict=False)}
             assert deltas == {step * num // den}, (num, den, outs)
 
     def test_a_reordered_packet_is_not_thrown_a_day_ahead(self):
