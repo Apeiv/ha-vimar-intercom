@@ -33,7 +33,8 @@ pip install -r requirements-dev.txt
 
 Targets: Home Assistant **2024.1+**, Python **3.11+** (HA ships 3.11/3.12/3.13).
 
-Runtime dependencies are deliberately minimal: `pycryptodome` and `requests`.
+Runtime dependencies are deliberately minimal: `pycryptodome` and `requests` (the latter ships
+with Home Assistant, so only `pycryptodome` is listed in the manifest).
 **No external SIP library** — the stack in `sip_client.py` is custom and stays
 custom. Please don't add `cryptography` as a runtime requirement either; `pycryptodome`
 covers what we need and HA already pins it. (`requirements-dev.txt` lists `cryptography`

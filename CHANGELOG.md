@@ -4,6 +4,52 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [semver](ht
 Newest entries on top. **Entries are written in English from 1.0.1 onwards**; earlier ones are in
 Italian and are kept as they were written.
 
+## [1.0.16] - 2026-09-30
+
+### Added
+
+- **HomeKit video doorbell** (`homekit_accessory.py`), off by default: Options → HomeKit shows the
+  pairing QR code and setup code, to administrators only; the setup code changes after 10 wrong
+  attempts in a row. Ring notification, live video, two-way audio and the gate in one accessory. Home
+  Assistant's own HomeKit bridge cannot carry the talk direction: it answers the phone's
+  `SetupEndpoints` with the phone's own ports and never listens on them.
+- Video to the phone is re-encoded with one keyframe per second by default (a packet lost on the
+  cloud relay is a brief smear instead of a freeze of up to 3 s), or sent as the panel's own H.264
+  packets when the option is off.
+- During a ring, opening the view previews the street without answering, and the first word (Talk)
+  answers; an option answers as soon as the view opens instead. Closing the last HomeKit view ends a
+  call HomeKit placed or answered.
+- The ring as a programmable button for Home app automations is an option, off by default.
+- Each HomeKit view logs where its opening time went, at INFO: at "stream started", and when the
+  first audio packet reaches the phone.
+- The ring notification's picture comes from the re-encoder, which conceals packets the relay lost,
+  so it is ready a few tenths of a second into the ring; without re-encoding it waits up to 3 s for
+  the ring's first complete frame. The Home tile keeps the last picture of a call or ring after it
+  ends.
+- The gate reports unlocked when it opens and then unknown, never locked: the intercom only pulses
+  the strike.
+- `media_handler`: `rtp_sinks` on the audio and video RTP protocols, the taps the doorbell reads the
+  call from. `srtp`: `SRTCPContext`, checked byte for byte against libsrtp.
+
+### Fixed
+
+- The admin probe of a panel (the card's `probe` action) no longer reports "Errore: 100" when the
+  proxy asks for credentials and then answers 100 Trying before 200 OK: provisional answers to
+  the authenticated retry are skipped, as they already were before the challenge.
+- Saving the network settings page dropped the options it does not show (a HomeKit doorbell that
+  was on, for instance, was turned off).
+
+### Changed
+
+- `requests` is no longer listed in the manifest's requirements: it ships with Home Assistant
+  itself, and hassfest now rejects it in a custom integration. Nothing changes on an install.
+
+### Changed (contributors)
+
+- `AGENTS.md` for coding agents (`CLAUDE.md` points to it). The CI fails below 95% line and branch
+  coverage of `custom_components/vimar_intercom`; every fix comes with a test that fails without it.
+  New code comments, commit messages and PR text are in English.
+
 ## [1.0.15] - 2026-09-30
 
 ### Changed
@@ -47,29 +93,6 @@ Italian and are kept as they were written.
   ports (RTP + 1) listen during a call, the path to the panel's RTCP port is opened, and what
   arrives is logged (type and SSRC; every record for plain RTCP). Off by default: nothing is
   bound and nothing is sent.
-
-- **HomeKit video doorbell** (`homekit_accessory.py`), off by default: Options → HomeKit shows the
-  pairing QR code and setup code, to administrators only; the setup code changes after 10 wrong
-  attempts in a row. Ring notification, live video, two-way audio and the gate in one accessory. Home
-  Assistant's own HomeKit bridge cannot carry the talk direction: it answers the phone's
-  `SetupEndpoints` with the phone's own ports and never listens on them.
-- Video to the phone is re-encoded with one keyframe per second by default (a packet lost on the
-  cloud relay is a brief smear instead of a freeze of up to 3 s), or sent as the panel's own H.264
-  packets when the option is off.
-- During a ring, opening the view previews the street without answering, and the first word (Talk)
-  answers; an option answers as soon as the view opens instead. Closing the last HomeKit view ends a
-  call HomeKit placed or answered.
-- The ring as a programmable button for Home app automations is an option, off by default.
-- Each HomeKit view logs where its opening time went, at INFO: at "stream started", and when the
-  first audio packet reaches the phone.
-- The ring notification's picture comes from the re-encoder, which conceals packets the relay lost,
-  so it is ready a few tenths of a second into the ring; without re-encoding it waits up to 3 s for
-  the ring's first complete frame. The Home tile keeps the last picture of a call or ring after it
-  ends.
-- The gate reports unlocked when it opens and then unknown, never locked: the intercom only pulses
-  the strike.
-- `media_handler`: `rtp_sinks` on the audio and video RTP protocols, the taps the doorbell reads the
-  call from. `srtp`: `SRTCPContext`, checked byte for byte against libsrtp.
 
 ### Fixed
 
@@ -149,9 +172,6 @@ Call and media:
 
 SIP:
 
-- The admin probe of a panel (the card's `probe` action) no longer reports "Errore: 100" when the
-  proxy asks for credentials and then answers 100 Trying before 200 OK: provisional answers to
-  the authenticated retry are skipped, as they already were before the challenge.
 - A late response nobody waits for any more ("Stale response") is logged at DEBUG, not
   WARNING.
 - REGISTER retries once more when the registrar rotates its nonce, and answers a 407 with
@@ -209,8 +229,6 @@ Documentation:
 - New `docs/HARDWARE.md` (what differs between plants) and `docs/TEST_PLAN.md` (field test round).
   The Italian README inside the component folder is now a pointer to the root README.
 
-- Saving the network settings page dropped the options it does not show.
-
 ### Security
 
 - SRTP master keys are kept out of the logs: the parsed SDP keeps only the key it uses, the SDP
@@ -227,7 +245,6 @@ Documentation:
 - Log redaction: `sip_password=…` (key with a prefix), quoted values with spaces (`password="my
   secret"`, `token: 'x y z'`) and dict reprs (`{'sip_password': '…'}`) were left in clear in the
   debug buffer and in the Home Assistant log. They are masked now.
-
 
 ## [1.0.14] - 2026-09-30
 
