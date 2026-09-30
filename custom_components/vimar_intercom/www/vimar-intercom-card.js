@@ -67,7 +67,8 @@ const OPEN_FLASH_MS = 2000;  // "Aperto" / "Errore" sul tasto
 const PENDING_MS = 10000;   // "Collegamento…" subito al tocco, senza aspettare lo stato di HA; oltre, si lascia stare
 const SAY_MS = 4000;         // un avviso resta 4 s al posto della riga di stato
 const LIVE = ["ringing", "calling", "in_call"];
-const OUTCOME = { answered: "Risposto", away: "Messaggio di assenza", missed: "Nessuna risposta" };
+const OUTCOME = { answered: "Risposto", declined: "Rifiutato", away: "Messaggio di assenza",
+                  missed: "Nessuna risposta" };
 const LABEL = {
   idle: "Pronto", ringing: "Suonano alla porta", calling: "Collegamento…",
   in_call: "In chiamata", offline: "Non raggiungibile",
@@ -205,6 +206,7 @@ const STYLE = `
          white-space: nowrap; overflow: hidden; }
   .out::before { content: ""; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--oc, var(--dim)); }
   [data-outcome="answered"] { --oc: var(--vi-ok); }
+  [data-outcome="declined"] { --oc: var(--vi-bad); }
   [data-outcome="away"] { --oc: var(--vi-info); }
   [data-outcome="missed"] { --oc: var(--vi-warn); }
   .empty { display: none; flex: 1; flex-direction: column; align-items: center; justify-content: center; gap: 6px;

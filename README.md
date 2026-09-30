@@ -257,7 +257,7 @@ into view, e.g. `/lovelace/camera#citofono` as the tap action of a ring notifica
 
 **Last rings.** With a snapshot folder (`snapshot_dir`) set, the photo of the last ring on the
 row is the history button (during a call the button is on the video): the latest rings
-(option `history`, default 8) with photo, time and outcome: *Risposto* (answered from HA),
+(option `history`, default 8) with photo, time and outcome: *Risposto* (answered from HA), *Rifiutato* (declined from HA),
 *Messaggio di assenza* (away message), *Nessuna risposta* (not answered from HA; a ring answered
 on the panel counts here too). Tap a photo to see it large; a ring with a clip shows a play
 icon on its thumbnail and the tap plays the video instead. The photo appears about a second

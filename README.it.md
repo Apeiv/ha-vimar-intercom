@@ -259,7 +259,7 @@ squillo.
 
 **Ultimi squilli.** Con la cartella foto (`snapshot_dir`) impostata, la foto dell'ultimo squillo
 sulla riga è il tasto della cronologia (in chiamata il tasto sta sul video): gli ultimi squilli
-(opzione `history`, predefinito 8) con foto, ora ed esito: *Risposto* (risposto da HA),
+(opzione `history`, predefinito 8) con foto, ora ed esito: *Risposto* (risposto da HA), *Rifiutato* (rifiutato da HA),
 *Messaggio di assenza*, *Nessuna risposta* (nessuna risposta da HA; anche uno squillo risposto
 dal Tab finisce qui). Un tocco sulla foto la apre in grande; uno squillo col clip ha il tasto
 play sulla miniatura e il tocco fa partire il video al posto della foto. La foto compare circa
