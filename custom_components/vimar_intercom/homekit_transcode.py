@@ -51,6 +51,15 @@ BIND_TIMEOUT = 3.0
 # A group longer than this (about 30 s of video) never saw its next SPS: the
 # encoder stopped sending keyframes. Kept, it would grow for the whole call.
 GOP_MAX_PACKETS = 1500
+# Pictures for the Home app (the ring notification, the tile): two a second
+# from the same decoder. It conceals lost packets, so it has a picture well
+# before the frame grabber, which waits for a complete keyframe (up to 3 s
+# on a panel that ignores keyframe requests, when the relay lost part of the
+# first one).
+SNAPSHOT_FPS = 2
+# A JPEG of the panel's 320x240 is 10 to 30 KB; anything past this without
+# an end marker is not one.
+JPEG_MAX = 1024 * 1024
 
 
 def _nal_types(packet: bytes) -> list[int]:
@@ -141,6 +150,8 @@ class Transcoder:
         self.generation: int | None = None
         self.gop = EncodedGop()
         self.stats = {"in": 0, "out": 0}
+        # The latest decoded picture, as JPEG (SNAPSHOT_FPS).
+        self.last_jpeg: bytes | None = None
 
     @property
     def running(self) -> bool:
@@ -203,14 +214,19 @@ class Transcoder:
             "-x264-params", f"repeat-headers=1:slices=1:fps={PANEL_FPS}",
             "-payload_type", "96", "-f", "rtp",
             f"rtp://127.0.0.1:{out_port}?pkt_size=1200",
+            # Second output: pictures for the Home app, from the same decoder.
+            "-an", "-vf", f"fps={SNAPSHOT_FPS}", "-c:v", "mjpeg", "-q:v", "5",
+            "-f", "image2pipe", "pipe:1",
             stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE)
         # The decoder reports every lost packet it conceals. That is its job,
         # not a failure, and with the relay losing two in a hundred it would
         # flood the Home Assistant log.
         self._tasks.append(asyncio.create_task(
             log_stderr(self._proc, "ffmpeg transcode", concealment_is_normal=True)))
+        if self._proc.stdout is not None:
+            self._tasks.append(asyncio.create_task(self._read_pictures(self._proc.stdout)))
 
         # ffmpeg opens the port only after reading the SDP: anything that
         # arrives earlier is lost. We wait until the port is taken.
@@ -233,6 +249,33 @@ class Transcoder:
         _LOGGER.info("Transcoding started (%d panel packets to start from)",
                      len(prefix) + len(gop))
         return True
+
+    async def _read_pictures(self, stdout) -> None:
+        """Keep the latest JPEG. Read to the end whatever happens: a full
+        pipe would block ffmpeg, and the phones' video with it."""
+        buf = b""
+        while True:
+            try:
+                chunk = await stdout.read(65536)
+            except Exception:  # noqa: BLE001
+                _LOGGER.debug("Transcoder pictures: read failed", exc_info=True)
+                return
+            if not chunk:
+                return
+            buf += chunk
+            while True:
+                start = buf.find(b"\xff\xd8")
+                if start < 0:
+                    buf = b""
+                    break
+                end = buf.find(b"\xff\xd9", start + 2)
+                if end < 0:
+                    buf = buf[start:]
+                    if len(buf) > JPEG_MAX:
+                        buf = b""
+                    break
+                self.last_jpeg = buf[start:end + 2]
+                buf = buf[end + 2:]
 
     def feed(self, packet: bytes) -> None:
         """A live packet from the panel."""
@@ -272,9 +315,11 @@ class Transcoder:
     async def stop(self) -> None:
         self._ready = False
         self._sinks.clear()
+        # ffmpeg first: its readers drain stdout and stderr until it is gone,
+        # so it never blocks on a full pipe while it shuts down.
+        await stop_ffmpeg(self._proc)
         for task in self._tasks:
             task.cancel()
-        await stop_ffmpeg(self._proc)
         if self._out_tr:
             self._out_tr.close()
         self._feed.close()

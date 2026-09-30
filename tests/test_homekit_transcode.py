@@ -81,6 +81,7 @@ class TestEncodedGop:
 class FakeFfmpeg:
     returncode = None
     stderr = None
+    stdout = None
 
     def terminate(self):
         self.returncode = -15
@@ -117,6 +118,8 @@ def test_the_panel_video_is_read_on_loopback_from_a_private_sdp(monkeypatch):
         return t, path
 
     t, path = asyncio.run(scenario())
+    out = seen["args"][seen["args"].index("image2pipe") - 1:]
+    assert out[1:] == ("image2pipe", "pipe:1"), "pictures for the Home app on stdout"
     i = seen["args"].index("-i")
     assert seen["args"][i - 2:i] == ("-localaddr", "127.0.0.1")
     assert seen["mode"] == 0o600 and f"/vimar_intercom_transcode_{t._in_port}.sdp" not in path
@@ -133,3 +136,25 @@ def test_only_our_encoder_may_feed_the_phones():
     t._from_encoder(pkt, ("127.0.0.1", 40001))   # another local process
     t._feed.close()
     assert got == [pkt]
+
+
+
+def test_the_latest_picture_is_kept_across_reads():
+    """JPEGs split across reads, with bytes before the first one: the last
+    whole picture is kept, and the pipe is read to its end."""
+    import asyncio
+
+    one = b"\xff\xd8" + b"first" + b"\xff\xd9"
+    two = b"\xff\xd8" + b"second\x00\xff\x00" + b"\xff\xd9"
+    stream = b"junk" + one + two + b"\xff\xd8partial"
+
+    async def scenario():
+        reader = asyncio.StreamReader()
+        for i in range(0, len(stream), 5):
+            reader.feed_data(stream[i:i + 5])
+        reader.feed_eof()
+        t = tc.Transcoder(None, None)
+        await asyncio.wait_for(t._read_pictures(reader), 1)
+        t._feed.close()
+        return t.last_jpeg
+    assert asyncio.run(scenario()) == two

@@ -386,12 +386,12 @@ class VimarDoorbell(Camera):
         The frame grabber drops its image when the call ends; the Home tile
         should keep showing who was at the door (_keep_last_frame).
         """
-        frame = hkm.last_frame()
+        frame = self._live_picture()
         waited = 0.0
         while not frame and waited < SNAPSHOT_WAIT and (sip.ringing() or self._hub.in_call):
             await asyncio.sleep(0.1)
             waited += 0.1
-            frame = hkm.last_frame()
+            frame = self._live_picture()
         if waited:
             _LOGGER.debug("HomeKit: snapshot waited %.1f s for the first frame (%s)",
                           waited, "got it" if frame else "none")
@@ -412,10 +412,23 @@ class VimarDoorbell(Camera):
         went black once the Home app refreshed it after a view.
         """
         while not self._closed:
-            frame = hkm.last_frame()
+            frame = self._live_picture()
             if frame:
                 self._last_frame = frame
             await asyncio.sleep(FRAME_KEEP_EVERY)
+
+    def _live_picture(self) -> bytes | None:
+        """This call's latest picture.
+
+        The re-encoder's first: it conceals lost packets, so it has a picture
+        a few tenths of a second into the ring. The frame grabber waits for a
+        complete keyframe: on a 40517, when the relay lost part of the first
+        one, that took 3.6 s and the ring notification came out black.
+        """
+        tc = self._transcoder
+        if tc and tc.running and tc.generation == self._call_gen and tc.last_jpeg:
+            return tc.last_jpeg
+        return hkm.last_frame()
 
     # ── streaming session ──
 

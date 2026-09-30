@@ -7,6 +7,7 @@ sink for good, or left ffmpeg running. And three parties can close a session
 (the phone, the panel hanging up, ffmpeg exiting), sometimes at once.
 """
 import asyncio
+from types import SimpleNamespace
 import socket
 
 import pytest
@@ -1431,6 +1432,31 @@ def test_the_ring_snapshot_waits_for_the_first_frame(acc, monkeypatch):
         frame["jpeg"] = b"first frame"
         return await asyncio.wait_for(snap, 1)
     assert asyncio.run(scenario()) == b"first frame"
+
+
+def test_the_ring_snapshot_takes_the_re_encoders_picture(acc, monkeypatch):
+    """The relay lost part of the first keyframe: the frame grabber waits for
+    the next complete one (3.6 s on a 40517), the re-encoder conceals the loss
+    and has a picture at once."""
+    a, _procs, _gate = acc
+    _ringing(monkeypatch, a)
+    monkeypatch.setattr(hk.hkm, "last_frame", lambda: None)
+    a._transcoder = SimpleNamespace(running=True, generation=a._call_gen,
+                                    last_jpeg=b"concealed")
+
+    async def scenario():
+        return await asyncio.wait_for(a.async_get_snapshot({}), 0.05)
+    assert asyncio.run(scenario()) == b"concealed"
+
+
+def test_an_earlier_calls_re_encoder_picture_is_not_used(acc, monkeypatch):
+    a, _procs, _gate = acc
+    monkeypatch.setattr(hk.sip, "ringing", lambda: False)
+    a._hub.in_call = False
+    monkeypatch.setattr(hk.hkm, "last_frame", lambda: b"grabber")
+    a._transcoder = SimpleNamespace(running=True, generation=a._call_gen - 1,
+                                    last_jpeg=b"previous visitor")
+    assert asyncio.run(a.async_get_snapshot({})) == b"grabber"
 
 
 def test_without_a_ring_the_snapshot_does_not_wait(acc, monkeypatch):

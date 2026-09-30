@@ -59,8 +59,10 @@ Italian and are kept as they were written.
 - The ring as a programmable button for Home app automations is an option, off by default.
 - Each HomeKit view logs where its opening time went, at INFO: at "stream started", and when the
   first audio packet reaches the phone.
-- The ring notification's picture waits up to 3 s for the ring's first frame instead of showing a
-  black image, and the Home tile keeps the last frame of a call or ring after it ends.
+- The ring notification's picture comes from the re-encoder, which conceals packets the relay lost,
+  so it is ready a few tenths of a second into the ring; without re-encoding it waits up to 3 s for
+  the ring's first complete frame. The Home tile keeps the last picture of a call or ring after it
+  ends.
 - The gate reports unlocked when it opens and then unknown, never locked: the intercom only pulses
   the strike.
 - `media_handler`: `rtp_sinks` on the audio and video RTP protocols, the taps the doorbell reads the
