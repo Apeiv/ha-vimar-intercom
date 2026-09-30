@@ -89,7 +89,7 @@ def _stub_ha() -> None:
     for sub in [
         "core", "config_entries", "const", "exceptions", "helpers", "helpers.entity", "helpers.entity_platform",
         "helpers.restore_state", "helpers.device_registry", "helpers.entity_registry", "helpers.storage", "helpers.event", "helpers.aiohttp_client",
-        "helpers.config_validation", "helpers.selector", "helpers.start", "components", "components.http", "components.camera",
+        "helpers.config_validation", "helpers.selector", "helpers.start", "requirements", "components", "components.http", "components.camera",
         "components.sensor", "components.binary_sensor", "components.switch", "components.button", "components.event",
         "components.lock", "components.select", "components.text", "components.number", "components.ffmpeg", "components.tts", "util", "util.dt",
         "components.file_upload", "data_entry_flow",

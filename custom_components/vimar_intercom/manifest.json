@@ -9,7 +9,9 @@
     "ffmpeg",
     "file_upload",
     "frontend",
-    "http"
+    "http",
+    "network",
+    "zeroconf"
   ],
   "documentation": "https://github.com/lollox80/ha-vimar-intercom/blob/main/README.md",
   "integration_type": "hub",

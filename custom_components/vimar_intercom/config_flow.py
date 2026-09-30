@@ -13,6 +13,7 @@ import socket
 import ssl
 import tempfile
 import time
+from datetime import timedelta
 from pathlib import Path
 
 import voluptuous as vol
@@ -34,6 +35,18 @@ from .const import (
     INTERNAL_PANEL_TARGET,
     PICG_TARGET,
     SGA_TARGET,
+    CONF_HOMEKIT_ACCESSORY,
+    CONF_HOMEKIT_ANSWER,
+    CONF_HOMEKIT_RING_BUTTON,
+    CONF_HOMEKIT_SMOOTH,
+    DEFAULT_HOMEKIT_ACCESSORY,
+    DEFAULT_HOMEKIT_ANSWER,
+    DEFAULT_HOMEKIT_RING_BUTTON,
+    DEFAULT_HOMEKIT_SMOOTH,
+    HOMEKIT_ANSWER_OPEN,
+    HOMEKIT_ANSWER_TALK,
+    HOMEKIT_DATA,
+    HOMEKIT_QR_URL,
 )
 from . import cloud_phonebook
 from . import discovery
@@ -826,6 +839,40 @@ class VimarIntercomConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return OptionsFlowHandler(config_entry)
 
 
+def _homekit_pairing_text(hass, entry_id) -> str:
+    """The setup code and QR of the HomeKit doorbell while it waits to be
+    paired, for the HomeKit options page.
+
+    Only here: the options are for administrators, and pairing gives live
+    video, Talk and the gate, which ``allowed_users`` keeps from other users.
+    The QR is an image behind an administrators-only view; the signed path
+    authenticates the browser as whoever opened this page."""
+    try:
+        info = hass.data.get(HOMEKIT_DATA, {}).get("pairing", {}).get(entry_id)
+    except AttributeError:
+        return ""
+    if not isinstance(info, dict) or not info.get("pin"):
+        return ""
+    italian = str(getattr(hass.config, "language", "") or "").startswith("it")
+    if italian:
+        text = ("Nell'app Casa: **Aggiungi accessorio**, poi inquadra il QR oppure scegli "
+                "*Altre opzioni* e inserisci il codice:")
+    else:
+        text = ("In the Home app: **Add Accessory**, then scan the QR code or choose "
+                "*More options* and enter the code:")
+    text += f"\n\n## {info['pin']}"
+    if info.get("svg") and info.get("token"):
+        try:
+            from homeassistant.components.http.auth import async_sign_path  # noqa: PLC0415
+
+            path = async_sign_path(hass, f"{HOMEKIT_QR_URL}?t={info['token']}",
+                                   timedelta(minutes=10))
+            text += f"\n\n![QR]({path})"
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("HomeKit: pairing QR link not signed")
+    return text
+
+
 class OptionsFlowHandler(config_entries.OptionsFlow):
     """Modifica le impostazioni di rete senza re-inserire le credenziali."""
 
@@ -845,7 +892,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         """Menu: impostazioni a mano, rubrica dal citofono, o file rubrica.db."""
         return self.async_show_menu(
             step_id="init",
-            menu_options=["settings", "fetch_rubrica", "fetch_rubrica_cloud", "import_rubrica"],
+            menu_options=["settings", "homekit", "fetch_rubrica", "fetch_rubrica_cloud", "import_rubrica"],
         )
 
     async def async_step_settings(
@@ -965,6 +1012,10 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 return self.async_create_entry(
                     title="",
                     data={
+                        # Options this page does not show (HomeKit) keep their
+                        # value; without this, saving the network settings
+                        # turned the HomeKit doorbell off.
+                        **self._entry.options,
                         KEY_LOCAL_PROXY:    local_proxy,
                         KEY_USE_LOCAL_UDP:  use_local_udp,
                         KEY_LOCAL_UDP_PORT: local_udp_port,
@@ -1109,6 +1160,51 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             description_placeholders={
                 "actuators_error": getattr(self, "_actuators_error", "") or "",
             },
+        )
+
+    async def async_step_homekit(
+        self, user_input: dict | None = None
+    ) -> FlowResult:
+        """The HomeKit video doorbell: on/off, video mode, when a ring is answered."""
+        if user_input is not None:
+            return self.async_create_entry(
+                title="",
+                data={
+                    **self._entry.options,
+                    CONF_HOMEKIT_ACCESSORY: bool(user_input.get(CONF_HOMEKIT_ACCESSORY)),
+                    CONF_HOMEKIT_SMOOTH: bool(user_input.get(CONF_HOMEKIT_SMOOTH)),
+                    CONF_HOMEKIT_ANSWER: user_input.get(
+                        CONF_HOMEKIT_ANSWER, DEFAULT_HOMEKIT_ANSWER),
+                    CONF_HOMEKIT_RING_BUTTON: bool(user_input.get(CONF_HOMEKIT_RING_BUTTON)),
+                },
+            )
+        current = self._entry.options
+        return self.async_show_form(
+            step_id="homekit",
+            description_placeholders={"pairing": _homekit_pairing_text(
+                getattr(self, "hass", None), getattr(self._entry, "entry_id", None))},
+            data_schema=vol.Schema({
+                vol.Optional(
+                    CONF_HOMEKIT_ACCESSORY,
+                    default=current.get(CONF_HOMEKIT_ACCESSORY, DEFAULT_HOMEKIT_ACCESSORY),
+                ): bool,
+                vol.Optional(
+                    CONF_HOMEKIT_SMOOTH,
+                    default=current.get(CONF_HOMEKIT_SMOOTH, DEFAULT_HOMEKIT_SMOOTH),
+                ): bool,
+                vol.Optional(
+                    CONF_HOMEKIT_ANSWER,
+                    default=current.get(CONF_HOMEKIT_ANSWER, DEFAULT_HOMEKIT_ANSWER),
+                ): selector.SelectSelector(selector.SelectSelectorConfig(
+                    options=[HOMEKIT_ANSWER_TALK, HOMEKIT_ANSWER_OPEN],
+                    translation_key="homekit_answer",
+                    mode=selector.SelectSelectorMode.LIST,
+                )),
+                vol.Optional(
+                    CONF_HOMEKIT_RING_BUTTON,
+                    default=current.get(CONF_HOMEKIT_RING_BUTTON, DEFAULT_HOMEKIT_RING_BUTTON),
+                ): bool,
+            }),
         )
 
     async def async_step_fetch_rubrica(

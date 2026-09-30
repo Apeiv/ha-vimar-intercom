@@ -48,6 +48,29 @@ Italian and are kept as they were written.
   arrives is logged (type and SSRC; every record for plain RTCP). Off by default: nothing is
   bound and nothing is sent.
 
+- **HomeKit video doorbell** (`homekit_accessory.py`), off by default: Options → HomeKit shows the
+  pairing QR code and setup code, to administrators only; the setup code changes after 10 wrong
+  attempts in a row. Ring notification, live video, two-way audio and the gate in one accessory. Home
+  Assistant's own HomeKit bridge cannot carry the talk direction: it answers the phone's
+  `SetupEndpoints` with the phone's own ports and never listens on them.
+- Video to the phone is re-encoded with one keyframe per second by default (a packet lost on the
+  cloud relay is a brief smear instead of a freeze of up to 3 s), or sent as the panel's own H.264
+  packets when the option is off.
+- During a ring, opening the view previews the street without answering, and the first word (Talk)
+  answers; an option answers as soon as the view opens instead. Closing the last HomeKit view ends a
+  call HomeKit placed or answered.
+- The ring as a programmable button for Home app automations is an option, off by default.
+- Each HomeKit view logs where its opening time went, at INFO: at "stream started", and when the
+  first audio packet reaches the phone.
+- The ring notification's picture comes from the re-encoder, which conceals packets the relay lost,
+  so it is ready a few tenths of a second into the ring; without re-encoding it waits up to 3 s for
+  the ring's first complete frame. The Home tile keeps the last picture of a call or ring after it
+  ends.
+- The gate reports unlocked when it opens and then unknown, never locked: the intercom only pulses
+  the strike.
+- `media_handler`: `rtp_sinks` on the audio and video RTP protocols, the taps the doorbell reads the
+  call from. `srtp`: `SRTCPContext`, checked byte for byte against libsrtp.
+
 ### Fixed
 
 Call and media:
@@ -183,6 +206,8 @@ Documentation:
 - New `docs/HARDWARE.md` (what differs between plants) and `docs/TEST_PLAN.md` (field test round).
   The Italian README inside the component folder is now a pointer to the root README.
 
+- Saving the network settings page dropped the options it does not show.
+
 ### Security
 
 - SRTP master keys are kept out of the logs: the parsed SDP keeps only the key it uses, the SDP
@@ -199,6 +224,7 @@ Documentation:
 - Log redaction: `sip_password=…` (key with a prefix), quoted values with spaces (`password="my
   secret"`, `token: 'x y z'`) and dict reprs (`{'sip_password': '…'}`) were left in clear in the
   debug buffer and in the Home Assistant log. They are masked now.
+
 
 ## [1.0.14] - 2026-09-30
 
