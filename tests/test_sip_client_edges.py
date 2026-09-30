@@ -1130,3 +1130,11 @@ def test_a_message_whose_authenticated_retry_gets_only_a_provisional_times_out(n
     net.script.extend([[lambda m: _reply(m, 407, extra=CHALLENGE)], [lambda m: _reply(m, 100)]])
     result = asyncio.run(sip.do_system_message("sip:55001@plant.example", "X", timeout=0.05))
     assert result == (False, "Timeout")
+
+
+def test_options_waits_past_a_provisional_answer_after_the_challenge(net):
+    """The authenticated OPTIONS got 100 Trying then 200 OK: the probe reported
+    "Errore: 100" from the provisional answer instead of the 200."""
+    net.script.extend([[lambda m: _reply(m, 407, extra=CHALLENGE)],
+                       [lambda m: _reply(m, 100), lambda m: _reply(m, 200)]])
+    assert asyncio.run(sip.do_options()) == (True, "OK: 200")

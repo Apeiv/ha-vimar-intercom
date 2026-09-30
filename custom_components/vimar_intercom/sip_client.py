@@ -2129,6 +2129,8 @@ async def do_options(target=None):
             await send(_msg(auth=_make_auth("OPTIONS", target, ch), seq=_next_cseq()))
             for r2 in await _wait_final(cid):
                 c2 = _parse(r2)[0]
+                if c2 and c2 < 200:
+                    continue  # 100 Trying: the final answer follows
                 if c2 and 200 <= c2 < 300:
                     return True, f"OK: {c2}"
                 return False, f"Errore: {c2}"
