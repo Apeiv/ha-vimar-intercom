@@ -1,4 +1,4 @@
-"""SRTP — AES_CM_128_HMAC_SHA1_80 encrypt/decrypt (RFC 3711).
+"""SRTP — AES_CM_128_HMAC_SHA1_80 and _32 encrypt/decrypt (RFC 3711).
 
 AES-CTR nativo via pycryptodome (già fra i requirements del manifest): nessun
 loop Python e nessuna dipendenza non dichiarata. Il contatore è il blocco da
@@ -40,13 +40,27 @@ def _kdf(master_key: bytes, master_salt: bytes, label: int, length: int) -> byte
     return _aes_cm_keystream(master_key, iv, length)
 
 
+# Supported SDES crypto suites and their SRTP authentication tag length (bytes).
+SUITE_TAG_LEN = {
+    "AES_CM_128_HMAC_SHA1_80": 10,
+    "AES_CM_128_HMAC_SHA1_32": 4,
+}
+
+
 class SRTPContext:
     """SRTP encryption/decryption context for one direction."""
 
     AUTH_TAG_LEN = 10  # 80-bit HMAC-SHA1
 
-    def __init__(self, master_key_b64: str):
-        """Initialize from base64-encoded inline key (30 bytes = 16 key + 14 salt)."""
+    def __init__(self, master_key_b64: str, suite: str = "AES_CM_128_HMAC_SHA1_80"):
+        """Initialize from base64-encoded inline key (30 bytes = 16 key + 14 salt).
+
+        suite: the SDES crypto suite (RFC 4568); _32 only shortens the SRTP
+        authentication tag to 32 bits.
+        """
+        if suite not in SUITE_TAG_LEN:
+            raise ValueError(f"unsupported SRTP suite: {suite}")
+        self.AUTH_TAG_LEN = SUITE_TAG_LEN[suite]
         raw = base64.b64decode(master_key_b64)
         if len(raw) < 30:
             raise ValueError(f"SRTP key too short: {len(raw)} bytes (need 30)")

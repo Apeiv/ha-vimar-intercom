@@ -17,6 +17,32 @@ _LOGGER = logging.getLogger(__name__)
 
 av_ffmpeg_proc = None
 _stderr_task: asyncio.Task | None = None
+# Set by _stop_av_ffmpeg_locked: from then on ffmpeg's lines are about the exit
+# we asked for (muxer, trailer, "Immediate exit requested"), not faults.
+_av_stopping = False
+
+# ffmpeg lines that are not faults: the decoder concealing a packet the relay
+# lost, the jitter buffer giving up on a late one, and the input timing out
+# when the call ends and RTP stops arriving.
+_HARMLESS_STDERR = (
+    "error while decoding mb", "invalid level prefix", "concealing",
+    "left block unavailable", "top block unavailable", "cbp too large",
+    "negative number of zero coeffs", "out of range intra chroma",
+    "corrupt decoded frame", "ac-tex damaged", "dquant out of range",
+    "mb_type", "rtp: missed", "max delay reached", "no frame!",
+    "non-existing pps", "decode_slice_header error", "dropping old packet",
+    "error during demuxing: operation timed out", "no filtered frames",
+    "immediate exit requested", "poorly interleaved",
+)
+_FAULT_WORDS = ("error", "failed", "invalid", "bind", "unable")
+
+
+def _stderr_is_fault(text: str) -> bool:
+    """Whether an ffmpeg stderr line is a real fault, worth a WARNING."""
+    low = text.lower()
+    if any(h in low for h in _HARMLESS_STDERR):
+        return False
+    return any(w in low for w in _FAULT_WORDS)
 
 
 class AvRtp:
@@ -48,6 +74,22 @@ class AvRtp:
 
 
 _AV_SDP_PATH = os.path.join(tempfile.gettempdir(), "vimar_intercom_av.sdp")
+
+# How long ffmpeg stays up after the last /av client left, while the call's
+# video is still coming: HA's stream worker and go2rtc reconnect within seconds,
+# and they find the process running instead of paying for a new one. The end
+# of the call (or of its video) still stops it at once (stop_av_ffmpeg).
+AV_IDLE_GRACE = 10.0
+_idle_stop: asyncio.Task | None = None
+
+# Where the kernel lists the bound UDP sockets (see _bound_udp_ports).
+_PROC_NET_UDP = ("/proc/net/udp", "/proc/net/udp6")
+# ffmpeg's RTP input ports, where the forwarding sends.
+_AV_INPUT_PORTS = frozenset({FFMPEG_AV_VIDEO_PORT, FFMPEG_AV_AUDIO_PORT})
+# ffmpeg used to get a fixed 0.3 s to bind its ports. The wait now ends as
+# soon as they are bound, and gives up after this long.
+FFMPEG_LISTEN_TIMEOUT = 0.5
+_FFMPEG_LISTEN_FALLBACK = 0.3
 
 # Serializza start/stop dell'ffmpeg AV: due /av concorrenti non devono
 # lanciare due processi che si contendono le stesse porte UDP.
@@ -96,6 +138,56 @@ def _seed_silence(audio_proto) -> None:
             pass
 
 
+def _bound_udp_ports() -> set[int] | None:
+    """Local ports of the UDP sockets bound on this host (network namespace).
+
+    Read from /proc/net/udp{,6} (blocking: run in an executor), None where it
+    does not exist. Reading is used instead of trying to bind the port
+    ourselves: a probe that holds the port for an instant can be the reason
+    ffmpeg's own bind fails.
+    """
+    ports: set[int] = set()
+    found = False
+    for path in _PROC_NET_UDP:
+        try:
+            with open(path, encoding="ascii", errors="replace") as f:
+                next(f, None)  # header
+                for line in f:
+                    fields = line.split()
+                    if len(fields) > 1 and ":" in fields[1]:
+                        with contextlib.suppress(ValueError):
+                            ports.add(int(fields[1].rsplit(":", 1)[1], 16))
+            found = True
+        except OSError:
+            continue
+    return ports if found else None
+
+
+async def _wait_until_ffmpeg_listens(proc, timeout: float = FFMPEG_LISTEN_TIMEOUT) -> bool:
+    """Wait until ffmpeg has bound its UDP input ports; True if it did.
+
+    RTP sent to a port nobody has bound yet is lost, and the first packets can
+    be the IDR the picture starts from. A fixed 0.3 s was usually too long and,
+    on a loaded machine, sometimes too short. Where the bound ports cannot be
+    read, the old fixed wait is kept; on timeout, or if ffmpeg exits, the
+    caller goes on as before (forward, or report the exit).
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while proc.poll() is None:
+        bound = await loop.run_in_executor(None, _bound_udp_ports)
+        if bound is None:
+            await asyncio.sleep(_FFMPEG_LISTEN_FALLBACK)
+            return False
+        if _AV_INPUT_PORTS <= bound:
+            return True
+        if loop.time() >= deadline:
+            _LOGGER.debug("AV ffmpeg: input ports not bound after %.1f s", timeout)
+            return False
+        await asyncio.sleep(0.01)
+    return False
+
+
 async def _start_av_ffmpeg_locked():
     """Start ffmpeg that reads H264+PCMU RTP and outputs MPEG-TS to pipe.
 
@@ -104,8 +196,9 @@ async def _start_av_ffmpeg_locked():
     nuovo bind), scrive l'SDP in executor, poi abilita il forward RTP verso
     ffmpeg SOLO dopo lo start.
     """
-    global av_ffmpeg_proc, _stderr_task
+    global av_ffmpeg_proc, _stderr_task, _av_stopping
     await _stop_av_ffmpeg_locked()
+    _av_stopping = False
 
     loop = asyncio.get_running_loop()
     try:
@@ -123,6 +216,10 @@ async def _start_av_ffmpeg_locked():
         # solo dopo 7 fotogrammi decodificati (has_decode_delay_been_guessed).
         # Sul campo la targa chiude dopo ~10 s. Misurato: 1,88 s → 0,08 s.
         "-fpsprobesize", "0", "-max_ts_probe", "0",
+        # Receive buffer of the RTP input. The forwarding reaches ffmpeg in bursts
+        # on loopback, and with the default buffer packets were lost ("RTP:
+        # missed N packets"), which broke the H.264 stream (fork, 0287148).
+        "-buffer_size", "655360",
         "-i", sdp_path,
         "-c:v", "copy",
         # G.711 non è un codec valido in MPEG-TS: con «copy» finiva come dati
@@ -136,8 +233,11 @@ async def _start_av_ffmpeg_locked():
         "-c:a", "aac", "-b:a", "32k", "-ar", "48000", "-ac", "1",
         # Mux senza attese: niente ritardo iniziale (default 0,7 s), le due
         # tracce escono al massimo 0,1 s l'una dall'altra, ogni pacchetto è
-        # scritto subito sulla pipe (PR #21).
-        "-muxdelay", "0", "-max_interleave_delta", "100000", "-flush_packets", "1",
+        # scritto subito sulla pipe (PR #21). -muxpreload 0 drops the default
+        # 0.5 s preload as well: both tracks come from the same call and share
+        # its time base, so there is nothing to wait for.
+        "-muxdelay", "0", "-muxpreload", "0",
+        "-max_interleave_delta", "100000", "-flush_packets", "1",
         "-f", "mpegts",
         "pipe:1",
     ]
@@ -153,9 +253,8 @@ async def _start_av_ffmpeg_locked():
     stderr_tail: collections.deque[str] = collections.deque(maxlen=20)
     # Riferimento tenuto: un task senza riferimenti può essere raccolto a metà lettura.
     _stderr_task = stderr_task = asyncio.create_task(_read_av_ffmpeg_stderr(proc, stderr_tail))
-    # Give ffmpeg a moment to bind the UDP recv ports before we start
-    # pushing RTP at them (avoids the very first packets being dropped).
-    await asyncio.sleep(0.3)
+    # RTP only once ffmpeg's UDP ports are bound: packets sent before are lost.
+    await _wait_until_ffmpeg_listens(proc)
     if av_ffmpeg_proc and av_ffmpeg_proc.poll() is None:
         if media.video_proto:
             media.video_proto.av_rtp = AvRtp(3000)  # ffmpeg nuovo: flusso nuovo
@@ -181,7 +280,8 @@ async def _start_av_ffmpeg_locked():
 
 
 # Un solo ffmpeg per tutti i client di /av (go2rtc e lo stream worker di HA lo
-# aprono insieme): il primo lo avvia, l'ultimo lo ferma, tutto sotto _av_lock.
+# aprono insieme): il primo lo avvia, l'ultimo lo ferma (after AV_IDLE_GRACE while
+# the call's video goes on), tutto sotto _av_lock.
 _av_clients: set[asyncio.Queue] = set()
 _av_pump: asyncio.Task | None = None
 
@@ -232,6 +332,7 @@ async def av_subscribe() -> asyncio.Queue | None:
         # la pump vecchia non se n'è ancora accorta (bloccata in read1(), vedi sopra) —
         # non aspettarla per ripartire, o una chiamata veloce dopo l'altra resterebbe
         # agganciata a una pump morente invece che a un ffmpeg nuovo.
+        _cancel_idle_stop()  # a client is back within the grace: keep ffmpeg
         if av_ffmpeg_proc is None or _av_pump is None or _av_pump.done():
             await _start_av_ffmpeg_locked()
             proc = av_ffmpeg_proc
@@ -243,11 +344,42 @@ async def av_subscribe() -> asyncio.Queue | None:
         return q
 
 
+def _call_video_live() -> bool:
+    """The call's video is still coming (stop_media clears remote_addr)."""
+    vp = media.video_proto
+    return bool(vp and vp.remote_addr)
+
+
+def _cancel_idle_stop() -> None:
+    global _idle_stop
+    if _idle_stop and _idle_stop is not asyncio.current_task():
+        _idle_stop.cancel()
+    _idle_stop = None
+
+
 async def av_unsubscribe(q: asyncio.Queue) -> None:
+    global _idle_stop
     async with _av_lock:
         _av_clients.discard(q)
-        if not _av_clients:
-            await _stop_av_ffmpeg_locked()
+        if _av_clients:
+            return
+        if av_ffmpeg_proc is not None and _call_video_live():
+            # The last client left but the call goes on: a client reconnecting
+            # within the grace finds ffmpeg running.
+            _cancel_idle_stop()
+            _idle_stop = asyncio.create_task(_stop_when_idle())
+            return
+        await _stop_av_ffmpeg_locked()
+
+
+async def _stop_when_idle() -> None:
+    """Stop ffmpeg if nobody came back to /av within AV_IDLE_GRACE."""
+    await asyncio.sleep(AV_IDLE_GRACE)
+    async with _av_lock:
+        if _av_clients or asyncio.current_task() is not _idle_stop:
+            return
+        _LOGGER.info("AV: no client for %.0f s, stopping ffmpeg", AV_IDLE_GRACE)
+        await _stop_av_ffmpeg_locked()
 
 
 async def stop_av_ffmpeg():
@@ -267,7 +399,9 @@ def _close_av_pipes(proc) -> None:
 
 async def _stop_av_ffmpeg_locked():
     """Actual stop — caller must hold _av_lock."""
-    global av_ffmpeg_proc
+    global av_ffmpeg_proc, _av_stopping
+    _cancel_idle_stop()
+    _av_stopping = True
     # Stop forwarding first so no more packets hit the (closing) ffmpeg.
     if media.video_proto:
         media.video_proto.forward_av = False
@@ -312,4 +446,11 @@ async def _read_av_ffmpeg_stderr(proc, tail: collections.deque[str]):
         text = line.decode(errors="replace").strip()
         if text:
             tail.append(text)
-            _LOGGER.debug("AV ffmpeg: %s", text)
+            # A fault at WARNING, so it reaches the Home Assistant log; the
+            # rest at DEBUG. Once we asked it to stop (or started another),
+            # everything this process says is about that exit.
+            stopping = _av_stopping or proc is not av_ffmpeg_proc
+            if not stopping and _stderr_is_fault(text):
+                _LOGGER.warning("AV ffmpeg: %s", text)
+            else:
+                _LOGGER.debug("AV ffmpeg: %s", text)

@@ -1,8 +1,10 @@
 """Vimar Intercom Hub — manages SIP + media lifecycle."""
 
 import asyncio
+import functools
 import logging
 import os
+import re
 import time
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -33,6 +35,14 @@ AUTO_CALL_COOLDOWN = 60
 QUICK_REOPEN_S = 5
 # Tetto del clip dello squillo (video dell'anteprima e, se rispondiamo noi, della chiamata).
 CLIP_MAX_S = 60
+# The longest a view opening during an automatic hang-up waits for it.
+HANGUP_SETTLE = 6.0
+# do_hangup ends the call locally (in_call false, media off) and then waits up
+# to 5 s for the answer to its BYE, which the cloud relay never sends. A view
+# waits only this long after the local end, not for that answer.
+HANGUP_LOCAL_SETTLE = 0.5
+# Upper bound for the whole automatic hang-up, BYE answer included.
+HANGUP_BYE_TIMEOUT = 8.0
 
 # Nomi "umani" degli indirizzi SIP dell'impianto
 SIP_ID_NAMES = {
@@ -50,6 +60,31 @@ def sip_uri(target) -> str:
     if t is None:
         raise ValueError(f"target SIP non valido: {target!r}")
     return f"sip:{t}@{R.SIP_DOMAIN}"
+
+
+def _plant_uri(uri: str) -> bool:
+    """True for sip:<digits>@<domain> on one of the plant's own domains."""
+    domains = {d for d in (R.SIP_DOMAIN, R.LOCAL_DOMAIN, R.CLOUD_DOMAIN) if d}
+    m = re.fullmatch(r"sip:(\d+)@([^\s]+)", uri or "")
+    return bool(m) and m.group(2) in domains
+
+
+def _command_uri(target: str) -> str | None:
+    """The URI for a command target: a plant id, or a whole plant URI."""
+    if str(target).startswith("sip:"):
+        return target if _plant_uri(target) else None
+    try:
+        return sip_uri(target)
+    except ValueError:
+        return None
+
+
+def _offers_video(sdp: str | None) -> bool:
+    """True when an SDP offer has an m=video line with a non-zero port."""
+    for m in re.finditer(r"^m=video[ \t]+(\d+)", sdp or "", re.M):
+        if int(m.group(1)) != 0:
+            return True
+    return False
 
 
 def _uri_to_id(uri: str | None) -> str | None:
@@ -77,13 +112,25 @@ class VimarIntercomHub:
 
     def __init__(self):
         self._tasks: list[asyncio.Task] = []
+        # Fire-and-forget tasks (see _spawn): the event loop keeps only weak
+        # references, so a task nobody holds can be collected half way.
+        self._background: set[asyncio.Task] = set()
         self._running = False
         self._ring_callbacks: list[Callable] = []
+        self._persist: Callable[[dict], None] | None = None
+        self._last_ring_panel: str | None = None
         self._video_end_callbacks: list[Callable] = []  # video finito: la camera ferma lo stream di HA
         self._state_callbacks: list[Callable] = []
         self._model_callbacks: list[Callable] = []
         self._ws_broadcast_fn: Callable | None = None
         self._has_ws_clients: Callable | None = None
+        # True from the start of an automatic hang-up until the call has ended
+        # locally (plus HANGUP_LOCAL_SETTLE) or its BYE is done, whichever comes
+        # first: a view opening meanwhile waits for it instead of joining a
+        # dying call. _hangup_done is set when the flag drops.
+        self._hanging_up = False
+        self._hangup_done: asyncio.Event | None = None
+        self._hangup_settle: asyncio.TimerHandle | None = None
         self._stream_viewers = 0
         self._hangup_task: asyncio.Task | None = None
         self._away_task: asyncio.Task | None = None
@@ -99,6 +146,7 @@ class VimarIntercomHub:
         self._keyframe_now: asyncio.Task | None = None
         media.request_keyframe = self._request_keyframe  # pacchetto video perso
         self._auto_called = False
+        self._auto_gen = 0  # which auto-call is the current one (_do_auto_call)
 
         # ─── Statistiche / stato esteso (esposte da sensor.py) ───────────
         self.stats: dict = {
@@ -188,6 +236,25 @@ class VimarIntercomHub:
         return sip.calling
 
     @property
+    def devices(self) -> list[dict]:
+        """The plant's devices seen so far on the SIP channel."""
+        return sip.DEVICES.snapshot()
+
+    @property
+    def devices_public(self) -> list[dict]:
+        """The device list as shown in Home Assistant: identifiers masked,
+        no addresses."""
+        return sip.DEVICES.snapshot(public=True)
+
+    @property
+    def devices_summary(self) -> list[str]:
+        return sip.DEVICES.describe(SIP_ID_NAMES, public=True)
+
+    def restore_devices(self, items) -> None:
+        """The device list saved before a restart (see DeviceInventory.load)."""
+        sip.DEVICES.load(items)
+
+    @property
     def _busy_now(self) -> bool:
         """Una chiamata nostra in corso o in partenza."""
         return sip.in_call or sip.calling
@@ -267,22 +334,48 @@ class VimarIntercomHub:
         return sip.in_call or sip.early_media()
 
     @property
+    def _call_in_view(self) -> bool:
+        """A call of ours is up or starting (an auto-call too), or a ring is on.
+
+        Shared by stream_opened and call_pending so the two cannot drift.
+        """
+        return bool(self._busy_now or sip.ringing() or self._auto_called)
+
+    @property
     def call_pending(self) -> bool:
         """Il video può ancora arrivare: chiamata attiva o in partenza (anche un
         auto-call), squillo, o l'app iOS collegata che chiamerà da sé. /av aspetta
         solo in questi casi, altrimenti 503 subito."""
-        return bool(self._busy_now or sip.ringing() or self._auto_called
+        return bool(self._call_in_view
                     or (self._has_ws_clients and self._has_ws_clients()))
 
     @property
     def is_ringing(self) -> bool:
         return sip.ringing()
 
+    def _spawn(self, coro, name: str) -> asyncio.Task:
+        """Run `coro` in the background, holding the task until it is done.
+
+        asyncio keeps only a weak reference to a task: a bare create_task()
+        can be garbage collected before it finishes. An exception is logged
+        here, since nobody awaits the task.
+        """
+        task = asyncio.create_task(coro, name=f"vimar_intercom {name}")
+        self._background.add(task)
+
+        def _done(t: asyncio.Task) -> None:
+            self._background.discard(t)
+            if not t.cancelled() and t.exception() is not None:
+                _LOGGER.error("%s failed: %s", name, t.exception(), exc_info=t.exception())
+
+        task.add_done_callback(_done)
+        return task
+
     def fire_ring_callbacks(self) -> None:
         """Evento doorbell → automazioni. Da solo è lo squillo di prova
         (servizio simulate_ring): niente SIP, push, WebSocket né statistiche."""
         if R.RING_WEBHOOK_URL:
-            asyncio.create_task(webhook.fire(R.RING_WEBHOOK_URL))
+            self._spawn(webhook.fire(R.RING_WEBHOOK_URL), "ring webhook")
         for cb in self._ring_callbacks:
             try:
                 cb()
@@ -383,18 +476,22 @@ class VimarIntercomHub:
             self._auto_ended_at = time.monotonic()
             self._video_ended()
         self._was_busy = busy
+        if self._hanging_up and not busy and self._hangup_settle is None:
+            # The automatic hang-up has ended the call locally; its BYE may
+            # still wait for an answer that never comes on the cloud.
+            try:
+                self._hangup_settle = asyncio.get_running_loop().call_later(
+                    HANGUP_LOCAL_SETTLE, self._end_hanging_up, self._hangup_done)
+            except RuntimeError:
+                self._end_hanging_up(self._hangup_done)
         self._touch()
         # Notify WS clients of state change
         if self._ws_broadcast_fn:
-            task = asyncio.create_task(self._ws_broadcast_fn({
+            self._spawn(self._ws_broadcast_fn({
                 "type": "state",
                 "registered": sip.registered,
                 "in_call": sip.in_call,
-            }))
-            task.add_done_callback(
-                lambda t: _LOGGER.error("WS state broadcast error: %s", t.exception())
-                if not t.cancelled() and t.exception() else None
-            )
+            }), "WS state broadcast")
 
     async def stream_opened(self) -> bool:
         """Uno spettatore apre /av. False = niente chiamata in vista, inutile aspettare."""
@@ -405,11 +502,30 @@ class VimarIntercomHub:
             self._hangup_task.cancel()
             self._hangup_task = None
 
+        # A hang-up in progress means that call is dying: joining it means seeing
+        # it close a moment later. Wait for it to end, then call again.
+        if self._hanging_up and self._hangup_done is not None:
+            started = time.monotonic()
+            try:
+                await asyncio.wait_for(self._hangup_done.wait(), HANGUP_SETTLE)
+            except asyncio.TimeoutError:
+                pass
+            _LOGGER.info("Hang-up in progress: waited %.1fs before calling again",
+                         time.monotonic() - started)
+            if self._stream_viewers == 0:
+                # The viewer left while waiting: nobody to call for.
+                _LOGGER.info("The viewer left during the hang-up: no call")
+                return False
+
         # Chiamata in corso, in partenza o in arrivo (vedi call_pending): si aspetta il
         # video, senza chiamare né rispondere da soli (uno stream aperto ruberebbe lo
         # squillo al Tab). Altrimenti, nella pausa AUTO_CALL_COOLDOWN, una riapertura
         # subito dopo l'uscita dell'ultimo spettatore non chiama e riceve 503.
-        if self.call_pending:
+        # Not call_pending: an audio WebSocket open anywhere (a dashboard with the
+        # card, a phone with the app) is global state, not this viewer's call,
+        # and it used to stop every HomeKit view from calling: 15 s of waiting,
+        # then "No response" in the Home app without a line in the log.
+        if self._call_in_view:
             return True
         now = time.monotonic()
         if now - self._viewers_left_at < QUICK_REOPEN_S and now - self._auto_ended_at < AUTO_CALL_COOLDOWN:
@@ -419,24 +535,78 @@ class VimarIntercomHub:
 
         if sip.registered:
             self._auto_called = True
+            self._auto_gen += 1
             # Fire auto-call as background task — don't block the HTTP response
-            asyncio.create_task(self._do_auto_call())
+            self._spawn(self._do_auto_call(self._auto_gen), "auto-call")
             return True
         return False
 
-    async def _do_auto_call(self):
-        """Background auto-call when video stream opens without active call."""
+    async def _do_auto_call(self, gen: int | None = None):
+        """Background auto-call when video stream opens without active call.
+
+        gen: the auto-call this is. A failure resets the auto-call flag only
+        if no newer auto-call has started meanwhile: it is that one's flag.
+        """
         try:
             # Default di do_call: R.INTERCOM, cioè la targa video (camera_target).
             ok, msg = await sip.do_call(silence_limit=R.VIEW_KEEPALIVE)
+            alt = None if ok else self._camera_fallback(msg)
+            if alt:
+                _LOGGER.warning(
+                    "Video panel %s did not answer (%s): trying %s, the panel "
+                    "that last rang", R.CAMERA_TARGET, msg, alt)
+                ok, msg = await sip.do_call(target=sip_uri(alt), silence_limit=R.VIEW_KEEPALIVE)
+                if ok:
+                    self._learn_camera_target(alt)
         except Exception as e:  # noqa: BLE001
             ok, msg = False, str(e)
+        current = gen is None or gen == self._auto_gen
+        if (ok and current and self._stream_viewers == 0 and self._auto_called
+                and self._busy_now and not self._hanging_up
+                and (self._hangup_task is None or self._hangup_task.done())):
+            # The viewer left between stream_opened and do_call raising
+            # `calling`: stream_closed saw no call and scheduled nothing, so
+            # the call would stay up with nobody watching until the 5 minute cap.
+            _LOGGER.info("Auto-call connected with no viewers left: hanging up")
+            self._hangup_task = asyncio.create_task(self._delayed_hangup())
         if not ok:
             # Anche un fallito che non è mai arrivato a `calling` (es. squillo in
             # corso): i retry di go2rtc non devono richiamare subito.
             _LOGGER.error("Auto-call failed: %s", msg)
-            self._auto_called = False
+            if gen is None or gen == self._auto_gen:
+                self._auto_called = False
             self._auto_ended_at = time.monotonic()
+
+    def set_persist_callback(self, callback: Callable[[dict], None]) -> None:
+        """Who saves the values learned from the plant into the entry."""
+        self._persist = callback
+
+    def _camera_fallback(self, result: str) -> str | None:
+        """Another video panel to try when the configured one does not exist.
+
+        The default panel id comes from the reference plant; on another plant
+        the same call answers 404 and auto-call never starts. The panel that
+        last rang certainly exists and sends video. Only when nobody chose the
+        panel: an explicit choice is never replaced. A busy panel (486) is not
+        a missing one, and neither is one temporarily unavailable (480).
+        """
+        if R.CAMERA_TARGET_CONFIGURED:
+            return None
+        code = (result or "").split(" ", 1)[0]
+        if code not in ("404", "604"):
+            return None
+        alt = self._last_ring_panel
+        return alt if alt and alt != R.CAMERA_TARGET else None
+
+    def _learn_camera_target(self, panel: str) -> None:
+        R.CAMERA_TARGET = panel
+        R.INTERCOM = sip_uri(panel)
+        _LOGGER.warning(
+            "Video panel learned from the plant and saved: %s. To forget it, set "
+            "the camera target in the integration options (that replaces "
+            "learned_camera_target)", panel)
+        if self._persist:
+            self._persist({"learned_camera_target": panel})
 
     async def stream_closed(self):
         self._stream_viewers = max(0, self._stream_viewers - 1)
@@ -456,9 +626,63 @@ class VimarIntercomHub:
             if self._stream_viewers == 0 and self._auto_called and self._busy_now:
                 _LOGGER.info("No viewers, hanging up auto-call")
                 self._auto_called = False
-                await sip.do_hangup()
+                # From here the hang-up runs to the end. A view opening now
+                # cancels this task, and that used to cut the BYE half way:
+                # in_call stayed true, the panel stayed busy (486 on the next
+                # call). The flag is cleared by the local end of the call (see
+                # _on_sip_state_change) or by the end of the BYE, not of this
+                # task, so the new view keeps waiting for it.
+                done = self._begin_hanging_up()
+                bye = asyncio.ensure_future(
+                    asyncio.wait_for(sip.do_hangup(), HANGUP_BYE_TIMEOUT))
+                bye.add_done_callback(functools.partial(self._hangup_finished, done))
+                # Held until done: it outlives this task when a view cancels it.
+                self._background.add(bye)
+                bye.add_done_callback(self._background.discard)
+                try:
+                    await asyncio.shield(bye)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:  # noqa: BLE001
+                    pass  # logged by _hangup_finished
         except asyncio.CancelledError:
             pass
+
+    def _begin_hanging_up(self) -> asyncio.Event:
+        """Raise the hang-up guard; the Event returned identifies this guard."""
+        if self._hangup_settle is not None:
+            self._hangup_settle.cancel()
+            self._hangup_settle = None
+        self._hanging_up = True
+        self._hangup_done = asyncio.Event()
+        return self._hangup_done
+
+    def _end_hanging_up(self, done: asyncio.Event | None = None) -> None:
+        """Drop the hang-up guard `done` (the current one when None).
+
+        A hang-up that finishes after a newer one started only wakes its own
+        waiters: the newer guard stays up until its own call has ended.
+        """
+        if done is not None and done is not self._hangup_done:
+            done.set()
+            return
+        if self._hangup_settle is not None:
+            self._hangup_settle.cancel()
+            self._hangup_settle = None
+        self._hanging_up = False
+        if self._hangup_done is not None:
+            self._hangup_done.set()
+
+    def _hangup_finished(self, done: asyncio.Event, task: asyncio.Future,
+                         log: bool = True) -> None:
+        """Done callback of a hang-up: log its failure, drop its own guard."""
+        if log and not task.cancelled() and (exc := task.exception()) is not None:
+            if isinstance(exc, asyncio.TimeoutError):
+                _LOGGER.warning("Automatic hang-up: no end after %.0fs",
+                                HANGUP_BYE_TIMEOUT)
+            else:
+                _LOGGER.warning("Automatic hang-up failed: %r", exc)
+        self._end_hanging_up(done)
 
     def _start_call_timeout(self):
         """Start max call duration timer."""
@@ -481,11 +705,11 @@ class VimarIntercomHub:
             pass
 
     def _request_keyframe(self):
-        """Pacchetto video perso (media_handler): keyframe subito, non al giro dei 5 s."""
+        """Pacchetto video perso (media_handler): keyframe subito, non al prossimo IDR."""
         self._keyframe_now = asyncio.create_task(sip.send_keyframe_request())
 
     def _start_keyframe_loop(self):
-        """Send periodic keyframe requests during calls for video recovery."""
+        """Ask for a keyframe at call start (a short burst, see _keyframe_loop)."""
         self._cancel_keyframe_loop()
         self._keyframe_task = asyncio.create_task(self._keyframe_loop())
 
@@ -495,11 +719,16 @@ class VimarIntercomHub:
             self._keyframe_task = None
 
     async def _keyframe_loop(self):
-        """Keyframe burst at start, then slow periodic refresh.
+        """Keyframe burst at call start, and nothing after it.
 
-        Il burst serve a ottenere SPS/PPS+IDR appena parte il video. Dopo,
-        se il video sta effettivamente arrivando (pkt_count cresce) rallentiamo
-        molto: un INFO ogni 2s spammava il proxy (e i 407) senza utilità.
+        Il burst serve a ottenere SPS/PPS+IDR appena parte il video, e si ferma
+        appena i pacchetti video arrivano.
+
+        No periodic refresh afterwards: on the plants tested the panel ignores
+        picture_fast_update and sends its keyframes on its own clock (about
+        every 3 s on a Tab 7S Up 40517, not configurable), and each INFO is a
+        transaction through the cloud relay for the whole call. A lost video
+        packet still asks for a keyframe at once (media_handler._lost).
         """
         def _video_flowing():
             vp = media.video_proto
@@ -517,11 +746,6 @@ class VimarIntercomHub:
                 if _video_flowing():
                     break
                 await sip.send_keyframe_request()
-            # Then slow refresh: every 5s, only while the call lasts.
-            while sip.in_call:
-                await asyncio.sleep(5)
-                if sip.in_call:
-                    await sip.send_keyframe_request()
         except asyncio.CancelledError:
             pass
 
@@ -554,11 +778,27 @@ class VimarIntercomHub:
 
     async def async_stop(self):
         self._running = False
+        if self._busy_now:
+            # Unloading mid-call left the panel on until its own timeout.
+            # On the cloud this wait always runs to the 3 s timeout: the BYE
+            # leaves and the call ends locally at once, but the relay never
+            # answers the BYE, and do_hangup waits for that answer.
+            try:
+                await asyncio.wait_for(sip.do_hangup(), timeout=3)
+            except Exception as e:  # noqa: BLE001
+                _LOGGER.debug("Hang-up on unload failed: %s", e)
         for t in self._tasks:
             t.cancel()
         self._tasks.clear()
         if self._hangup_task:
             self._hangup_task.cancel()
+        # Webhooks, auto-call, a hang-up's BYE: nothing of this hub may run on
+        # after unload (a stale auto-call would call from the unloaded hub).
+        for t in list(self._background):
+            t.cancel()
+        if self._hangup_settle is not None:
+            self._hangup_settle.cancel()
+            self._hangup_settle = None
         sip.cancel_reconnect()  # non deve riconnettere un hub scaricato
         self._cancel_away()
         if self._photo_task:
@@ -577,6 +817,7 @@ class VimarIntercomHub:
                 sip._udp_sock.close()
             except Exception:
                 pass
+        sip.reset_state()
         _LOGGER.info("Hub stopped")
 
     async def async_call(self, target: str | None = None) -> tuple[bool, str]:
@@ -638,10 +879,36 @@ class VimarIntercomHub:
         return (True, "Squillo rifiutato") if declined else (False, "Nessuna chiamata in arrivo")
 
 
-    async def async_hangup(self):
+    async def async_hangup(self) -> None:
+        """Hang up (the Hang up button, the card, HomeKit).
+
+        Goes through the same guard as the automatic hang-up: a view opening
+        meanwhile waits for this call to end instead of joining it. The BYE
+        runs in the background and this returns once the call has ended
+        locally: the cloud never answers a BYE, and waiting for that answer
+        held the caller for 5 s. A hang-up that fails before the call ends
+        locally raises, as before.
+        """
         self._auto_called = False  # chiusa da noi: niente riaggancio automatico
         self._cancel_call_timeout()
-        await sip.do_hangup()
+        ended = asyncio.Event()
+        done = self._begin_hanging_up()
+        bye = self._spawn(self._bye(ended.set), "hang-up")
+        bye.add_done_callback(functools.partial(self._hangup_finished, done, log=False))
+        local_end = asyncio.ensure_future(ended.wait())
+        try:
+            await asyncio.wait({bye, local_end}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            local_end.cancel()
+        if bye.done() and not bye.cancelled() and bye.exception() is not None:
+            raise bye.exception()
+
+    async def _bye(self, on_local_end: Callable[[], None]) -> None:
+        try:
+            await asyncio.wait_for(sip.do_hangup(on_local_end=on_local_end),
+                                   HANGUP_BYE_TIMEOUT)
+        except asyncio.TimeoutError:
+            _LOGGER.warning("Hang-up: no end after %.0fs", HANGUP_BYE_TIMEOUT)
 
     async def async_door(self, target: str | None = None, command: str | None = None) -> tuple[bool, str]:
         """Open door via SIP MESSAGE to targa (PE) address.
@@ -710,6 +977,10 @@ class VimarIntercomHub:
         """
         target = target or R.SGA_TARGET
         if target.startswith("sip:"):
+            # A whole URI goes into the request line as it is: only a plant id
+            # on one of the plant's own domains, exactly sip:<digits>@<domain>.
+            if not _plant_uri(target):
+                return False, "target non valido"
             uri = target
         else:
             uri = sip_uri(target)
@@ -754,10 +1025,16 @@ class VimarIntercomHub:
         _LOGGER.debug("[%s] %s", msg_type, msg)
         self._update_stats(msg_type, msg)
 
+        # The end of an earlier call, arriving after another one started
+        # (do_hangup broadcasts only after stop_media): stale for the card too,
+        # which would close the view of the call that is up.
+        stale_end = msg_type == "call_ended" and self._busy_now
         if msg_type in ("ring", "ring_ended", "call_started", "call_ended", "registered", "error"):
             # Don't broadcast "ring" to WS clients if we initiated the call
             if msg_type == "ring" and self._busy_now:
                 pass  # Will be handled below (suppress + decline)
+            elif stale_end:
+                pass
             elif self._ws_broadcast_fn:
                 try:
                     payload = {
@@ -781,6 +1058,11 @@ class VimarIntercomHub:
         elif msg_type == "call_started":
             self._start_call_timeout()
             self._start_keyframe_loop()
+        elif stale_end:
+            # The end of an earlier call, arriving after another one started
+            # (do_hangup broadcasts only after stop_media): touching timers and
+            # flags now would break the new call.
+            _LOGGER.debug("Late call_ended: another call is already up, ignored")
         elif msg_type == "call_ended":
             self._cancel_call_timeout()
             self._cancel_keyframe_loop()
@@ -802,7 +1084,9 @@ class VimarIntercomHub:
             if self._busy_now:
                 _LOGGER.info("Squillo ignorato: è l'eco della nostra chiamata (in_call=%s, calling=%s)",
                              sip.in_call, sip.calling)
-                asyncio.create_task(sip.do_decline_incoming())
+                # 486, not the default 603: a 6xx means "decline everywhere", and
+                # the PBX propagates it and cancels the ring on the Tab too.
+                self._spawn(sip.do_decline_incoming("486 Busy Here"), "echo ring decline")
                 return
 
             # Solo qui, non in fire_ring_callbacks(): quel metodo lo chiama anche il
@@ -827,7 +1111,7 @@ class VimarIntercomHub:
                 self._ring_time = now.isoformat(timespec="milliseconds")
                 ring = {"time": self._ring_time, "photo": name, "clip": stem + ".mp4",
                         "outcome": "missed", "caller": _uri_to_id(sip.pending_incoming.get("caller_uri"))}
-                asyncio.create_task(self._ring_log(lambda rings: rings.append(ring)))
+                self._spawn(self._ring_log(lambda rings: rings.append(ring)), "ring log")
                 # Clip come un Ring: il video dello squillo, dall'anteprima alla fine (o
                 # alla fine della chiamata se rispondiamo noi), fino a CLIP_MAX_S.
                 frame_grabber.record(os.path.join(R.SNAPSHOT_DIR, stem + ".mp4"), CLIP_MAX_S, self._clip_done)
@@ -847,7 +1131,7 @@ class VimarIntercomHub:
         if self._was_ringing and not self.is_ringing:
             self._was_ringing = False
             if R.RING_END_WEBHOOK_URL:
-                asyncio.create_task(webhook.fire(R.RING_END_WEBHOOK_URL))
+                self._spawn(webhook.fire(R.RING_END_WEBHOOK_URL), "ring end webhook")
 
     async def _ring_log(self, change: Callable[[list], None]) -> None:
         try:
@@ -869,7 +1153,7 @@ class VimarIntercomHub:
                 if r.get("time") == key:
                     r["outcome"] = outcome
 
-        asyncio.create_task(self._ring_log(change))
+        self._spawn(self._ring_log(change), "ring log")
 
     async def _save_ring_photo(self, name: str) -> None:
         """Foto di chi ha suonato (anteprima dello squillo) nella cartella delle opzioni,
@@ -954,6 +1238,11 @@ class VimarIntercomHub:
                     st["last_ring_time"] = now
                     st["last_caller_uri"] = caller or None
                     st["last_caller_id"] = _uri_to_id(caller)
+                    # Only a caller that offered video can stand in for the video
+                    # panel: a phone or an audio-only door station cannot.
+                    if ((st["last_caller_id"] or "").isdigit()
+                            and _offers_video(sip.pending_incoming.get("body"))):
+                        self._last_ring_panel = st["last_caller_id"]
                     st["ring_count"] += 1
                     self._ring_answered = False
                     self._ring_declined = False
@@ -969,7 +1258,7 @@ class VimarIntercomHub:
                 st["call_count"] += 1
                 if not self._ring_answered:
                     st["last_call_direction"] = "out"
-            elif msg_type == "call_ended":
+            elif msg_type == "call_ended" and not self._busy_now:
                 st["last_call_end"] = now
                 if self._call_started_mono is not None:
                     st["last_call_duration"] = round(time.monotonic() - self._call_started_mono, 1)
@@ -1463,12 +1752,16 @@ class VimarIntercomHub:
         Funziona sia in UDP locale sia in cloud TLS.
         """
         try:
-            ok, msg = await self.async_send_command(
-                body=C.GET_INIT_STATUS,
-                target=R.PICG_TARGET,
-                header_name="Panda",
-                header_value="blue",
-            )
+            # Sent directly, not through async_send_command: that one records
+            # the user's last command (last_command_* sensors), and the switches
+            # ask for the status after every command, so the sensor showed
+            # GET_INIT_STATUS instead of what the user did.
+            uri = _command_uri(R.PICG_TARGET)
+            if uri is None:
+                ok, msg = False, "target non valido"
+            else:
+                ok, msg = await sip.do_system_message(
+                    uri, C.GET_INIT_STATUS, extra_headers={"Panda": "blue"})
             # Solo se l'invio e' riuscito: altrimenti il ramo di retry del
             # keepalive (if not self._init_status_sent) non potrebbe mai
             # scattare e i sensori resterebbero a None fino al riavvio di HA.
@@ -1507,17 +1800,70 @@ class VimarIntercomHub:
         except Exception as e:
             _LOGGER.error("Auto startup error: %s", e, exc_info=True)
 
+    def _keepalive_due(self, last_tick: float) -> float:
+        """When the next keepalive tick is due (time.monotonic()).
+
+        REGISTER_INTERVAL after the last tick, or renew_delay() after the last
+        successful REGISTER when that comes first: a registrar that grants 60 s
+        would otherwise see the binding lapse 60 s into every 120 s cycle.
+        """
+        due = last_tick + sip.REGISTER_INTERVAL
+        if sip.registered and sip.registered_at:
+            due = min(due, max(last_tick, sip.registered_at) + sip.renew_delay())
+        return due
+
     async def _keepalive_loop(self):
+        # Wakes at least every MIN_REGISTER_INTERVAL to notice a REGISTER done
+        # elsewhere (startup, reconnect) and the lifetime it was granted: the
+        # first one lands while this loop is already waiting.
+        last_tick = time.monotonic()
         while self._running:
-            await asyncio.sleep(120)
+            remaining = self._keepalive_due(last_tick) - time.monotonic()
+            if remaining > 0:
+                await asyncio.sleep(min(remaining, sip.MIN_REGISTER_INTERVAL))
+                continue
+            last_tick = time.monotonic()
             await self._keepalive_tick()
+
+    async def async_register_now(self) -> bool:
+        """Register again at once, instead of at the next keepalive tick.
+
+        The options flow's SIP test registers with our identity and then
+        removes its binding (Expires: 0): where the registrar matches bindings
+        by +sip.instance, that removes the live one too, and incoming calls
+        would be missed until the next renewal.
+        """
+        ok = await sip.do_register()
+        _LOGGER.info("SIP re-registration after the options test: %s", "OK" if ok else "FAILED")
+        return ok
 
     async def _keepalive_tick(self):
         """Un giro di keepalive. Separato dal loop per poterlo testare."""
         try:
+            failed = False  # one failed tick counts as one failure
             if sip.registered:
                 ok = await sip.do_register()
                 _LOGGER.debug("Keepalive: %s", "OK" if ok else "FAILED")
+                if not ok:
+                    self.stats["register_failures"] += 1
+                    failed = True
+                if not ok and (sip.in_call or sip.calling):
+                    # A reconnect would tear down the connection the live call
+                    # runs on for one lost REGISTER answer. Retry the REGISTER
+                    # once; if the connection is really gone the reader notices
+                    # and reconnects on its own.
+                    _LOGGER.warning("SIP re-registration failed during a call: retrying once")
+                    ok = await sip.do_register()
+                elif not ok:
+                    # We were registered and the renewal failed: reconnect now,
+                    # not a whole keepalive interval later with the intercom
+                    # unreachable meanwhile. sip.reconnect() joins an attempt
+                    # already running (the reader's), it never starts a second.
+                    _LOGGER.warning("SIP re-registration failed: reconnecting now")
+                    ok = await sip.reconnect()
+                    if ok:
+                        self._init_status_sent = False
+                        _LOGGER.info("Registrazione SIP recuperata")
             else:
                 # Fino alla 1.0.5 questo ramo non esisteva: la guardia era
                 # `if sip.registered`, quindi persa la registrazione il loop
@@ -1540,7 +1886,7 @@ class VimarIntercomHub:
                 # invio fallito / reconnect dopo offline), riprova ora.
                 if not self._init_status_sent:
                     await self._request_init_status()
-            else:
+            elif not failed:
                 self.stats["register_failures"] += 1
             self._touch()
         except Exception as e:

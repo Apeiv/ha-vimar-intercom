@@ -33,16 +33,18 @@
       },
       "network": {
         "title": "Local network",
-        "description": "Enter the local IP of the intercom. A SIP registration test will be performed. User: {sip_user}@{sip_domain} — MAC: {mac}. On error: {error_detail}",
+        "description": "Enter the local IP of the intercom. Plant: {plant}. Setup registers for real on the expected transport and, if that fails, tries the other one (local UDP or cloud TLS) and keeps whichever works. User: {sip_user}@{sip_domain}, MAC: {mac}. On error: {error_detail}",
         "data": {
           "local_proxy": "Intercom IP (local proxy)",
-          "use_local_udp": "Use local UDP (recommended)",
-          "local_udp_port": "Local UDP port"
+          "use_local_udp": "Try local UDP first",
+          "local_udp_port": "Local UDP port",
+          "device_name": "Device name"
         },
         "data_description": {
           "local_proxy": "The local IP address of your Vimar intercom (e.g. 192.168.1.100).",
-          "use_local_udp": "Enable local UDP mode. Requires HA and the intercom to be on the same network.",
-          "local_udp_port": "UDP port used by HA for local SIP. Default: 5060."
+          "use_local_udp": "Preset from the plant type in the QR. Due Fili Plus EVO plants only deliver calls through the cloud relay; if the first path fails, the other one is tried.",
+          "local_udp_port": "UDP port used by HA for local SIP. Default: 5060.",
+          "device_name": "The name the integration shows the intercom (MyName header). The pairing binds it to the credential: do not change it once registered."
         }
       },
       "zeroconf_confirm": {
@@ -54,11 +56,15 @@
       "qr_invalid": "Invalid or unrecognized QR code.",
       "required": "This field is required.",
       "invalid_ip": "Invalid IP address.",
+      "invalid_device_name": "Invalid name: 1 to 64 printable characters, no control characters.",
       "sip_registration_failed": "SIP registration failed. Check that the intercom IP is correct and reachable from HA."
     },
     "abort": {
       "already_configured": "Device is already configured.",
       "no_mac": "The intercom announced itself without a MAC: add it by hand from Settings → Devices & services."
+    },
+    "create_entry": {
+      "transport_fallback": "Home Assistant could not register over {tried} and uses {used} instead: {detail}. It works, but if you expected {tried}, check the intercom's network settings."
     },
     "flow_title": "{name} ({host})"
   },
@@ -105,7 +111,7 @@
           "actuators": "JSON list of objects name, msg, target, icon. icon: door|light|switch. target \"AUTO\" uses the panel that opens the door. Empty = no buttons.",
           "sga_target": "Target for VOICEMAIL;/DND;, and for the door-open command when “Entrance panel that opens the door” is empty. Empty = historical default (55001). Change it only if your system uses a different SGA (SYSTEM.MAGIC_APT_INTERCOM in rubrica.db).",
           "picg_target": "Target for GET_INIT_STATUS. On systems verified so far it matches the SGA. Empty = historical default (55001).",
-          "camera_target": "Panel called by the camera, by “Chiama” and by “Chiama Video (esterno)”: the PHONEBOOK row with TYPE='PE' in rubrica.db (the phonebook import fills it in). Empty = historical default (55100). This is not the SGA.",
+          "camera_target": "Panel called by the camera, by “Chiama” and by “Chiama Video (esterno)”: the PHONEBOOK row with TYPE='PE' in rubrica.db (the phonebook import fills it in). Empty = the panel learned from the last ring with video, else 55100. This is not the SGA.",
           "internal_panel_target": "Target of the “Chiama Casa (interno)” button. The phonebook does not say which one it is: enter it by hand. Empty = historical default (55002).",
           "door_target": "Where the door-open command goes: the GID_PE of the door actuator in the phonebook (on a 2FV2 it is not the SGA). Filled in by importing or downloading the phonebook. Empty = the door actuator's panel if actuators were imported, otherwise the SGA.",
           "away_message_file": "Audio file (mp3, wav...) played to the visitor when nobody answers, e.g. /config/media/citofono/messaggio.mp3 (or pick the file on the device page: upload it from Media > Local media > citofono/messaggi). Empty = off.",

@@ -7,6 +7,7 @@ intercettiamo i NAL prodotti tramite _queue_nal.
 """
 from __future__ import annotations
 
+import asyncio
 import shutil
 import socket
 import struct
@@ -139,9 +140,9 @@ def test_sequenza_che_torna_indietro_non_esce_fuori_ordine():
     """Campo: «FU-A seq gap: expected 37 got 23 (gap=65522)» a inizio chiamata."""
     p, got, calls = _video_rx()
     for seq in range(20, 37):
-        p.datagram_received(_pkt(seq), None)
+        p.datagram_received(_pkt(seq), p.remote_addr)
     for seq in range(23, 41):          # stessi numeri di nuovo (duplicati/replay)
-        p.datagram_received(_pkt(seq), None)
+        p.datagram_received(_pkt(seq), p.remote_addr)
     assert got == list(range(20, 41))  # in ordine, niente duplicati
     assert len(calls) < 100            # niente giro di 65 000 sequenze
 
@@ -149,17 +150,17 @@ def test_sequenza_che_torna_indietro_non_esce_fuori_ordine():
 def test_nuovo_ssrc_risincronizza():
     p, got, _ = _video_rx()
     for seq in range(40000, 40010):
-        p.datagram_received(_pkt(seq, 1), None)
+        p.datagram_received(_pkt(seq, 1), p.remote_addr)
     for seq in range(5, 10):
-        p.datagram_received(_pkt(seq, 2), None)
+        p.datagram_received(_pkt(seq, 2), p.remote_addr)
     assert got == list(range(40000, 40010)) + list(range(5, 10))
 
 
 def test_buco_nella_sequenza_si_salta():
     p, got, _ = _video_rx()
-    p.datagram_received(_pkt(20), None)
+    p.datagram_received(_pkt(20), p.remote_addr)
     for seq in range(30, 40):          # 21..29 persi; IDR: i P dopo un buco si scartano
-        p.datagram_received(_pkt(seq, nal=0x65), None)
+        p.datagram_received(_pkt(seq, nal=0x65), p.remote_addr)
     assert got == [20] + list(range(30, 40))[:len(got) - 1]
     assert got[-1] >= 34               # al più REORDER_BUF_SIZE pacchetti trattenuti
 
@@ -192,7 +193,7 @@ def test_rtp_h264_vero_di_ffmpeg_con_pacchetti_scambiati_e_ripetuti(tmp_path):
     nals: list[bytes] = []
     p.frame_sink = nals.append
     for d in pkts:
-        p.datagram_received(d, None)
+        p.datagram_received(d, p.remote_addr)
     out = tmp_path / "out.h264"
     out.write_bytes(b"".join(START_CODE + n for n in nals))
     res = subprocess.run(["ffmpeg", "-v", "error", "-i", str(out), "-f", "null", "-"],
@@ -264,10 +265,13 @@ def test_dopo_stop_media_l_rtp_in_ritardo_si_scarta_e_il_gop_parte_solo_dall_idr
         seq = 0
 
         def feed(*nals, ssrc=7):
+            # Always from the panel's address, also after stop_media: what is
+            # dropped then is dropped by the "media closed" guard.
             nonlocal seq
             for n in nals:
                 seq += 1
-                vp.datagram_received(struct.pack("!BBHII", 0x80, 96, seq, 0, ssrc) + n, None)
+                vp.datagram_received(struct.pack("!BBHII", 0x80, 96, seq, 0, ssrc) + n,
+                                     ("192.0.2.1", 4002))
 
         await mh.setup_media(sdp)
         feed(pf, pf)                         # P prima dell'IDR: non entrano nel GOP
@@ -278,7 +282,8 @@ def test_dopo_stop_media_l_rtp_in_ritardo_si_scarta_e_il_gop_parte_solo_dall_idr
         assert vp.remote_addr is None and vp._gop_msgs == []
         queued = vp._nal_queue.qsize()       # i NAL della chiamata, già in coda per i WS
         feed(pf, sps, pps, idr, pf)          # in ritardo dalla targa: via
-        ap.datagram_received(struct.pack("!BBHII", 0x80, 0, 1, 0, 5) + b"\xff" * 160, None)
+        ap.datagram_received(struct.pack("!BBHII", 0x80, 0, 1, 0, 5) + b"\xff" * 160,
+                             ("192.0.2.1", 4000))
         assert vp.pkt_count == 0 and vp._gop_msgs == [] and vp._nal_queue.qsize() == queued
         assert ap.pkt_count == 0 and ap.audio_buffer.empty()
         await mh.setup_media(sdp)           # chiamata nuova: si riparte, dal suo IDR
@@ -336,10 +341,10 @@ def test_pacchetto_singolo_perso_fra_due_nal_scarta_i_p_fino_all_idr(monkeypatch
     asked: list[int] = []
     monkeypatch.setattr(mh, "request_keyframe", lambda: asked.append(1))
     for seq in (20, 21, 23, 24, 25, 26, 27, 28, 29):        # 22 perso
-        p.datagram_received(_pkt(seq), None)
+        p.datagram_received(_pkt(seq), p.remote_addr)
     assert got == [20, 21] and asked == [1]                  # i P dopo il buco: via
-    p.datagram_received(_pkt(30, nal=0x65), None)
-    p.datagram_received(_pkt(31), None)
+    p.datagram_received(_pkt(30, nal=0x65), p.remote_addr)
+    p.datagram_received(_pkt(31), p.remote_addr)
     assert got == [20, 21, 30, 31]
 
 
@@ -364,13 +369,103 @@ def test_keyframe_vecchio_rimandato_non_azzera_il_gop_per_il_replay(monkeypatch)
             return struct.pack("!BBHII", 0x80, 96, seq, ts, 7) + nal
 
         for p in (pkt(1, 0, sps), pkt(2, 0, pps), pkt(3, 0, idr), pkt(4, 3000, pf), pkt(5, 6000, pf)):
-            vp.datagram_received(p, None)
+            vp.datagram_received(p, vp.remote_addr)
         gop = list(vp._gop)
         assert [g[12:] for g in gop] == [sps, pps, idr, pf, pf]
-        vp.datagram_received(pkt(3, 0, idr), None)     # l'IDR di prima, rimandato
-        vp.datagram_received(pkt(1, 0, sps), None)
+        vp.datagram_received(pkt(3, 0, idr), vp.remote_addr)     # l'IDR di prima, rimandato
+        vp.datagram_received(pkt(1, 0, sps), vp.remote_addr)
         assert vp._gop == gop, "il keyframe vecchio ha azzerato il GOP"
-        vp.datagram_received(pkt(6, 9000, pf), None)  # il flusso continua da dov'era
+        vp.datagram_received(pkt(6, 9000, pf), vp.remote_addr)  # il flusso continua da dov'era
         assert [g[12:] for g in vp._gop] == [sps, pps, idr, pf, pf, pf]
         await mh.stop_media()
     asyncio.run(s())
+
+
+def _seq_of(rtp: bytes) -> int:
+    return struct.unpack_from("!H", rtp, 2)[0]
+
+
+def test_the_gop_is_replayed_in_sequence_order():
+    """_gop fills in arrival order; ffmpeg drops every packet older than the
+    first one it sees ("RTP: dropping old packet received too late")."""
+    p = RTPVideoProtocol()
+    p._gop = [_pkt(seq) for seq in (101, 100, 103, 102)]
+    forwarded = []
+    p._forward_av = forwarded.append
+    p.replay_gop()
+    assert [_seq_of(r) for r in forwarded] == [100, 101, 102, 103]
+
+
+def test_the_gop_order_survives_a_sequence_wrap():
+    p = RTPVideoProtocol()
+    p._gop = [_pkt(seq) for seq in (65535, 1, 65534, 0)]
+    assert [_seq_of(r) for r in p.gop_in_sequence_order()] == [65534, 65535, 0, 1]
+
+
+def test_an_empty_gop_replays_nothing():
+    p = RTPVideoProtocol()
+    p._gop = None
+    assert p.gop_in_sequence_order() == []
+
+
+def _media_rig(monkeypatch):
+    vp, ap = RTPVideoProtocol(), mh.RTPAudioProtocol()
+    vp._nal_queue = asyncio.Queue()
+    monkeypatch.setattr(mh, "ws_send_bytes", lambda *_a, **_k: None, raising=False)
+    for k, v in dict(video_proto=vp, audio_proto=ap, _stun_task=None, _audio_task=None,
+                     _tx_task=None).items():
+        monkeypatch.setattr(mh, k, v)
+    monkeypatch.setattr(mh.frame_grabber, "start", lambda vp: None)
+    monkeypatch.setattr(mh.frame_grabber, "stop", lambda vp: None)
+    return vp, ap
+
+
+_SPS, _PPS, _IDR = bytes([0x67, 1]), bytes([0x68, 1]), bytes([0x65, 1])
+
+
+def _feed_keyframe(vp):
+    for seq, nal in enumerate((_SPS, _PPS, _IDR), 1):
+        vp.datagram_received(struct.pack("!BBHII", 0x80, 96, seq, 0, 7) + nal, ("192.0.2.1", 4002))
+
+
+def _stop_tasks():
+    for name in ("_stun_task", "_audio_task", "_tx_task"):
+        task = getattr(mh, name)
+        if task:
+            task.cancel()
+
+
+def test_an_audio_only_call_after_a_video_call_has_no_cached_keyframe(monkeypatch):
+    """The transports live as long as the hub: a keyframe group left from the
+    last call was replayed to the next call's viewer."""
+    async def s():
+        vp, _ = _media_rig(monkeypatch)
+        await mh.setup_media({"conn": "192.0.2.1", "audio": {"port": 4000}, "video": {"port": 4002}})
+        _feed_keyframe(vp)
+        assert vp._gop and vp._gop_msgs and vp.pkt_count
+        await mh.stop_media()
+        await mh.setup_media({"conn": "192.0.2.1", "audio": {"port": 4000}, "video": {}})
+        assert vp._gop is None and vp._gop_ts is None and vp._gop_msgs == []
+        assert vp.gop_in_sequence_order() == [] and vp.pkt_count == 0
+        _stop_tasks()
+    asyncio.run(s())
+
+
+def test_a_reinvite_that_drops_the_video_forgets_its_keyframe(monkeypatch):
+    async def s():
+        vp, _ = _media_rig(monkeypatch)
+        await mh.setup_media({"conn": "192.0.2.1", "audio": {"port": 4000}, "video": {"port": 4002}})
+        _feed_keyframe(vp)
+        await mh.setup_media({"conn": "192.0.2.1", "audio": {"port": 4000}, "video": {"port": 0}})
+        assert vp._gop is None and vp._gop_msgs == [] and vp.pkt_count == 0
+        _stop_tasks()
+    asyncio.run(s())
+
+
+def test_a_duplicate_waiting_in_the_reorder_buffer_is_cached_once():
+    p, _, _ = _video_rx()
+    p._gop, p._gop_ts = [], 0
+    p.datagram_received(_pkt(20, nal=0x65), p.remote_addr)
+    p.datagram_received(_pkt(22), p.remote_addr)      # 21 late: 22 waits
+    p.datagram_received(_pkt(22), p.remote_addr)      # a copy of 22, still waiting
+    assert [_seq_of(r) for r in p._gop].count(22) == 1

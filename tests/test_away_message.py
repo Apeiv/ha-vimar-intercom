@@ -150,8 +150,9 @@ def test_load_e_send_pcm_a_pacchetti_da_20ms(monkeypatch):
 
     pcm = asyncio.run(_run())
     assert pcm and len(pcm) >= 0.19 * 8000 * 2  # ~0,2 s a 8 kHz, 16 bit
-    assert all(len(p) <= 320 for p in pacchetti)
-    assert b"".join(pacchetti) == pcm
+    assert all(len(p) == 320 for p in pacchetti), "the tail is padded to a whole packet"
+    joined = b"".join(pacchetti)
+    assert joined[:len(pcm)] == pcm and not joined[len(pcm):].strip(b"\x00")
 
 
 def test_load_pcm_file_mancante():

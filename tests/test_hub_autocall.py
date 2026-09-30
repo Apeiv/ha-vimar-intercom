@@ -69,7 +69,7 @@ def test_squillo_dopo_una_chiamata_chiusa_non_viene_soppresso(hub, monkeypatch):
     successivo veniva rifiutato con 603 Decline finché non si riavviava HA."""
     declines = []
 
-    async def _fake_decline():
+    async def _fake_decline(*_args):
         declines.append(True)
 
     monkeypatch.setattr(sip, "do_decline_incoming", _fake_decline)
@@ -93,7 +93,7 @@ def test_squillo_insieme_al_bye_della_targa_non_e_un_eco(hub, monkeypatch):
     preso per l'eco dell'auto-call e rifiutato con 603 (chiuso anche sul Tab)."""
     declines = []
 
-    async def _fake_decline():
+    async def _fake_decline(*_args):
         declines.append(True)
 
     monkeypatch.setattr(sip, "do_decline_incoming", _fake_decline)
@@ -112,10 +112,12 @@ def test_squillo_insieme_al_bye_della_targa_non_e_un_eco(hub, monkeypatch):
 # ─── A3: il retry dello stato iniziale deve restare raggiungibile ────────────
 
 def test_init_status_non_si_marca_inviato_se_fallisce(hub, monkeypatch):
-    async def _fail(**kwargs):
+    async def _fail(*args, **kwargs):
         return False, "timeout"
 
-    monkeypatch.setattr(hub, "async_send_command", _fail)
+    # GET_INIT_STATUS goes straight to the SIP layer (it is not the user's command).
+    monkeypatch.setattr(R, "SIP_DOMAIN", "d")
+    monkeypatch.setattr(sip, "do_system_message", _fail)
 
     asyncio.run(hub._request_init_status())
 
@@ -123,10 +125,12 @@ def test_init_status_non_si_marca_inviato_se_fallisce(hub, monkeypatch):
 
 
 def test_init_status_si_marca_inviato_se_riesce(hub, monkeypatch):
-    async def _ok(**kwargs):
+    async def _ok(*args, **kwargs):
         return True, "200"
 
-    monkeypatch.setattr(hub, "async_send_command", _ok)
+    # GET_INIT_STATUS goes straight to the SIP layer (it is not the user's command).
+    monkeypatch.setattr(R, "SIP_DOMAIN", "d")
+    monkeypatch.setattr(sip, "do_system_message", _ok)
 
     asyncio.run(hub._request_init_status())
 

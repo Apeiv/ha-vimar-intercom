@@ -24,14 +24,24 @@ report allegati alle issue, esattamente come il buffer.
 from __future__ import annotations
 
 import logging
+from collections import deque
 
 from .log_redact import redact
 
 LOGGER_NAME = "custom_components.vimar_intercom"
 LEVEL_PIN = 1
-MAX_LINES = 200
+# A whole call at debug level (ring, answer, media, hang-up) is about two
+# thousand lines: 200 kept only its last seconds.
+MAX_LINES = 3000
 
-debug_log: list[str] = []
+# Bounded: the oldest line drops out on its own. The list it replaces cut its
+# head with `del debug_log[:k]`, which moved every other line on each append.
+debug_log: deque[str] = deque(maxlen=MAX_LINES)
+
+
+def tail(n: int) -> list[str]:
+    """The last n lines of the buffer (same slice semantics as a list)."""
+    return list(debug_log)[-n:]
 
 
 class DebugBufferHandler(logging.Handler):
@@ -40,8 +50,6 @@ class DebugBufferHandler(logging.Handler):
     def emit(self, record):
         try:
             debug_log.append(redact(self.format(record)))
-            if len(debug_log) > MAX_LINES:
-                del debug_log[: len(debug_log) - MAX_LINES]
         except Exception:  # noqa: BLE001 - mai far fallire il logging
             pass
 

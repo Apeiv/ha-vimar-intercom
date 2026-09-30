@@ -30,6 +30,7 @@ riporta quello che è stato effettivamente segnalato finora.
 | Elvox Tab 7S 2F+ WiFi | 40507 | 2F | — | UDP locale | Piattaforma di sviluppo: squillo, chiamata, rispondi/riaggancia, apri porta, video on-demand, attuatori |
 | Elvox Tab 5S UP 2 Wire WiFi | 40515 | 2FV2 | 2.1.0203 | TLS cloud | Funzionante, segnalato da @CPietro — vedi note sotto |
 | Elvox Tab 5S UP 2 Wire WiFi | 40515 | — | — | TLS cloud | Registrazione cloud OK dopo la fix 1.0.1, segnalato da @gtarraran992 ([#1](../../issues/1)) |
+| Elvox Tab 7S Up | 40517 | Due Fili Plus EVO (2FV2) | 2.1.0203 | TLS cloud | Funzionante tramite il relay cloud, media in SRTP: squillo, audio bidirezionale, video, porta. L'UDP locale viene rifiutato dal Tab con 503. Segnalato da @m4r1k |
 
 **Cosa cambia da impianto a impianto.** Le due segnalazioni sui Tab 5S, messe accanto all'impianto di
 sviluppo, portano alla stessa conclusione pratica: *conta l'indirizzo a cui mandi il comando, e quanto
@@ -62,7 +63,8 @@ i casi in cui ha funzionato tutto al primo colpo sono utili quanto quelli in cui
 - ffmpeg sull'host HA (dipendenza dichiarata nel manifest) per la camera.
 - Il **QR di abbinamento** dell'impianto Vimar (dall'app VIEW) **oppure** i parametri SIP manuali
   (id, password, domain, cloud proxy).
-- Requisiti Python: solo `pycryptodome` e `requests` (nessuna libreria SIP esterna: lo stack è custom).
+- Requisiti Python, installati da Home Assistant: `pycryptodome` e `requests`, più `HAP-python` e
+  `PyQRCode` per il campanello HomeKit facoltativo. Nessuna libreria SIP esterna: lo stack è custom.
 
 ---
 
@@ -75,11 +77,6 @@ i casi in cui ha funzionato tutto al primo colpo sono utili quanto quelli in cui
 
 ### Manuale
 Copia `custom_components/vimar_intercom/` nella cartella `config/custom_components/` di HA e riavvia.
-
-> **Nota per chi reinstalla/aggiorna a mano**: `__init__.py` e `sip_client.py` contengono patch
-> locali sul logging (non presenti upstream — vedi sezione *Logging* più sotto). Se sovrascrivi
-> questi file con una versione presa da un'altra fonte, riapplica le patch: senza HACS non c'è
-> nulla che le preservi automaticamente.
 
 ---
 
@@ -113,7 +110,7 @@ Impostazioni → Vimar Intercom → **Configura**:
 | **Attuatori (JSON)** (`actuators`) | lista JSON `{name, msg, target, icon}`; crea bottoni dinamici. Vuoto = nessun bottone |
 | **SGA** (`sga_target`) | destinatario di `VOICEMAIL;`/`DND;`, e del comando di apertura se `door_target` è vuota. Vuoto = default `55001` |
 | **PICG** (`picg_target`) | destinatario di `GET_INIT_STATUS`. Sull'impianto di sviluppo coincide con l'SGA, su altri no (60001 su un 40515). Vuoto = default `55001` |
-| **Targa video** (`camera_target`) | targa chiamata dalla camera, da *Chiama* e da *Chiama Video (esterno)*: la riga `PHONEBOOK` con `TYPE='PE'`. **Non è l'SGA.** Vuoto = default `55100` |
+| **Targa video** (`camera_target`) | targa chiamata dalla camera, da *Chiama* e da *Chiama Video (esterno)*: la riga `PHONEBOOK` con `TYPE='PE'`. **Non è l'SGA.** Vuoto = la targa imparata dall'ultimo squillo (una targa che ha suonato con il video, usata quando `55100` non esiste sull'impianto), altrimenti il default `55100` |
 | **Pannello interno** (`internal_panel_target`) | destinatario di *Chiama Casa (interno)*. La rubrica non lo dice: va inserito a mano. Vuoto = default `55002` |
 | **Targa che apre la porta** (`door_target`) | destinatario del comando di apertura (serratura, *Apri Porta*, `open_door` senza `target`, attuatori con target `AUTO`): il `GID_PE` dell'attuatore porta nella rubrica. **Non sempre è l'SGA**: su un 2FV2 l'SGA è `61000` e la porta la apre la targa `55001`. Vuoto = la targa dell'attuatore porta salvato, altrimenti l'SGA |
 | **Cartella foto squillo** (`snapshot_dir`) | dove salvare, a ogni squillo, la foto di chi suona (`squillo_AAAAMMGG_HHMMSS_mmm.jpg` + `ultimo_squillo.jpg`) e il clip dello squillo (`squillo_AAAAMMGG_HHMMSS_mmm.mp4`: il video dell'anteprima, e della chiamata se si risponde da HA, fino a 60 s, senza audio), es. `/config/media/citofono`. Deve essere scrivibile da HA. Vuoto = disattivato |
@@ -125,6 +122,8 @@ Impostazioni → Vimar Intercom → **Configura**:
 | **Cifratura del media (SRTP)** (`media_enc`) | **Automatico** (default dalla 1.0.11): segue il `media_enc` che l'impianto dichiara nella risposta a `GET_INIT_STATUS` (`"srtp"` su un 40515 in cloud); gli impianti con la risposta corta (il 40507) restano in RTP chiaro. **Attivo** / **Disattivo** lo forzano. Chi aveva salvato «attivo» con la 1.0.10 o prima resta attivo; «spento» diventa automatico. Prova **Attivo** se la camera resta nera o la chiamata fallisce con `488` |
 | **Risposta a voce** (`voice_answer`) | Chi può rispondere a uno squillo parlando su `/audio_ws`: **Solo dichiarato** (default, solo con `?voice_answer=1`), **Mai**, **Chiunque** (qualsiasi connessione con microfono; un tablet a muro col microfono rimasto aperto può rispondere da solo coi rumori di casa) |
 | **Webhook squillo** (`ring_webhook_url`, `ring_end_webhook_url`) | GET opzionale (fire-and-forget, timeout 5 s) inviata quando inizia uno squillo e quando finisce (risposto, annullato o non risposto) — es. gli URL `turnOn`/`turnOff` di un Dummy Switch Scrypted (vedi [docs/EXTERNAL.md](docs/EXTERNAL.md)). Un fallimento logga solo un warning, mai blocca lo squillo. Vuoto = disattivato |
+
+L'immagine della camera fra una chiamata e l'altra (l'ultima foto dello squillo) è visibile a ogni utente di Home Assistant che vede l'entità camera; `allowed_users` limita la cronologia degli squilli e i media dal vivo, non l'entità camera.
 
 **Segreteria.** C'è un solo switch *Segreteria* (Configurazione, pagina del dispositivo). Acceso, usa il
 messaggio di assenza di Home Assistant se c'è un testo o un file audio (e spegne la segreteria del Tab);
@@ -167,6 +166,7 @@ tuo impianto o vuoi modificare la lista attuatori prodotta dall'import).
 | Intercom In Call | `binary_sensor` | Chiamata attiva |
 | Intercom Squillo | `binary_sensor` | ON mentre una targa chiama (attr: chiamante) |
 | Intercom Chiamata In Uscita | `binary_sensor` | ON mentre HA chiama |
+| Intercom Dispositivi | `sensor` | numero di dispositivi visti sull'impianto (telefoni che condividono l'account SIP, targhe); l'attributo `dispositivi` li elenca con l'identificativo mascherato e senza indirizzo, e resta dopo un riavvio. Ogni utente di Home Assistant può leggerlo, nomi dei dispositivi compresi (il nome di un telefono è spesso quello di chi lo usa) |
 | Intercom Stato | `sensor` (enum) | offline / idle / ringing / in_call / calling (+ attributi rete; sugli impianti con la risposta lunga anche il `GID` dell'appartamento, `apt_names` e il `media_enc` dichiarato) |
 | Intercom Ultimo Chiamante | `sensor` | targa/monitor dell'ultimo squillo |
 | Intercom Ultimo Squillo | `sensor` (timestamp) | ora dell'ultimo squillo (attr: chiamante, foto/foto_url e clip/clip_url con `snapshot_dir`) |
@@ -225,7 +225,7 @@ stanno i pulsanti durante la diretta:
 
 Dopo il riaggancio l'ultima immagine resta 1,5 s con i pulsanti spenti, così un secondo tocco
 non finisce su quello che risale quando la card si restringe. **Vedi esterno** chiama la targa
-video; la visione dura quanto la concede la targa (circa 10 s sul Tab 5S Up 40515), poi il video
+video; la visione dura quanto la concede la targa (circa 30 s con i pacchetti di silenzio che manda l'integrazione; misurati 30,1 s su un 2FV2), poi il video
 finisce e la card si richiude. Per guardare di nuovo si ripreme **Vedi esterno**, come sul
 monitor di casa. I pulsanti cambiano con lo stato:
 
@@ -427,38 +427,30 @@ parlare usa la card del citofono qui sotto.
 
 ## Logging
 
-Il componente tiene un buffer circolare interno (`_debug_log`, in `__init__.py`) per la propria
-diagnostica, e per riempirlo alza il proprio logger a `DEBUG`. Di base questo farebbe propagare
-ogni riga `DEBUG` anche al log di Home Assistant, scavalcando il livello impostato in `logger:`
-nella `configuration.yaml` (i logger Python propagano al root).
+Il componente tiene un proprio buffer circolare (`log_buffer.py`, le ultime 3000 righe, `DEBUG`
+compreso), leggibile dagli amministratori su `/api/vimar_intercom/debug?lines=N` (100 righe di
+default).
 
-Patch applicata: il logger `custom_components.vimar_intercom` resta a `DEBUG` per il buffer interno,
-ma con `propagate = False`; un handler dedicato inoltra al log HA solo gli eventi `WARNING` e oltre.
-Risultato: diagnostica interna intatta, log HA pulito.
+Il log di Home Assistant riceve i record del componente dal livello impostato per
+`custom_components.vimar_intercom` sotto `logger:` in `configuration.yaml` (o con il servizio
+`logger.set_level`) in su, e da `WARNING` in su se nessun livello è impostato. Per vedere tutto:
 
-**"Stale response 407" nel keepalive SIP**: l'OPTIONS periodico (`_send_options_ping` in
-`sip_client.py`) non registra il proprio Call-ID tra le risposte attese, quindi la risposta del
-proxy (tipicamente un `407`) veniva loggata come `WARNING "Stale response ..."` anche se è l'esito
-normale del keepalive. `_dispatch_message` ora riconosce i Call-ID con prefisso `ping-` e li logga
-a `DEBUG` invece che `WARNING`. Con questa fix + quella sopra, **non serve più** alcun filtro
-`logger:` in `configuration.yaml` per silenziare questi messaggi.
+```yaml
+logger:
+  logs:
+    custom_components.vimar_intercom: debug
+```
 
-**Limite noto**: il compromesso vale in entrambe le direzioni. Poiché il componente tiene il proprio
-logger a `DEBUG` e inoltra solo `WARNING` e oltre, impostare
-`logger: logs: custom_components.vimar_intercom: debug` in `configuration.yaml` **non** farà comparire
-le righe `DEBUG` di questo componente nel log di Home Assistant: si leggono da
-`/api/vimar_intercom/debug`. Rendere configurabile il livello inoltrato è nella lista delle cose da
-fare.
-
-Se aggiorni `__init__.py` o `sip_client.py` da una fonte esterna (non HACS, non versionato per
-questo componente), ricontrolla che entrambe le patch siano ancora presenti (vedi nota in
-*Installazione → Manuale*).
+Entrambe le destinazioni oscurano password, risposte digest, token della rubrica e chiavi SRTP
+prima di scrivere. Le risposte attese al keepalive SIP (l'OPTIONS periodico) sono a `DEBUG`: non
+serve alcun filtro `logger:` per tenere pulito il log.
 
 ---
 
 ## Sicurezza
 
-- Credenziali SIP (password/`ha1`) memorizzate **cifrate** nella config entry di HA, mai in chiaro nel repo.
+- Credenziali SIP (password e `ha1`) memorizzate nella config entry di HA sotto `.storage`, in
+  chiaro come i segreti di ogni altra integrazione. Non vengono mai loggate.
 - Endpoint HTTP interno: `/av` è filtrato **solo LAN** (`_is_local_request`); il WebSocket
   `/audio_ws` richiede autenticazione HA, e le sue azioni di debug (`command`, `probe`, `scan`,
   `register`, `reconnect`) sono riservate agli amministratori. Il payload del QR non viene loggato
@@ -478,6 +470,9 @@ questo componente), ricontrolla che entrambe le patch siano ancora presenti (ved
   clip ancora in scrittura); la cartella non viene mai esposta sotto `/local`.
 - In modalità UDP locale i pacchetti SIP che non arrivano dal citofono vengono scartati: un altro
   dispositivo in LAN non può simulare uno squillo.
+- L'RTP in chiaro (senza SRTP) è accettato solo dall'altro capo della chiamata in corso.
+- Il codice di abbinamento HomeKit (campanello HomeKit facoltativo) è salvato in un file con
+  permessi 0600.
 - Nessuna dipendenza cloud obbligatoria in modalità UDP locale.
 
 ---

@@ -273,6 +273,40 @@ def test_il_tab_smentisce_e_vince_lo_stato_vero(monkeypatch):
     assert asyncio.run(prova()) == (False, False)
 
 
+def test_a_command_the_plant_ignores_warns_about_sga_target(monkeypatch, caplog):
+    """200 OK, then the Tab says the state stayed OFF: usually the wrong recipient."""
+    hub = _Hub()
+    hub.stats["dnd"] = False
+    sw, s = _dnd(hub)
+    monkeypatch.setattr(sw, "CONFIRM_S", 0.05)
+
+    async def prova():
+        await s.async_added_to_hass()
+        await s.async_turn_on()                            # ON sent, 200 OK
+        _annuncio(hub, False)                              # mode_seq bumped, still OFF
+
+    with caplog.at_level("WARNING"):
+        asyncio.run(prova())
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert any("sga_target" in w and "55001" in w for w in warnings), warnings
+
+
+def test_a_confirmed_command_does_not_warn(monkeypatch, caplog):
+    hub = _Hub()
+    hub.stats["dnd"] = False
+    sw, s = _dnd(hub)
+    monkeypatch.setattr(sw, "CONFIRM_S", 0.05)
+
+    async def prova():
+        await s.async_added_to_hass()
+        await s.async_turn_on()
+        _annuncio(hub, True)                               # the Tab confirms
+
+    with caplog.at_level("WARNING"):
+        asyncio.run(prova())
+    assert "sga_target" not in caplog.text
+
+
 def test_comando_fallito_solleva_e_non_cambia_lo_stato():
     hub = _Hub(ok=False)
     _, s = _dnd(hub)

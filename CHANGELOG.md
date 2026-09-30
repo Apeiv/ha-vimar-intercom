@@ -4,6 +4,189 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [semver](ht
 Newest entries on top. **Entries are written in English from 1.0.1 onwards**; earlier ones are in
 Italian and are kept as they were written.
 
+## [Unreleased]
+
+### Breaking
+
+- **Only one config entry is allowed** (`single_config_entry` in the manifest). The SIP and
+  media state are module-wide, so a second entry never worked reliably: both entries shared one
+  registration and one call. After the update Home Assistant refuses to add a second entry; an
+  existing second entry still loads, with the same shared state as before. **Migration:** if you
+  have two entries, keep the one you use and delete the other (Settings → Devices & services →
+  Vimar Intercom → ⋮ → Delete). Two intercoms on one Home Assistant are not supported.
+
+### Added
+
+- New "Intercom Dispositivi" sensor: the devices seen on the plant (phones sharing the SIP
+  account, panels). The list is kept across restarts and its attributes are kept out of the
+  recorder. The attribute shows device names to every Home Assistant user; identifiers are
+  masked and addresses are left out (the hub keeps them, to merge devices).
+- The video panel can be learned: when `camera_target` is empty and the default panel does not
+  exist (404 or 604), the panel that last rang with video is tried and saved. A choice in the
+  options always wins; a busy (486), unavailable (480) or media-refusing (488) panel is not
+  replaced. The learning is logged at WARNING.
+- The voicemail and DND switches warn when the plant's state contradicts a command it accepted
+  with 200 OK (usually a wrong `sga_target`).
+- The device name the integration pairs with (MyName) is configurable, and validated: 1 to 64
+  printable characters.
+- Setup probes the transport: it tries the path the plant profile suggests and falls back between
+  cloud and local, storing what worked. A fallback is logged at WARNING, shown when the entry is
+  created and kept in the entry data (`setup_note`). The plant profile only sets the transport
+  default; media encryption keeps following the plant's own declaration (`media_enc` auto).
+- Audio-only entrances: when the pairing QR says `video=0`, our own INVITE offer carries no
+  `m=video`. Entries made before keep video; answers still mirror the panel's offer.
+- Between calls the camera image is the last ring photo, when there is one (the latest, or
+  `ultimo_squillo.jpg` in the snapshot folder after a restart), instead of the error Home
+  Assistant made of an empty image. A thumbnail still never calls the panel.
+  Note: Home Assistant shows the camera image to every user who can see the camera entity;
+  `allowed_users` does not cover it.
+- An RTCP probe for debugging (`rtcp.py`): with the integration's logger set to DEBUG, the RTCP
+  ports (RTP + 1) listen during a call, the path to the panel's RTCP port is opened, and what
+  arrives is logged (type and SSRC; every record for plain RTCP). Off by default: nothing is
+  bound and nothing is sent.
+
+### Fixed
+
+Call and media:
+
+- The talk queue is capped at 80 ms, oldest audio dropped first: a network hiccup no longer
+  leaves the rest of the call late. There is no pre-buffer: a queued packet goes out on the next
+  tick.
+- Answering no longer waits for the reply to the keyframe INFO, a round trip through the relay:
+  the request still goes out, in the background.
+- The SDP answer mirrors the offer's encryption per media line: RTP/SAVP with the crypto tag and
+  suite the offer chose for that line (AES_CM_128_HMAC_SHA1_80 or _32), RTP/AVP for a plain line.
+  A line whose suites are all unsupported is refused. Our own offers still follow the plant
+  setting.
+- Plain RTP is accepted only from the call's address (SRTP is authenticated by its key).
+- A viewer that opens the camera during an automatic hang-up waits for the call to end locally
+  (at most about 0.5 s more), not for the answer to the BYE that the cloud never sends. The
+  hang-up is shielded from the new view, bounded by a timeout, and its errors are logged. A
+  viewer that leaves during that wait no longer gets a call dialled.
+- Stale `call_ended` events from a previous call are ignored; the call is hung up and the SIP
+  state reset when the integration is unloaded.
+- An audio WebSocket open anywhere (the card, the app) no longer stops a view from calling.
+- The echo of our own call gets 486 Busy Here instead of a decline that ended the ring everywhere.
+- The SDP answer has exactly the offer's media lines, in the offer's order (RFC 3264): an
+  audio-only panel no longer gets a live `m=video` it never asked for, and a video line offered
+  with port 0 is answered with port 0. Our own offers keep both lines. A re-INVITE whose lines
+  differ from the running call gets a new answer, and a session without video closes the video
+  side.
+- `/av` replays the cached group of pictures in RTP sequence order, not arrival order: ffmpeg
+  dropped every packet older than the first one it saw.
+- The `/av` ffmpeg's real errors reach the Home Assistant log at WARNING; known harmless lines
+  (concealment, "max delay reached", "RTP: missed", "dropping old packet") and everything after
+  we asked it to stop stay at DEBUG. "FU-A middle/end without start" is logged at DEBUG.
+- The camera's stream source is a loopback URL on Home Assistant's own HTTP port and scheme, not
+  `internal_url`, which may point at a reverse proxy that `/av` refuses (403).
+
+- Keepalive: a REGISTER renewal that fails during a call is retried once instead of tearing
+  down the connection the call runs on (the reader still reconnects if the link is really gone).
+  A failed tick counts as one registration failure, not two.
+- A late `call_ended` from an earlier call no longer reaches the cards, which closed the view of
+  the call that was up.
+- A re-INVITE answered with a new SDP keeps the local SRTP keys the media already sends with;
+  if a line gets a new key the media is set up again.
+- The cached keyframe group, its WebSocket form and the video packet count are cleared when the
+  media stops and when a session has no video: the next call's viewer no longer got the previous
+  call's picture. A duplicate packet waiting for reordering is cached once.
+- The Hang up button, the card and the away message hang up through the same guard as the
+  automatic hang-up: a view opening meanwhile waits for the call to end. The BYE runs in the
+  background and the hang-up returns once it has left, not after the answer the cloud never
+  sends. Unloading cancels the hub's background tasks.
+- An older hang-up finishing late no longer drops the guard of a newer one, and a late auto-call
+  failure no longer clears the flag of the auto-call that replaced it.
+- The last talk packet after an underrun is sent after one tick instead of waiting for a second
+  one, and the tail of an away message is padded to a whole packet.
+- Plain RTP dropped because it came from another address is logged at INFO, once per call.
+- An RTP/SAVP line refused in our answer (no supported crypto suite) gets no media. Media lines
+  we do not handle (`m=text`, `m=application`, a second `m=audio`) are answered with port 0 in
+  their place, and their `c=`/`a=` lines no longer change the line before them.
+- An auto-call that connects after its viewer already left is hung up after the usual delay,
+  instead of staying up with nobody watching until the 5 minute cap.
+- μ-law audio is decoded through two byte tables instead of a loop per sample (about 20 times
+  faster per packet, same output), and the debug log buffer is a bounded deque that no longer
+  moves every line when it drops the oldest one.
+- No periodic keyframe request (SIP INFO every 5 s) during a call: the panel ignores it and sends
+  a keyframe about every 3 s on its own, and each INFO crossed the cloud relay. The burst at call
+  start and the request after a lost video packet stay.
+- `/av`: ffmpeg's RTP input gets a 640 KB receive buffer (`-buffer_size 655360`; loopback bursts
+  lost packets, "RTP: missed N packets", and broke the H.264 stream) and `-muxpreload 0`. The RTP
+  forwarding starts as soon as ffmpeg's ports are bound (read from `/proc/net/udp`, at most
+  0.5 s) instead of after a fixed 0.3 s. When the last client leaves while the call's video goes
+  on, ffmpeg is kept for 10 s for a client that reconnects; the end of the call still stops it at
+  once.
+
+SIP:
+
+- A late response nobody waits for any more ("Stale response") is logged at DEBUG, not
+  WARNING.
+- REGISTER retries once more when the registrar rotates its nonce, and answers a 407 with
+  Proxy-Authorization.
+- The framer handles the CRLF keepalive pongs; the request processor survives a reply that cannot
+  be sent.
+- The framer also reads the compact `l:` header. A Content-Length that is not a number or is over
+  1 MB breaks the stream: the connection is dropped and reconnected instead of holding every later
+  message. A negative value still counts as 0.
+- When the periodic REGISTER fails while registered, the reconnection starts at once instead of at
+  the next keepalive; it joins a reconnection already running. A registrar granting less than
+  150 s is logged at WARNING.
+- The registration is renewed before the lifetime the registrar grants runs out: at the grant
+  minus min(60 s, 20 %), at least 5 s, and never later than the 120 s keepalive, which stays
+  the cadence for grants of 150 s or more. This includes the grant of the first REGISTER at
+  startup.
+- Background tasks of the hub (ring webhooks, auto-call, ring log, echo decline, WebSocket state)
+  are held until they finish, and their errors are logged.
+- SIP tags, branches and Call-IDs come from `secrets`.
+- MESSAGE and NOTIFY requests delivered twice by the relay are answered but broadcast once.
+- Commands sent to a whole SIP URI are accepted only as `sip:<digits>@<plant domain>`.
+- The RTP sockets ask for a 1 MB receive buffer (SO_RCVBUF), so a video burst is not dropped.
+- Every connection made through the unverified TLS fallback to the cloud proxy is logged at
+  WARNING.
+
+- A framing error reconnects at most once every 2 s, and the errors are counted.
+- Unloading closes and forgets the SIP transport, wakes whoever still waits for a response and
+  no longer calls back into the hub being unloaded.
+- Three challenges with a rotated nonce are reported as refused credentials.
+- The SIP client reads a Digest challenge whose quoted values hold commas (a realm such as
+  `"plant, north"`) whole, like the setup flow does; the response was signed with a cut realm.
+  A challenge offering only `qop=auth-int` gets the plain RFC 2069 response instead of a claimed
+  `qop=auth`.
+
+Setup and configuration:
+
+- Entries from the m4r1k fork keep working: `sip_cloud_domain` is read as the cloud domain, and a
+  legacy `device_id` becomes both device identifiers.
+- HA1 is always recomputed from the password on the domain in use.
+- Only one config entry is allowed.
+- The options form no longer pre-fills `camera_target` with 55100: saved once, it counted as a
+  user choice and the panel learned from the last ring was never used. Empty stays empty.
+- The SIP test in the options uses the local domain when the plant has one, as setup does.
+- The HTTP views pick the active entry only among entries (a dict with a hub), never another key
+  under the integration's data.
+- Saving values into the entry data (detected model, learned panel) no longer reloads the
+  integration; only a change of the options does.
+
+Documentation:
+
+- Security: SIP credentials are stored in plain text in `.storage` like every integration's
+  secrets (the README said encrypted); the HomeKit pairing code file is 0600; plain RTP is
+  accepted only from the call's address.
+- Logging rewritten to match `log_buffer.py`; `HAP-python` and `PyQRCode` listed among the
+  requirements; the Tab 7S Up 40517 added to the compatibility table.
+- New `docs/HARDWARE.md` (what differs between plants) and `docs/TEST_PLAN.md` (field test round).
+  The Italian README inside the component folder is now a pointer to the root README.
+
+### Security
+
+- SRTP master keys are kept out of the logs: the parsed SDP keeps only the key it uses, the SDP
+  log lines drop it, and the log filter masks `inline:` keys, any value under a `key` or `*_key`
+  field and a key-sized base64 value after `key:`. The debug log buffer is bigger.
+- The device list attribute no longer carries the devices' addresses.
+- The SIP test in the options removes its own registration (Expires: 0, same Contact) once it
+  passes: with the integration running it replaced the live binding with one pointing at the
+  test's closed socket.
+
 ## [1.0.14] - 2026-09-30
 
 ### Added
