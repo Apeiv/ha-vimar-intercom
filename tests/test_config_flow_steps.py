@@ -184,12 +184,19 @@ def test_the_setup_flow_hands_out_the_options_flow(cf):
 def test_a_discovery_of_another_intercom_does_not_touch_existing_entries(cf):
     other = types.SimpleNamespace(entry_id="e0", data={"mac": "00:11:22:33:44:55",
                                                        "local_proxy": "192.0.2.50"}, options={})
+    updates = []
     flow = _setup_flow(cf)
+    flow.hass = types.SimpleNamespace(config_entries=types.SimpleNamespace(
+        async_update_entry=lambda entry, **kw: updates.append(kw),
+        async_schedule_reload=lambda *_a: None))
     flow._async_current_entries = lambda include_ignore=True: [other]
     info = types.SimpleNamespace(host="192.0.2.20", properties={
         b"mac": b"11:22:33:44:55:66", b"proxy": b"192.0.2.20", b"domain": b"plant.example.test"})
     result = asyncio.run(flow.async_step_zeroconf(info))
-    assert result["step_id"] == "zeroconf_confirm" and flow.unique_id == "112233445566"
+    # One installation only (#38): another Tab is not offered, and the
+    # existing entry keeps its address.
+    assert result == {"type": "abort", "reason": "single_instance_allowed"}
+    assert updates == [] and other.data["local_proxy"] == "192.0.2.50"
 
 
 def test_a_new_ip_for_an_entry_without_proxy_option_updates_only_data(cf):

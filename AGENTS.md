@@ -47,8 +47,10 @@ All in `custom_components/vimar_intercom/`.
 - Entity platforms: `camera`, `event`, `lock`, `button`, `switch`, `sensor`, `binary_sensor`,
   `select`, `text`. Away message: `away_config.py`, `away_tts.py`. Ring webhook: `webhook.py`.
 
-Only one config entry is allowed (`single_config_entry` in the manifest) because SIP and
-media state are module-wide. Do not design for two entries.
+Only one config entry is allowed, because SIP and media state are module-wide. The config
+flow enforces it (`_has_entry`, abort `single_instance_allowed`), not `single_config_entry` in
+the manifest: that flag stops every new flow, mDNS discovery included, and a Tab that changes
+IP in local UDP was no longer followed. Do not design for two entries.
 
 ## Tests
 

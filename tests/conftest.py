@@ -70,6 +70,13 @@ class _ConfigFlow:
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__()
 
+    # As in Home Assistant: no entries unless a test gives some.
+    def _async_current_entries(self, include_ignore=None):
+        return []
+
+    def async_abort(self, *, reason, description_placeholders=None):
+        return {"type": "abort", "reason": reason}
+
 
 @dataclass(frozen=True, kw_only=True)
 class _SensorEntityDescription:
