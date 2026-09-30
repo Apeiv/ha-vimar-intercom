@@ -126,6 +126,12 @@ def _stub_ha() -> None:
     s.SensorStateClass = types.SimpleNamespace(TOTAL_INCREASING="total_increasing",
                                                MEASUREMENT="measurement")
     ha.const.UnitOfTime = types.SimpleNamespace(SECONDS="s")
+    # Enum members the platforms read at class definition time.
+    ha.components.binary_sensor.BinarySensorDeviceClass = types.SimpleNamespace(CONNECTIVITY="connectivity")
+    ha.components.event.EventDeviceClass = types.SimpleNamespace(DOORBELL="doorbell")
+    ha.components.camera.CameraEntityFeature = types.SimpleNamespace(STREAM=2)
+    # DeviceInfo is a TypedDict in Home Assistant: a plain dict behaves the same.
+    ha.helpers.device_registry.DeviceInfo = dict
     _mod("voluptuous", Schema=_Any, Required=_Any, Optional=_Any, All=_Any, Coerce=_Any, In=_Any, Range=_Any)
 
 
