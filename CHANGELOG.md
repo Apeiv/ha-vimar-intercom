@@ -4,7 +4,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [semver](ht
 Newest entries on top. **Entries are written in English from 1.0.1 onwards**; earlier ones are in
 Italian and are kept as they were written.
 
-## [1.0.14] - Unreleased
+## [1.0.14] - 2026-09-30
 
 ### Added
 
@@ -90,6 +90,10 @@ Italian and are kept as they were written.
 
 ### Fixed
 
+- A ring declined with the **Decline** button (or `vimar_intercom.decline`) stayed *Nessuna risposta*
+  (`"outcome": "missed"`) in `squillo.json` and in the card history: it is now recorded as
+  `"declined"` and the card shows it as *Rifiutato*. The missed-call counter was already right.
+  Found in the field test on the 40507.
 - Ring photo: a panel calling for the first time since the HA restart that shipped the
   per-panel SPS/PPS cache (or after an update from the older, single-pair storage format)
   had nothing cached for it, and its first IDR often arrives without in-band SPS/PPS (the

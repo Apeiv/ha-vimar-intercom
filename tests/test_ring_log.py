@@ -130,3 +130,36 @@ def test_squillo_registrato_poi_risposto(tmp_path, monkeypatch):
         assert rl.read_ring_log(str(tmp_path))[0]["outcome"] == "answered"
 
     asyncio.run(scenario())
+
+
+def test_squillo_registrato_poi_rifiutato(tmp_path, monkeypatch):
+    """Rifiuta (603) scrive «declined» nel registro: prima restava «missed» (prova sul 40507, 30/09)."""
+    monkeypatch.setattr(R, "SNAPSHOT_DIR", str(tmp_path))
+    monkeypatch.setattr(R, "AWAY_MESSAGE_FILE", "")
+    monkeypatch.setattr(sip, "in_call", False)
+    monkeypatch.setattr(sip, "calling", False)
+    monkeypatch.setattr(sip, "pending_incoming", {"caller_uri": "sip:55001@dom", "cid": "c1",
+                                                  "active": True, "early": False})
+    esito = [True]
+
+    async def decline():
+        return esito[0]
+
+    monkeypatch.setattr(sip, "do_decline_incoming", decline)
+
+    async def scenario():
+        hub = hub_mod.VimarIntercomHub()
+        hub._save_ring_photo = lambda name: asyncio.sleep(0)
+        await hub._handle_broadcast("ring", "")
+        await asyncio.sleep(0.2)
+        assert rl.read_ring_log(str(tmp_path))[0]["outcome"] == "missed"
+        esito[0] = False                      # nessuno squillo da rifiutare: il registro non cambia
+        assert not (await hub.async_decline())[0]
+        await asyncio.sleep(0.2)
+        assert rl.read_ring_log(str(tmp_path))[0]["outcome"] == "missed"
+        esito[0] = True
+        assert (await hub.async_decline())[0]
+        await asyncio.sleep(0.2)
+        assert rl.read_ring_log(str(tmp_path))[0]["outcome"] == "declined"
+
+    asyncio.run(scenario())

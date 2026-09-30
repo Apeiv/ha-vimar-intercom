@@ -632,6 +632,8 @@ class VimarIntercomHub:
         self._ring_declined = True
         declined = await sip.do_decline_incoming()
         self._ring_declined = bool(declined)
+        if declined:
+            self._log_outcome("declined")
         self._touch()
         return (True, "Squillo rifiutato") if declined else (False, "Nessuna chiamata in arrivo")
 
@@ -856,8 +858,9 @@ class VimarIntercomHub:
             _LOGGER.warning("Registro squilli non aggiornato in %s: %s", R.SNAPSHOT_DIR, e)
 
     def _log_outcome(self, outcome: str) -> None:
-        """Esito dell'ultimo squillo nel registro: answered (Rispondi) o away (messaggio)."""
-        key = self._ring_time
+        """Esito dell'ultimo squillo nel registro: answered (Rispondi), declined (Rifiuta)
+        o away (messaggio)."""
+        key = getattr(self, "_ring_time", None)
         if not (R.SNAPSHOT_DIR and key):
             return
 
