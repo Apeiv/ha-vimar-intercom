@@ -30,7 +30,7 @@ reported so far.
 | Elvox Tab 7S 2F+ WiFi | 40507 | 2F | — | local UDP | Development platform: ring, call, answer/hang up, door open, on-demand video, actuators |
 | Elvox Tab 5S UP 2 Wire WiFi | 40515 | 2FV2 | 2.1.0203 | cloud TLS | Working, reported by @CPietro — see the notes below |
 | Elvox Tab 5S UP 2 Wire WiFi | 40515 | — | — | cloud TLS | Cloud registration working after the 1.0.1 fix, reported by @gtarraran992 ([#1](../../issues/1)) |
-| Elvox Tab 7S Up | 40517 | Due Fili Plus EVO (2FV2) | 2.1.0203 | cloud TLS | Working over the cloud relay, media in SRTP: ring, two-way audio, video, door. Local UDP is refused by the Tab with 503 |
+| Elvox Tab 7S Up | 40517 | Due Fili Plus EVO (2FV2) | 2.1.0203 | cloud TLS | Working over the cloud relay, media in SRTP: ring, two-way audio, video, door. Local UDP is refused by the Tab with 503. Reported by @m4r1k |
 
 **What differs between plants.** Both Tab 5S reports, plus the development plant, point at the same
 practical conclusion: *what matters is the address you send to, and how much the Tab tells you back*.

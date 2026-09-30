@@ -30,7 +30,7 @@ riporta quello che è stato effettivamente segnalato finora.
 | Elvox Tab 7S 2F+ WiFi | 40507 | 2F | — | UDP locale | Piattaforma di sviluppo: squillo, chiamata, rispondi/riaggancia, apri porta, video on-demand, attuatori |
 | Elvox Tab 5S UP 2 Wire WiFi | 40515 | 2FV2 | 2.1.0203 | TLS cloud | Funzionante, segnalato da @CPietro — vedi note sotto |
 | Elvox Tab 5S UP 2 Wire WiFi | 40515 | — | — | TLS cloud | Registrazione cloud OK dopo la fix 1.0.1, segnalato da @gtarraran992 ([#1](../../issues/1)) |
-| Elvox Tab 7S Up | 40517 | Due Fili Plus EVO (2FV2) | 2.1.0203 | TLS cloud | Funzionante tramite il relay cloud, media in SRTP: squillo, audio bidirezionale, video, porta. L'UDP locale viene rifiutato dal Tab con 503 |
+| Elvox Tab 7S Up | 40517 | Due Fili Plus EVO (2FV2) | 2.1.0203 | TLS cloud | Funzionante tramite il relay cloud, media in SRTP: squillo, audio bidirezionale, video, porta. L'UDP locale viene rifiutato dal Tab con 503. Segnalato da @m4r1k |
 
 **Cosa cambia da impianto a impianto.** Le due segnalazioni sui Tab 5S, messe accanto all'impianto di
 sviluppo, portano alla stessa conclusione pratica: *conta l'indirizzo a cui mandi il comando, e quanto

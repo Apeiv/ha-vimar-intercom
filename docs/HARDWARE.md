@@ -43,6 +43,8 @@ On this plant the local path is not simply "slower". It does not carry calls.
 * **Local TCP on 5060**: registration **works**, with a regular Digest challenge
   and `200 OK`, but only for a client whose `User-Agent` has the format of the
   Vimar app (any other value gets `503 You must upgrade your app to use it!`).
+  A successful local registration is also enough for the intercom to list the
+  device among its paired devices, without going through the app.
 * **But calls do not arrive**: with the local registration alive (the intercom
   answered keepalives), a call to that device produced no packet toward us. A
   packet capture on the host showed only keepalives, renewals and ARP.
@@ -130,3 +132,29 @@ left less than 10 seconds ago) starts at the panel's next keyframe.
 The panel also sends RTCP (`SR`, `SDES`, `XR`) every two or three seconds on a
 separate port (`a=rtcp:`, no `a=rtcp-mux`). The integration does not use it; with
 its logger at DEBUG it listens on its RTCP ports and logs what arrives (`rtcp.py`).
+
+## Where the latency goes (40517, cloud relay)
+
+On this plant the relay is mandatory for calls (see above), and it costs about
+one second of call setup plus a round trip to the relay for every packet. That
+second cannot be won back by working on the transport. Everything after it is
+ours.
+
+For a while we believed the panel's three-second keyframe cycle was a floor.
+It is not (see the measurements above): the first keyframe arrives about half a
+second after the answer. The three seconds were two waits of our own:
+
+1. **Requiring SPS and PPS from the current call** before declaring the video.
+   The panel does not always send them in the same group, and one measured
+   session lost 3.1 s this way while a complete, decodable keyframe went past.
+   They describe the panel's encoder and do not change between calls, so the
+   ones seen before are good (the integration keeps them per panel).
+2. **Letting ffmpeg probe a stream whose codecs we already knew.** ffmpeg waits
+   out its whole `analyzeduration`, once, for all tracks together, so the audio
+   waited for the picture. Describing the RTP with an SDP leaves nothing to
+   probe, and audio and video become independent again.
+
+With both removed, first audio went from 7 s to about 1 s. The benchmark that
+exposed the gap was the official VIEW app, on the same panel and the same
+relay: 2.5 s to show everything. When a change adds a wait in this path, it is
+worth checking against that number again.
