@@ -237,9 +237,15 @@ def _options_flow(cf, data=None, options=None, *, hass_data=None, allowed=True, 
 
 
 def test_the_options_start_from_a_menu(cf):
-    menu = asyncio.run(_options_flow(cf).async_step_init())
+    """Settings first, the phonebook steps in order, and every entry leads to a
+    step. Other pages may join the menu (the HomeKit one does in #32)."""
+    flow = _options_flow(cf)
+    menu = asyncio.run(flow.async_step_init())
     assert menu["type"] == "menu"
-    assert menu["menu_options"] == ["settings", "fetch_rubrica", "fetch_rubrica_cloud", "import_rubrica"]
+    options = menu["menu_options"]
+    assert options[0] == "settings"
+    assert [o for o in options if "rubrica" in o] == ["fetch_rubrica", "fetch_rubrica_cloud", "import_rubrica"]
+    assert all(callable(getattr(flow, f"async_step_{o}", None)) for o in options), "a dead menu entry"
 
 
 def _settings(cf, extra, **kw):
