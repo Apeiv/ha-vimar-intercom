@@ -1560,3 +1560,80 @@ def test_the_state_file_with_the_long_term_key_is_0600(monkeypatch, tmp_path):
     driver.persist()
     assert path.read_text() == "{}"
     assert os.stat(path).st_mode & 0o777 == 0o600
+
+
+def test_the_audio_does_not_wait_for_the_picture(acc, monkeypatch):
+    """The audio's ffmpeg needs nothing from the video path. It started after it,
+    re-encoder and keyframe wait included: on a 40515 first audio waited ~0.9 s
+    for a picture it does not depend on (#32). Now it starts while the video
+    still waits for its keyframe."""
+    a, procs, gate = acc
+    keyframe = {"in": False}
+    monkeypatch.setattr(hk.hkm, "gop_has_keyframe", lambda: keyframe["in"])
+    info = session()
+
+    async def scenario():
+        gate["open"].set()
+        start = asyncio.create_task(a.start_stream(info, {}))
+        for _ in range(100):                      # the audio's ffmpeg starts...
+            await asyncio.sleep(0.01)
+            if procs:
+                break
+        early = dict(info["timeline"])
+        keyframe["in"] = True                     # ...then the panel's keyframe
+        assert await start
+        return early
+
+    early = asyncio.run(scenario())
+    assert "ffmpeg" in early and "video begin" not in early
+    assert "video begin" in info["timeline"]
+    _close(a, info)
+
+
+def test_the_re_encoder_starts_while_the_call_connects(acc, monkeypatch):
+    """Its ffmpeg takes about half a second to start. It used to start only once the
+    call's video had arrived: the longest stage of a view on a 40515 (#32)."""
+    a, procs, gate = acc
+    a._smooth = True
+    FakeTranscoder.instances.clear()
+    FakeTranscoder.gate = None
+    monkeypatch.setattr(hk, "Transcoder", FakeTranscoder)
+    video = {"in": False}
+    monkeypatch.setattr(hk.hkm, "video_ready", lambda _hub: video["in"])
+    monkeypatch.setattr(hk.hkm, "parameter_sets", lambda: (None, None))
+    info = session()
+
+    async def scenario():
+        gate["open"].set()                      # the hub places the call...
+        a._hub.in_call = a._hub.video_active = False   # ...which is still connecting
+        start = asyncio.create_task(a.start_stream(info, {}))
+        await asyncio.sleep(0.05)
+        before_the_call = len(FakeTranscoder.instances)
+        a._hub.in_call = a._hub.video_active = video["in"] = True
+        assert await start
+        return before_the_call
+
+    assert asyncio.run(scenario()) == 1, "started before the call was up"
+    assert len(FakeTranscoder.instances) == 1, "the view uses that one, not a second"
+    assert info["timeline"].get("transcoder") is not None
+    _close(a, info)
+
+
+def test_an_early_re_encoder_goes_with_a_call_that_never_connects(acc, monkeypatch):
+    a, procs, gate = acc
+    a._smooth = True
+    FakeTranscoder.instances.clear()
+    FakeTranscoder.gate = None
+    monkeypatch.setattr(hk, "Transcoder", FakeTranscoder)
+    monkeypatch.setattr(hk.hkm, "video_ready", lambda _hub: False)
+    monkeypatch.setattr(hk.hkm, "parameter_sets", lambda: (None, None))
+
+    async def scenario():
+        await a._ensure_transcoder(early=True)
+        a.on_video_ended()                      # the placed call failed (busy, no answer)
+        while a._tasks:
+            await asyncio.gather(*a._tasks)
+
+    asyncio.run(scenario())
+    assert FakeTranscoder.instances and all(t.stopped for t in FakeTranscoder.instances)
+    assert a._transcoder is None

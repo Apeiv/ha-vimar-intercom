@@ -12,6 +12,12 @@ Italian and are kept as they were written.
   loopback ports, and one logged "bind failed: Address in use". Every ffmpeg RTP input now gets an
   even port with the next one free (RTCP), and a pair handed out is not handed out again for 10 s.
 
+### Changed
+
+- HomeKit views open faster. The view's audio no longer waits for the video path (re-encoder and
+  keyframe included), and with Smoother video on, the re-encoder starts while the view's call is
+  still connecting instead of after its video arrives.
+
 ## [1.0.16] - 2026-09-30
 
 ### Added
