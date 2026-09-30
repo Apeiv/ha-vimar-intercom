@@ -11,7 +11,8 @@ from harness.media import FFMPEG
 
 from custom_components.vimar_intercom import av_passive
 
-pytestmark = pytest.mark.skipif(not FFMPEG, reason="servono ffmpeg e ffprobe")
+# Solo i test con ffmpeg vero; quelli con l'encoder finto girano ovunque (anche in CI).
+needs_ffmpeg = pytest.mark.skipif(not FFMPEG, reason="servono ffmpeg e ffprobe")
 
 
 @pytest.fixture(autouse=True)
@@ -20,6 +21,7 @@ def _pulito(monkeypatch):
         monkeypatch.setattr(av_passive, k, val)
 
 
+@needs_ffmpeg
 def test_standby_png_e_nel_pacchetto_e_si_rende_alla_misura_del_video():
     assert os.path.isfile(av_passive._STANDBY_PNG)
     frame = asyncio.run(av_passive.standby_frame())
@@ -28,6 +30,7 @@ def test_standby_png_e_nel_pacchetto_e_si_rende_alla_misura_del_video():
     assert sum(luma) / len(luma) < 60, "lo standby deve essere scuro"
 
 
+@needs_ffmpeg
 def test_encoder_condiviso_nasce_col_primo_client_e_muore_con_l_ultimo():
     async def run():
         keyframes = []
