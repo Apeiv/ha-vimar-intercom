@@ -110,3 +110,11 @@ def test_opzioni_non_ricaricano_per_le_sole_chiavi_away(monkeypatch):
     assert R.AWAY_MESSAGE_TEXT == "ciao" and hub.touched == 1
     assert ac.apply_options(data, {"a": 2, "away_message_text": "ciao"}) is False  # altro: si ricarica
 
+
+
+def test_without_a_media_folder_nothing_is_created_or_listed(tmp_path):
+    hass = types.SimpleNamespace(config=types.SimpleNamespace(media_dirs={}))
+    assert ac.messages_dir(hass) is None
+    ac.ensure_dir(None)  # no folder configured: nothing to create, no error
+    assert ac.list_files(None) == []
+    assert list(tmp_path.iterdir()) == []

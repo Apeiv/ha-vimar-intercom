@@ -149,6 +149,9 @@ Call and media:
 
 SIP:
 
+- The admin probe of a panel (the card's `probe` action) no longer reports "Errore: 100" when the
+  proxy asks for credentials and then answers 100 Trying before 200 OK: provisional answers to
+  the authenticated retry are skipped, as they already were before the challenge.
 - A late response nobody waits for any more ("Stale response") is logged at DEBUG, not
   WARNING.
 - REGISTER retries once more when the registrar rotates its nonce, and answers a 407 with

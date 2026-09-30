@@ -188,3 +188,10 @@ def test_token_rifiutato(cf, monkeypatch):
     r = asyncio.run(_flow(cf, hub).async_step_fetch_rubrica_cloud({"rubrica_gid": "101"}))
     assert r["errors"] == {"base": "cloud_auth_failed"}
     assert "401" in r["description_placeholders"]["rubrica_error"]
+
+
+def test_download_with_a_missing_token_never_calls_the_cloud():
+    s = _Session(_Resp(200, SQLITE))
+    with pytest.raises(cp.CloudPhonebookError, match="token"):
+        cp.download(CDOMAIN, CPROXY, "  ", VER, session=s)
+    assert s.calls == []

@@ -74,9 +74,7 @@ def decode(qr_text: str) -> dict[str, str]:
     key        = data[:32]
     ciphertext = data[32 : len(data) - 16]
     iv         = data[len(data) - 16 :]
-
-    if not ciphertext:
-        raise QRDecodeError("Ciphertext vuoto dopo estrazione key/IV")
+    # The length check above leaves at least one byte of ciphertext.
 
     # 3. AES-256-CBC decrypt
     try:

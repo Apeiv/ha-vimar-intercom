@@ -70,6 +70,13 @@ class _ConfigFlow:
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__()
 
+    # As in Home Assistant: no entries unless a test gives some.
+    def _async_current_entries(self, include_ignore=None):
+        return []
+
+    def async_abort(self, *, reason, description_placeholders=None):
+        return {"type": "abort", "reason": reason}
+
 
 @dataclass(frozen=True, kw_only=True)
 class _SensorEntityDescription:
@@ -103,6 +110,10 @@ def _stub_ha() -> None:
     ha.core.HomeAssistant = _Any
     ha.core.ServiceCall = _Any
     ha.core.callback = lambda f: f
+    ha.core.SupportsResponse = types.SimpleNamespace(NONE="none", OPTIONAL="optional", ONLY="only")
+    # Real exception classes: code under test raises them and tests expect them.
+    for exc in ("HomeAssistantError", "Unauthorized", "ConfigEntryNotReady"):
+        setattr(ha.exceptions, exc, type(exc, (Exception,), {}))
     ha.config_entries.ConfigEntry = _Any
     ha.config_entries.ConfigFlow = _ConfigFlow
     ha.config_entries.OptionsFlow = _Any
@@ -126,7 +137,14 @@ def _stub_ha() -> None:
     s.SensorStateClass = types.SimpleNamespace(TOTAL_INCREASING="total_increasing",
                                                MEASUREMENT="measurement")
     ha.const.UnitOfTime = types.SimpleNamespace(SECONDS="s")
-    _mod("voluptuous", Schema=_Any, Required=_Any, Optional=_Any, All=_Any, Coerce=_Any, In=_Any, Range=_Any)
+    # Enum members the platforms read at class definition time.
+    ha.components.binary_sensor.BinarySensorDeviceClass = types.SimpleNamespace(CONNECTIVITY="connectivity")
+    ha.components.event.EventDeviceClass = types.SimpleNamespace(DOORBELL="doorbell")
+    ha.components.camera.CameraEntityFeature = types.SimpleNamespace(STREAM=2)
+    # DeviceInfo is a TypedDict in Home Assistant: a plain dict behaves the same.
+    ha.helpers.device_registry.DeviceInfo = dict
+    _mod("voluptuous", Schema=_Any, Required=_Any, Optional=_Any, All=_Any, Coerce=_Any, In=_Any, Range=_Any,
+         Match=_Any, Invalid=type("Invalid", (Exception,), {}))
 
 
 _stub_ha()
@@ -176,11 +194,11 @@ def _fresh_sip_state(monkeypatch):
         yield
         return
     monkeypatch.setattr(sip, "DEVICES", DeviceInventory())
-    for name in ("reader", "writer", "_udp_sock", "_state_change_callback"):
+    for name in ("reader", "writer", "_udp_sock", "_state_change_callback", "MY_IP"):
         monkeypatch.setattr(sip, name, getattr(sip, name))
     yield
     # Nothing to close or notify: those references belong to the test.
-    for name in ("reader", "writer", "_udp_sock", "_state_change_callback"):
+    for name in ("reader", "writer", "_udp_sock", "_state_change_callback", "MY_IP"):
         setattr(sip, name, None)
     sip.reset_state()
 

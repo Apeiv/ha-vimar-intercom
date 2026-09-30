@@ -9,8 +9,8 @@ other hardware are genuinely valuable — especially Tab 5S / 2FV2 / IP plants.
 **1. Never guess SIP commands or tokens.**
 This is the single most important rule. A wrong actuator token can physically open
 a door or a gate. Anything that goes into the code as an *active* command must be
-either documented in `docs/PROTOCOL.md` or extracted from the official VIEW app
-(`apk/`). Everything else goes into `docs/ROADMAP.md` marked as a hypothesis.
+either documented from a capture of the official VIEW app or extracted from it. Everything
+else stays out of the code: open an issue and mark it as a hypothesis.
 
 **2. Don't put credentials in the repo.**
 No SIP passwords, QR payloads, HA1 hashes, MAC addresses or cloud tokens — not in
@@ -35,8 +35,9 @@ Targets: Home Assistant **2024.1+**, Python **3.11+** (HA ships 3.11/3.12/3.13).
 
 Runtime dependencies are deliberately minimal: `pycryptodome` and `requests`.
 **No external SIP library** — the stack in `sip_client.py` is custom and stays
-custom. Please don't add `cryptography` as a direct import either; `pycryptodome`
-covers what we need and HA already pins it.
+custom. Please don't add `cryptography` as a runtime requirement either; `pycryptodome`
+covers what we need and HA already pins it. (`requirements-dev.txt` lists `cryptography`
+only so the tests can check our crypto against a second implementation.)
 
 ## Before you open a PR
 
@@ -54,6 +55,9 @@ add a test — those are the parts that break silently on other plants.
 - `python -m pytest` runs the unit tests and the SIP end-to-end tests (`tests/test_e2e_sip.py`):
   the real `sip_client`, hub, media and HTTP views against a fake panel on 127.0.0.1
   (`tests/harness/`). No network, no ffmpeg, no browser: this is what CI runs.
+- `python -m pytest tests --cov --cov-report=term-missing` is the same run with coverage, as CI
+  runs it: lines and branches of `custom_components/vimar_intercom`, and it fails below the
+  `fail_under` threshold in `pyproject.toml` (95%). New code comes with tests that keep it there.
 - `python -m pytest -m media` adds real media (`tests/test_e2e_media.py`): H.264 from ffmpeg,
   SRTP, the real `/av` ffmpeg behind a real aiohttp server, frames counted with ffprobe. Needs
   `ffmpeg`/`ffprobe` and `aiohttp`. If the first `ffmpeg` in your PATH is a launcher that runs
@@ -65,14 +69,6 @@ add a test — those are the parts that break silently on other plants.
 - `python -m pytest -m "media or browser or not live"` runs everything except the `live` tests,
   which need the real panel on the network. Missing tools skip their tests instead of failing.
 
-`tools/sip_probe.py` lets you test protocol behaviour from a PC without touching
-your Home Assistant install:
-
-```bash
-python tools/sip_probe.py options --target 55002   # who answers, and with which UA
-python tools/sip_probe.py listen --seconds 900     # capture announcements/events
-```
-
 ## PR checklist
 
 - [ ] Tests pass, and new behaviour has a test
@@ -80,7 +76,8 @@ python tools/sip_probe.py listen --seconds 900     # capture announcements/event
 - [ ] UI strings kept in sync across `strings.json`, `translations/it.json` and `translations/en.json`
 - [ ] No credentials, MAC addresses or raw QR payloads anywhere in the diff
 - [ ] Says which hardware you tested on: model, article number, firmware, and whether local UDP or cloud TLS
-- [ ] Non-obvious design decisions written up in `docs/DECISIONS.md` (short ADR format)
+- [ ] Line and branch coverage stays at or above 95% (`python -m pytest tests --cov`)
+- [ ] Non-obvious design decisions explained in the PR description, or in `docs/` when they concern hardware behaviour
 
 Small, focused PRs get merged faster than big ones. If you're planning something
 large — a new transport, a rewrite of the media pipeline, cloud REST support —

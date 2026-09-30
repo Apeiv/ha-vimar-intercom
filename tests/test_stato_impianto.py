@@ -339,12 +339,13 @@ def test_al_riavvio_si_riprende_solo_uno_stato_confermato(attributi, atteso):
 
 # --- #4: select del ritardo segreteria -----------------------------------------------------
 
-def test_il_select_nasce_solo_quando_arrivano_i_valori():
+def test_il_select_nasce_solo_quando_arrivano_i_valori(monkeypatch):
     sel = _carica("select")
     hub = _Hub()
     aggiunte = []
     away = []
-    sel.set_away = lambda hass, entry, key, value: away.append((key, value))
+    # monkeypatch: assigned directly, the fake stayed in select.py for every later test.
+    monkeypatch.setattr(sel, "set_away", lambda hass, entry, key, value: away.append((key, value)))
     async def executor(f, *a): return None
 
     hass = types.SimpleNamespace(data={"vimar_intercom": {"e1": {"hub": hub}}},

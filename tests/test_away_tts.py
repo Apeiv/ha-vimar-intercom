@@ -172,3 +172,32 @@ def test_load_pcm_da_bytes_con_tetto_di_durata():
     corto = asyncio.run(mh.load_pcm(mp3, max_seconds=0.2))
     assert corto and len(corto) <= 0.25 * 16000
     assert asyncio.run(mh.load_pcm(b"non e' audio")) is None
+
+
+def test_setup_prefetches_the_text_once_home_assistant_has_started(tts, monkeypatch):
+    started = []
+    monkeypatch.setattr(away_tts, "async_at_started", lambda hass, cb: started.append(cb))
+    hass = types.SimpleNamespace(config=types.SimpleNamespace(language="it"))
+    away_tts.setup(hass)
+    assert away_tts._hass is hass and len(started) == 1
+    asyncio.run(started[0](None))  # Home Assistant started: the text is synthesised
+    assert away_tts._cache[1] == b"PCM:MP3:" + TESTO.encode()
+
+
+def test_setup_does_not_prefetch_when_a_file_wins_or_there_is_no_text(tts, monkeypatch):
+    started = []
+    monkeypatch.setattr(away_tts, "async_at_started", lambda hass, cb: started.append(cb))
+    monkeypatch.setattr(R, "AWAY_MESSAGE_FILE", "/media/x.mp3")
+    away_tts.setup(types.SimpleNamespace())
+    monkeypatch.setattr(R, "AWAY_MESSAGE_FILE", "")
+    monkeypatch.setattr(R, "AWAY_MESSAGE_TEXT", "")
+    away_tts.setup(types.SimpleNamespace())
+    assert started == []
+
+
+def test_audio_that_does_not_decode_is_not_cached(tts, monkeypatch):
+    async def load_pcm(src):
+        return None  # ffmpeg could not decode the TTS audio
+    monkeypatch.setattr(mh, "load_pcm", load_pcm)
+    assert asyncio.run(away_tts.load_pcm()) is None
+    assert away_tts._cache is None

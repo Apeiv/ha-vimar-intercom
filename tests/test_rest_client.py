@@ -218,3 +218,131 @@ def test_i_tre_errori_del_nuovo_passo_hanno_un_messaggio(nome):
     errori = data["options"]["error"]
     for chiave in ("no_local_proxy", "rest_auth_failed", "rest_unavailable"):
         assert errori.get(chiave), f"manca il messaggio per {chiave} in {nome}"
+
+
+# ─── HTTP calls, on a fake requests.get (no network) ─────────────────────────
+
+HOST = "192.0.2.10"
+
+
+class _Raw:
+    def __init__(self, body, fail=False):
+        self.body, self.fail, self.calls = body, fail, []
+
+    def read(self, decode_content=True):
+        self.calls.append(decode_content)
+        if self.fail:
+            raise ValueError("already consumed")
+        return self.body
+
+
+class _HttpResp:
+    def __init__(self, status=200, body=b"", headers=None, raw_fails=False):
+        self.status_code = status
+        self.headers = headers or {}
+        self.raw = _Raw(body, raw_fails)
+        self.content = body
+
+
+@pytest.fixture
+def http(monkeypatch):
+    """requests.get replaced: answers from `http.replies`, records the calls."""
+    state = type("Http", (), {})()
+    state.calls, state.replies = [], []
+
+    def get(url, **kw):
+        state.calls.append((url, kw))
+        reply = state.replies.pop(0)
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
+
+    monkeypatch.setattr(rc.requests, "get", get)
+    return state
+
+
+def test_get_status_asks_digest_without_compression_and_reads_raw_bytes(http):
+    resp = _HttpResp(200, STATUS_REALE.encode())
+    http.replies.append(resp)
+    status = rc.get_status(HOST, "u", "p")
+    assert status["vm_level"] == "0/100"
+    url, kw = http.calls[0]
+    assert url == f"http://{HOST}/rest/get_info.php"
+    assert kw["params"] == {"action": "status"}
+    assert (kw["auth"].username, kw["auth"].password) == ("u", "p")
+    assert kw["headers"]["Accept-Encoding"] == "identity"
+    assert resp.raw.calls == [False]  # the illegal Content-Encoding is never decoded
+
+
+def test_a_body_whose_raw_stream_is_gone_is_read_from_content(http):
+    http.replies.append(_HttpResp(200, b'[{"ROLE":"PICG","EXT":"61000","NAME":"x"}]', raw_fails=True))
+    assert rc.get_nicknames(HOST, "u", "p") == [{"role": "PICG", "ext": "61000", "name": "x"}]
+
+
+def test_a_network_error_is_rest_unavailable(http):
+    http.replies.append(rc.requests.exceptions.ConnectTimeout("slow"))
+    with pytest.raises(rc.RestUnavailable, match=HOST):
+        rc.get_status(HOST, "u", "p")
+
+
+def test_a_401_is_rest_auth_error(http):
+    http.replies.append(_HttpResp(401))
+    with pytest.raises(rc.RestAuthError, match="401"):
+        rc.get_nicknames(HOST, "u", "p")
+
+
+def test_another_status_is_a_rest_error(http):
+    http.replies.append(_HttpResp(500))
+    with pytest.raises(rc.RestError, match="500"):
+        rc.get_status(HOST, "u", "p")
+
+
+def test_download_db_writes_the_database_and_returns_last_modified(http, tmp_path):
+    body = b"SQLite format 3\x00rest"
+    http.replies.append(_HttpResp(200, body, {"Last-Modified": "Mon, 01 Jan 2024 00:00:00 GMT"}))
+    dest = tmp_path / "rubrica.db"
+    data, lm = rc.download_db(HOST, "u", "p", dest=str(dest))
+    assert data == body and dest.read_bytes() == body
+    assert lm == "Mon, 01 Jan 2024 00:00:00 GMT"
+    assert http.calls[0][1]["params"] == {"name": "rubrica"}
+    assert "If-Modified-Since" not in http.calls[0][1]["headers"]
+
+
+def test_download_db_unchanged_is_304_without_content(http):
+    http.replies.append(_HttpResp(304, headers={"Last-Modified": "then"}))
+    assert rc.download_db(HOST, "u", "p", rc.DB_MAILBOX, if_modified_since="then") == (None, "then")
+    assert http.calls[0][1]["headers"]["If-Modified-Since"] == "then"
+
+
+def test_download_db_refuses_a_body_that_is_not_sqlite(http):
+    http.replies.append(_HttpResp(200, b"<html>"))
+    with pytest.raises(rc.RestError, match="SQLite"):
+        rc.download_db(HOST, "u", "p")
+
+
+@pytest.mark.parametrize("reply, found", [
+    (_HttpResp(401, headers={"WWW-Authenticate": 'Digest realm="x"'}), True),
+    (_HttpResp(401, headers={"WWW-Authenticate": 'Basic realm="x"'}), False),
+    (_HttpResp(200), False),
+    (rc.requests.exceptions.ConnectionError("refused"), False),
+])
+def test_probe_recognises_the_intercom_by_its_digest_challenge(http, reply, found):
+    http.replies.append(reply)
+    assert rc.probe(HOST) is found
+
+
+def test_nicks_reply_skips_broken_objects_in_a_truncated_body():
+    body = 'GET_NICKS_REPLY;[{"ROLE":"PICG","EXT":"61000"},{"ROLE":"GA","EXT":1,"x":[}, {"ROLE":"GA'
+    assert rc.parse_nicks_reply(body) == [{"role": "PICG", "ext": "61000", "name": ""}]
+
+
+def test_nicknames_that_are_not_an_array_are_a_rest_error():
+    with pytest.raises(rc.RestError, match="array"):
+        rc.parse_nicknames(b'{"ROLE":"PICG"}')
+
+
+def test_download_db_without_dest_writes_nothing(http, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    http.replies.append(_HttpResp(200, b"SQLite format 3\x00"))
+    assert rc.download_db(HOST, "u", "p")[0] == b"SQLite format 3\x00"
+    assert list(tmp_path.iterdir()) == []
