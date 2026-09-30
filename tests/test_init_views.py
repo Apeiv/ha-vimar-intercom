@@ -365,7 +365,7 @@ def test_an_unknown_action_gets_no_answer(views, monkeypatch):
 
 @pytest.mark.parametrize("remote, headers, local", [
     ("127.0.0.1", {}, True),
-    ("192.168.1.20", {}, True),
+    ("192.0.2.20", {}, True),
     ("fe80::1", {}, True),
     ("233.252.0.1", {}, False),                        # neither private nor loopback
     ("127.0.0.1", {"x-forwarded-for": "192.0.2.9"}, False),  # behind a proxy

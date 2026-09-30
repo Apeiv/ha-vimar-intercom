@@ -526,7 +526,7 @@ def test_fetch_local_refuses_a_public_host(svc, monkeypatch):
 
 def test_fetch_local_refuses_a_save_as_without_a_file_name(svc, monkeypatch):
     monkeypatch.setattr(requests, "get", None)
-    result = svc.run("fetch_local", path="x", host="192.168.1.10", save_as="config/../")
+    result = svc.run("fetch_local", path="x", host="192.0.2.10", save_as="config/../")
     assert result["ok"] is False and "nome file non valido" in result["error"]
 
 
@@ -537,10 +537,10 @@ def test_fetch_local_fetches_with_digest_and_saves_the_file(svc, monkeypatch):
         seen.update(url=url, user=auth.username, redirects=allow_redirects)
         return _Resp()
     monkeypatch.setattr(requests, "get", get)
-    monkeypatch.setattr(runtime, "LOCAL_PROXY", "192.168.1.10")
+    monkeypatch.setattr(runtime, "LOCAL_PROXY", "192.0.2.10")
     result = svc.run("fetch_local", path="/rest/get_info.php?action=status",
                      scheme="https", save_as="status.txt")
-    assert seen == {"url": "https://192.168.1.10/rest/get_info.php?action=status",
+    assert seen == {"url": "https://192.0.2.10/rest/get_info.php?action=status",
                     "user": runtime.SIP_USER, "redirects": False}
     saved = svc.tmp_path / svc.init.DOMAIN / "status.txt"
     assert result == {"ok": True, "url": seen["url"], "status": 200, "content_type": "text/plain",
@@ -559,6 +559,6 @@ def test_fetch_local_reports_a_connection_error(svc, monkeypatch):
     def get(url, **kw):
         raise requests.ConnectionError("refused")
     monkeypatch.setattr(requests, "get", get)
-    result = svc.run("fetch_local", path="x", host="10.0.0.2", scheme="http")
-    assert result == {"ok": False, "url": "http://10.0.0.2/x", "error": "refused"}
+    result = svc.run("fetch_local", path="x", host="192.0.2.2", scheme="http")
+    assert result == {"ok": False, "url": "http://192.0.2.2/x", "error": "refused"}
 
