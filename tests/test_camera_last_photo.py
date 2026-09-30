@@ -35,7 +35,7 @@ def cam(camera, monkeypatch):
     monkeypatch.setattr(sip, "calling", False, raising=False)
     calls = []
 
-    async def do_call(target=None):
+    async def do_call(target=None, **_kw):
         calls.append(target)
         return True, "200"
 

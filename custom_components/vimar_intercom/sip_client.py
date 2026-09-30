@@ -1662,10 +1662,16 @@ async def do_system_message(target_uri, body_text, extra_headers=None, timeout=1
     return False, "Timeout"
 
 
-async def do_call(target=None, silence_limit=None):
+# do_call's result when answer_timeout ran out with no final answer.
+NO_ANSWER = "No answer"
+
+
+async def do_call(target=None, silence_limit=None, answer_timeout=None):
     """INVITE a SIP target (default: intercom targa 55001).
 
-    silence_limit: solo per la vista in uscita ("Vedi esterno"), vedi media.setup_media."""
+    silence_limit: solo per la vista in uscita ("Vedi esterno"), vedi media.setup_media.
+    answer_timeout: give up (CANCEL) after this many seconds without a final
+    answer, instead of 45, and return NO_ANSWER: the caller may try again."""
     if not registered:
         _LOGGER.error("do_call: NOT registered")
         return False, "Non registrato"
@@ -1777,7 +1783,7 @@ async def do_call(target=None, silence_limit=None):
 
     q = pending_responses.setdefault(cid, asyncio.Queue())
     _LOGGER.debug("do_call: cid=%s, q id=%s, pending_keys=%s", cid[:24], id(q), list(pending_responses.keys())[:3])
-    deadline = time.time() + 45
+    deadline = time.time() + (answer_timeout or 45)
     auth_tries, last_ch = 0, None
 
     try:
@@ -1885,8 +1891,11 @@ async def do_call(target=None, silence_limit=None):
 
         pending_responses.pop(cid, None)
         _set_calling(False)
-        _LOGGER.error("INVITE timeout (45s) for %s", target_uri)
         await _cancel()  # la targa non resti a squillare (e a rispondere dopo)
+        if answer_timeout:
+            _LOGGER.warning("INVITE: no final answer from %s after %.0fs", target_uri, answer_timeout)
+            return False, f"{NO_ANSWER} ({answer_timeout:.0f}s)"
+        _LOGGER.error("INVITE timeout (45s) for %s", target_uri)
         return False, "Timeout (45s)"
     finally:
         # Ogni uscita dalla transazione — return, timeout o eccezione sollevata

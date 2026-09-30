@@ -225,6 +225,26 @@ def test_chiamata_timeout_manda_cancel(monkeypatch):
     run(s())
 
 
+def test_a_call_with_an_answer_timeout_gives_up_early_and_cancels(monkeypatch):
+    """#41: a view's call that the panel leaves unanswered returns NO_ANSWER
+    after answer_timeout instead of 45 s, and the INVITE is cancelled."""
+    async def s():
+        async with Rig(monkeypatch) as rig:
+            await rig.register()
+
+            async def silent(peer, inv):
+                peer.reply(inv, 180, "Ringing")
+            rig.peer.on_invite = silent
+            loop = asyncio.get_running_loop()
+            started = loop.time()
+            ok, msg = await sip.do_call(answer_timeout=0.5)
+            assert not ok and msg.startswith(sip.NO_ANSWER)
+            assert loop.time() - started < 5
+            assert not sip.calling
+            await rig.peer.wait_for(is_("CANCEL"), timeout=2)
+    run(s())
+
+
 @pytest.mark.parametrize("ritrasmesso", [False, True])
 def test_chiamata_con_407(monkeypatch, ritrasmesso):
     """Sfida del proxy: un solo INVITE con auth, l'ACK del 407 nella sua transazione;

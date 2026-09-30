@@ -4,6 +4,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [semver](ht
 Newest entries on top. **Entries are written in English from 1.0.1 onwards**; earlier ones are in
 Italian and are kept as they were written.
 
+## [Unreleased]
+
+### Fixed
+
+- "View outside" opened right after hanging up no longer fails after 25 s on local UDP (#41). The
+  view waits for the panel to answer our BYE (at most 6 s) before calling it again, and a view's
+  call that the panel leaves unanswered is cancelled after 8 s and tried once more. Cloud plants
+  are unchanged: the relay never answers a BYE, and the view still waits only for the local end.
+
 ## [1.0.16] - 2026-09-30
 
 ### Added

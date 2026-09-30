@@ -333,7 +333,8 @@ def test_find_picg_keeps_going_after_a_late_reply_without_picg(hub, monkeypatch)
 
 # ─── the automatic hang-up's edges ───────────────────────────────────────────
 
-def test_a_state_change_without_a_loop_drops_the_hang_up_guard_at_once(hub):
+def test_a_state_change_without_a_loop_drops_the_hang_up_guard_at_once(hub, monkeypatch):
+    monkeypatch.setattr(R, "USE_LOCAL_UDP", False)  # the local-end settle is the cloud's
     hub._hanging_up = True
     hub._on_sip_state_change()  # sip idle, no running loop
     assert hub._hanging_up is False
@@ -359,7 +360,7 @@ def test_a_fallback_panel_that_fails_too_is_not_learned(hub, monkeypatch):
     hub._last_ring_panel = "55009"
     answers = iter([(False, "404 Not Found"), (False, "486 Busy Here")])
 
-    async def do_call(target=None, silence_limit=None):
+    async def do_call(target=None, silence_limit=None, **_kw):
         return next(answers)
 
     monkeypatch.setattr(sip, "do_call", do_call)
@@ -376,7 +377,7 @@ def test_a_learned_panel_without_a_persist_callback_is_kept_in_memory(hub, monke
     hub._last_ring_panel = "55009"
     answers = iter([(False, "404 Not Found"), (True, "200 OK")])
 
-    async def do_call(target=None, silence_limit=None):
+    async def do_call(target=None, silence_limit=None, **_kw):
         return next(answers)
 
     monkeypatch.setattr(sip, "do_call", do_call)

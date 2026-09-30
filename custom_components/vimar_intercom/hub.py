@@ -43,6 +43,13 @@ HANGUP_SETTLE = 6.0
 HANGUP_LOCAL_SETTLE = 0.5
 # Upper bound for the whole automatic hang-up, BYE answer included.
 HANGUP_BYE_TIMEOUT = 8.0
+# Local UDP only (#41): a panel that has just ended a call can ignore the
+# next INVITE for a few seconds. A view's call with no final answer after
+# AUTO_CALL_ANSWER_TIMEOUT is cancelled and tried once more after
+# AUTO_CALL_RETRY_PAUSE, well inside /av's 25 s, instead of failing at 25 s.
+# The cloud relay answers at once (100 Trying); there, nothing changes.
+AUTO_CALL_ANSWER_TIMEOUT = 8.0
+AUTO_CALL_RETRY_PAUSE = 2.0
 
 # Nomi "umani" degli indirizzi SIP dell'impianto
 SIP_ID_NAMES = {
@@ -476,9 +483,12 @@ class VimarIntercomHub:
             self._auto_ended_at = time.monotonic()
             self._video_ended()
         self._was_busy = busy
-        if self._hanging_up and not busy and self._hangup_settle is None:
-            # The automatic hang-up has ended the call locally; its BYE may
-            # still wait for an answer that never comes on the cloud.
+        if self._hanging_up and not busy and self._hangup_settle is None and not R.USE_LOCAL_UDP:
+            # The hang-up has ended the call locally; its BYE may still wait
+            # for an answer that never comes on the cloud. On local UDP the
+            # panel does answer the BYE, and it is busy until it has (#41):
+            # there the guard drops only when the BYE is done
+            # (_hangup_finished), still within HANGUP_SETTLE for a view.
             try:
                 self._hangup_settle = asyncio.get_running_loop().call_later(
                     HANGUP_LOCAL_SETTLE, self._end_hanging_up, self._hangup_done)
@@ -555,7 +565,16 @@ class VimarIntercomHub:
         """
         try:
             # Default di do_call: R.INTERCOM, cioè la targa video (camera_target).
-            ok, msg = await sip.do_call(silence_limit=R.VIEW_KEEPALIVE)
+            answer_timeout = AUTO_CALL_ANSWER_TIMEOUT if R.USE_LOCAL_UDP else None
+            ok, msg = await sip.do_call(silence_limit=R.VIEW_KEEPALIVE,
+                                        answer_timeout=answer_timeout)
+            if not ok and msg.startswith(sip.NO_ANSWER) and self._view_still_waits(gen):
+                _LOGGER.warning("The panel did not answer the view's call (%s): "
+                                "one more try in %.0fs", msg, AUTO_CALL_RETRY_PAUSE)
+                await asyncio.sleep(AUTO_CALL_RETRY_PAUSE)
+                if self._view_still_waits(gen):
+                    ok, msg = await sip.do_call(silence_limit=R.VIEW_KEEPALIVE,
+                                                answer_timeout=answer_timeout)
             alt = None if ok else self._camera_fallback(msg)
             if alt:
                 _LOGGER.warning(
@@ -582,6 +601,12 @@ class VimarIntercomHub:
             if gen is None or gen == self._auto_gen:
                 self._auto_called = False
             self._auto_ended_at = time.monotonic()
+
+    def _view_still_waits(self, gen: int | None) -> bool:
+        """This auto-call is still wanted: the newest one, a viewer waiting,
+        and nothing else started on the line meanwhile."""
+        return ((gen is None or gen == self._auto_gen) and self._stream_viewers > 0
+                and self._auto_called and not self._busy_now and not sip.ringing())
 
     def set_persist_callback(self, callback: Callable[[dict], None]) -> None:
         """Who saves the values learned from the plant into the entry."""
