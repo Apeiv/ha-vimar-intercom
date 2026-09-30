@@ -83,11 +83,13 @@ this plant; the local path is not used.
 * The debug buffer (`/api/vimar_intercom/debug?lines=N`, administrators only)
   holds the SIP trace with credentials and SRTP keys masked.
 
-## Keyframe requests: the 2FV2 panel ignores them
+## Keyframe requests: it depends on the panel
 
-The entrance panel emits a keyframe every **3.00 seconds**, and there is no way
-to bring it forward. Four channels were tried and measured in the field
-(intervals between IDRs, twenty-five-second calls):
+Both panels measured so far emit a keyframe every **3.0 seconds** on their own.
+Whether a request brings one forward differs.
+
+**Tab 7S Up 40517 (2FV2): ignored.** Four channels were tried and measured in
+the field (intervals between IDRs, twenty-five-second calls):
 
 | Request | Result |
 |---|---|
@@ -105,6 +107,17 @@ The `a=rtcp-fb:96 ccm fir` and `nack pli` lines seen in the traffic are **ours**
 not the panel's. The panel runs linphone/oRTP (`s=Talk` in the SDP), which
 handles feedback only if AVPF was agreed.
 
+**Tab 5S Up 40515 (cloud relay): honoured.** Measured by @Apeiv on a twenty-second
+"Vedi esterno" view, matching every `INFO picture_fast_update` with the next IDR:
+the IDR follows **0.21 to 0.27 s** after each request, and a requested IDR
+restarts the panel's own three-second timer.
+
+So a periodic request every 5 s brings nothing on either panel (their own
+cadence is shorter), while a request when the call starts and after a lost video
+packet cuts recovery to about 0.25 s on the 40515 instead of up to 3 s. That is
+what the integration does: a short burst at call start and one request per lost
+packet (at most one per second), never periodically.
+
 The three-second cycle does not mean three seconds of wait before the first
 image. As soon as the panel answers the call it sends SPS, PPS and a full
 keyframe within about half a second (measured: answer at +1.0 s, complete
@@ -112,9 +125,7 @@ keyframe at +1.5 s). The cycle applies to the keyframes after that, and matters
 only for a viewer that joins midway. That is why `/av` replays the last group of
 pictures, in RTP sequence order, when it starts its ffmpeg during a call. A viewer
 that joins an ffmpeg already running (another viewer is connected, or the last one
-left less than 10 seconds ago) starts at the panel's next keyframe. For the same
-reason the integration asks for a keyframe only in a short burst when the call
-starts and after a lost video packet, never periodically.
+left less than 10 seconds ago) starts at the panel's next keyframe.
 
 The panel also sends RTCP (`SR`, `SDES`, `XR`) every two or three seconds on a
 separate port (`a=rtcp:`, no `a=rtcp-mux`). The integration does not use it; with
