@@ -1,0 +1,45 @@
+"""SIP User-Agent / Server header → commercial model and firmware."""
+from __future__ import annotations
+
+import pytest
+
+from custom_components.vimar_intercom import model_detect as md
+
+
+@pytest.mark.parametrize("ua, model, fw", [
+    ("Vimar Tab 7S Up Plus FwVer:2.4.1", "Elvox Tab 7S Plus", "2.4.1"),
+    ("Elvox TAB_7S", "Elvox Tab 7S", None),
+    ("tab-5s plus/1.2", "Elvox Tab 5S Plus", "1.2"),
+    ("Tab 5S", "Elvox Tab 5S", None),
+    ("TAB4S version 3.0.2", "Elvox Tab 4S", "3.0.2"),
+    ("VIMAR K40517.1 fw:1.0.0", "Elvox Tab 7S Up", "1.0.0"),
+    ("device 40515", "Elvox Tab 5S Up", None),
+    ("device 40945", "Elvox Tab 5S Plus", None),
+    ("device 40607", "Elvox Tab 7S IP", None),
+    ("Pixel entrance panel", "Elvox Pixel", None),
+    ("panel 41019", "Elvox Pixel", None),
+    ("Vimar tab/v1.9", "Elvox Tab IP", "1.9"),
+])
+def test_known_user_agents_map_to_a_model_and_firmware(ua, model, fw):
+    got_model, got_fw, priority = md.match(ua)
+    assert (got_model, got_fw) == (model, fw)
+    assert md.MODEL_PATTERNS[priority][1] == model
+
+
+def test_a_more_specific_pattern_has_a_lower_priority():
+    _, _, specific = md.match("Tab 7S Plus")
+    _, _, generic = md.match("some tab")
+    assert 0 <= specific < generic
+
+
+@pytest.mark.parametrize("ua", [
+    "", "Flexisip 2.1", "Linphone/5.0", "TOGA/2.4.0", "Home Assistant", "belle-sip/4.5",
+    "Unknown Phone 1.0",
+])
+def test_proxies_apps_and_unknown_devices_give_no_model(ua):
+    assert md.match(ua) == (None, None, -1)
+
+
+def test_is_ignored_is_case_insensitive():
+    assert md.is_ignored("FLEXISIP")
+    assert not md.is_ignored("Elvox Tab 7S")
