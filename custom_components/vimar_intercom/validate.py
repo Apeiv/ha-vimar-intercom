@@ -75,11 +75,23 @@ def is_private_host(raw: str | None) -> bool:
     """
     if not raw:
         return False
-    host = str(raw).strip()
-    if host.startswith("[") and "]" in host:          # [::1]:8080
-        host = host[1:host.index("]")]
-    elif host.count(":") == 1:                         # 192.168.1.5:8080
-        host = host.split(":")[0]
+    text = str(raw).strip()
+    # Solo le tre forme ammesse, intere: `IP`, `IPv4:porta`, `[IPv6]` o
+    # `[IPv6]:porta`. Prima si prendeva quello che stava prima dei due punti,
+    # e `10.0.0.1:1@attacker.tld` passava come 10.0.0.1: nell'URL, però, `@`
+    # separa le credenziali dall'host, e la richiesta (con il Digest SIP)
+    # andava ad attacker.tld.
+    m = re.fullmatch(r"\[([0-9A-Fa-f:.]+)\](?::(\d{1,5}))?", text)
+    if m:
+        host, port = m.group(1), m.group(2)
+    else:
+        m = re.fullmatch(r"([0-9.]+):(\d{1,5})", text)
+        if m:
+            host, port = m.group(1), m.group(2)
+        else:
+            host, port = text, None
+    if port is not None and not 0 < int(port) <= 65535:
+        return False
     try:
         ip = ipaddress.ip_address(host)
     except ValueError:

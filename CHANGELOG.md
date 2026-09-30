@@ -186,6 +186,13 @@ Documentation:
 - The SIP test in the options removes its own registration (Expires: 0, same Contact) once it
   passes: with the integration running it replaced the live binding with one pointing at the
   test's closed socket.
+- `fetch_local`: a host such as `10.0.0.1:1@attacker.tld` passed the private-address check (it was
+  read as `10.0.0.1`), while in the URL `@` separates credentials from the host, so the request —
+  with the SIP password in Digest — went to `attacker.tld`. Only a bare IP, `IPv4:port`, `[IPv6]` or
+  `[IPv6]:port` is accepted now, with a numeric port in range.
+- Log redaction: `sip_password=…` (key with a prefix), quoted values with spaces (`password="my
+  secret"`, `token: 'x y z'`) and dict reprs (`{'sip_password': '…'}`) were left in clear in the
+  debug buffer and in the Home Assistant log. They are masked now.
 
 ## [1.0.14] - 2026-09-30
 
