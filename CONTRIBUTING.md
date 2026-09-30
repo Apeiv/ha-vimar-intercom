@@ -54,6 +54,9 @@ add a test — those are the parts that break silently on other plants.
 - `python -m pytest` runs the unit tests and the SIP end-to-end tests (`tests/test_e2e_sip.py`):
   the real `sip_client`, hub, media and HTTP views against a fake panel on 127.0.0.1
   (`tests/harness/`). No network, no ffmpeg, no browser: this is what CI runs.
+- `python -m pytest tests --cov --cov-report=term-missing` is the same run with coverage, as CI
+  runs it: lines and branches of `custom_components/vimar_intercom`, and it fails below the
+  `fail_under` threshold in `pyproject.toml` (95%). New code comes with tests that keep it there.
 - `python -m pytest -m media` adds real media (`tests/test_e2e_media.py`): H.264 from ffmpeg,
   SRTP, the real `/av` ffmpeg behind a real aiohttp server, frames counted with ffprobe. Needs
   `ffmpeg`/`ffprobe` and `aiohttp`. If the first `ffmpeg` in your PATH is a launcher that runs

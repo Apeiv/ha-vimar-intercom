@@ -25,3 +25,12 @@ ignore = ["E501"]
 [tool.mypy]
 python_version = "3.11"
 ignore_missing_imports = true
+
+[tool.coverage.run]
+source = ["custom_components/vimar_intercom"]
+branch = true
+
+[tool.coverage.report]
+fail_under = 95
+show_missing = true
+skip_covered = true
