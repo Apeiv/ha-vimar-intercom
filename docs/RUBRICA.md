@@ -138,7 +138,7 @@ Metodo usato (senza credenziali):
 1. **Muletto**: Samsung A32 `SM-A325F`, Android 13. Root con **Magisk**: sblocco bootloader
    (OEM unlocking), `AP` patchato con Magisk e flashato via **Odin**.
 2. Installare **VIEW** (`com.vimar.view`) e fare **login con l'account Vimar dell'utente**.
-   L'app registra ogni nuovo device con un **id SIP nuovo** (es. 60993) e salva le credenziali
+   L'app registra ogni nuovo device con un **id SIP nuovo** (es. 60903) e salva le credenziali
    come `ha1` nel `linphonerc` (mai in chiaro).
 3. Copiare il db con `adb` + `su`:
    ```bash

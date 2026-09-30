@@ -15,7 +15,7 @@ from custom_components.vimar_intercom import rest_client, runtime, validate  # n
 from custom_components.vimar_intercom import sip_client as sip  # noqa: E402
 
 REPLY = ('GET_NICKS_REPLY;[{"ROLE": "PICG", "EXT": "55001", "NAME": "Casa"}, '
-         '{"ROLE": "PIM", "EXT": "60993", "NAME": "Tel A"}, {"ROLE": "PIM", "EXT": "60992", "NAME": "Tel B"}]')
+         '{"ROLE": "PIM", "EXT": "60903", "NAME": "Tel A"}, {"ROLE": "PIM", "EXT": "60902", "NAME": "Tel B"}]')
 
 INIT_REPLY = ('GET_INIT_STATUS_REPLY;[{"VALUE": "0123456789abcdef0123456789abcdef", "PARAM": "rubrica_ver"},'
               '{"VALUE": "0", "PARAM": "dnd"}]')
@@ -25,7 +25,7 @@ INIT_REPLY = ('GET_INIT_STATUS_REPLY;[{"VALUE": "0123456789abcdef0123456789abcde
 
 def test_reply_completa():
     nicks = rest_client.parse_nicks_reply(REPLY)
-    assert [n["ext"] for n in nicks] == ["55001", "60993", "60992"]
+    assert [n["ext"] for n in nicks] == ["55001", "60903", "60902"]
     assert rest_client.find_picg(nicks) == "55001"
 
 
@@ -206,7 +206,7 @@ def test_sonda_sconosciuta_rifiutata(hub):
 
 def test_reply_senza_picg_non_marca_tardive_le_sonde_successive(monkeypatch, hub):
     """Una GET_NICKS_REPLY senza ruolo PICG non deve far segnare «in ritardo» tutto il resto."""
-    senza_picg = 'GET_NICKS_REPLY;[{"ROLE": "PIM", "EXT": "60993", "NAME": "x"}]'
+    senza_picg = 'GET_NICKS_REPLY;[{"ROLE": "PIM", "EXT": "60903", "NAME": "x"}]'
 
     async def _dsm(uri, body, extra_headers=None, timeout=15):
         target = uri.split(":", 1)[1].split("@", 1)[0]

@@ -123,7 +123,7 @@ class _Hub:
 
 def _flow(cf, hub, data=None):
     entry = types.SimpleNamespace(entry_id="e1", options={}, data=data or {
-        "sip_user": "60992", "sip_domain": CDOMAIN, "cloud_domain": CDOMAIN,
+        "sip_user": "60902", "sip_domain": CDOMAIN, "cloud_domain": CDOMAIN,
         "cloud_proxy": CPROXY, "gid": "101"})
     flow = cf.OptionsFlowHandler(entry)
 
