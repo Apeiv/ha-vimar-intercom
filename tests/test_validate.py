@@ -141,7 +141,7 @@ def test_host_con_trucchi_rifiutato(host):
 
 
 @pytest.mark.parametrize("host", [
-    "10.0.0.1", "192.168.0.149", "192.168.0.149:80", "127.0.0.1:8080",
+    "10.0.0.1", "192.168.1.20", "192.168.1.20:80", "127.0.0.1:8080",
     "[::1]", "[::1]:80", "[fe80::1]:8080", "::1",
 ])
 def test_host_privati_validi(host):

@@ -93,9 +93,9 @@ def test_vm_level_assente_o_strano_torna_none(valore):
 # via SIP con GET_NICKS_REPLY;
 NICKNAME_REALE = json.dumps([
     {"ROLE": "PICG", "EXT": "55001", "NAME": "Casa CG"},
-    {"ROLE": "PIM", "EXT": "60993", "NAME": "A32"},
-    {"ROLE": "PIM", "EXT": "60992", "NAME": "test"},
-    {"ROLE": "PIM", "EXT": "60991", "NAME": "s26"},
+    {"ROLE": "PIM", "EXT": "60903", "NAME": "Phone A"},
+    {"ROLE": "PIM", "EXT": "60902", "NAME": "test"},
+    {"ROLE": "PIM", "EXT": "60901", "NAME": "Phone C"},
 ])
 
 
@@ -116,7 +116,7 @@ def test_find_picg_ignora_maiuscole_e_minuscole():
 
 def test_senza_capogruppo_find_picg_torna_none():
     """Va gestito: l'integrazione deve ricadere sul valore configurato a mano."""
-    solo_pim = [{"role": "PIM", "ext": "60992", "name": "test"}]
+    solo_pim = [{"role": "PIM", "ext": "60902", "name": "test"}]
     assert rc.find_picg(solo_pim) is None
 
 
@@ -127,16 +127,16 @@ def test_find_picg_non_si_fa_ingannare_da_un_ext_vuoto():
 def test_nicknames_scarta_le_voci_senza_interno():
     nicks = rc.parse_nicknames(json.dumps([
         {"ROLE": "PICG", "NAME": "senza ext"},
-        {"ROLE": "PIM", "EXT": "60992", "NAME": "buona"},
+        {"ROLE": "PIM", "EXT": "60902", "NAME": "buona"},
     ]))
-    assert [n["ext"] for n in nicks] == ["60992"]
+    assert [n["ext"] for n in nicks] == ["60902"]
 
 
 # ─── URL e nomi dei database ─────────────────────────────────────────────────
 
 def test_base_url_e_http_semplice_sulla_porta_di_default():
     """Il citofono serve l'API in chiaro sulla 80; la 443 è chiusa."""
-    assert rc.base_url("192.168.0.149") == "http://192.168.0.149/rest"
+    assert rc.base_url("192.168.1.20") == "http://192.168.1.20/rest"
 
 
 def test_i_nomi_dei_db_non_portano_estensione():
@@ -152,7 +152,7 @@ def test_i_nomi_dei_db_non_portano_estensione():
 
 def test_download_db_rifiuta_un_nome_inventato():
     with pytest.raises(ValueError):
-        rc.download_db("192.168.0.149", "u", "p", name="rubrica.db")
+        rc.download_db("192.168.1.20", "u", "p", name="rubrica.db")
 
 
 # ─── Le eccezioni raccontano cosa è successo ─────────────────────────────────

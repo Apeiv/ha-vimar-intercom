@@ -13,7 +13,7 @@ import pytest
 sip = pytest.importorskip("custom_components.vimar_intercom.sip_client")
 
 OFFERTA_2F = (
-    "v=0\r\no=- 1 1 IN IP4 192.168.0.149\r\ns=-\r\nc=IN IP4 192.168.0.149\r\nt=0 0\r\n"
+    "v=0\r\no=- 1 1 IN IP4 192.168.1.20\r\ns=-\r\nc=IN IP4 192.168.1.20\r\nt=0 0\r\n"
     "m=audio 15336 RTP/AVP 96 0 8 101\r\na=rtpmap:96 opus/48000/2\r\na=rtpmap:0 PCMU/8000\r\n"
     "a=rtpmap:8 PCMA/8000\r\na=rtpmap:101 telephone-event/8000\r\n"
     "m=video 10876 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\n"
