@@ -4,6 +4,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [semver](ht
 Newest entries on top. **Entries are written in English from 1.0.1 onwards**; earlier ones are in
 Italian and are kept as they were written.
 
+## [Unreleased]
+
+### Fixed
+
+- HomeKit: two ffmpegs starting together (the re-encoder and a view) could be handed overlapping
+  loopback ports, and one logged "bind failed: Address in use". Every ffmpeg RTP input now gets an
+  even port with the next one free (RTCP), and a pair handed out is not handed out again for 10 s.
+
 ## [1.0.16] - 2026-09-30
 
 ### Added

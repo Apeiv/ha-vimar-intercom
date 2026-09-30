@@ -10,6 +10,7 @@ import base64
 import os
 import socket
 import struct
+import time
 
 import pytest
 
@@ -481,3 +482,33 @@ class TestFirstVoice:
         for _ in range(50):
             b._note_voice(self.frame(5000))
         assert fired == [True]
+
+
+class TestPortPairs:
+    """Every ffmpeg RTP input binds its port and the next one (RTCP)."""
+
+    def test_ports_come_in_even_pairs_that_are_free(self):
+        port = audio.free_udp_port()
+        assert port % 2 == 0
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as a, \
+                socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as b:
+            a.bind(("127.0.0.1", port))
+            b.bind(("127.0.0.1", port + 1))
+
+    def test_a_pair_just_handed_out_is_not_handed_out_again(self, monkeypatch):
+        """The transcoder's and a view's ffmpeg start together, before either has
+        bound its ports: the kernel may suggest the same port twice. One of them
+        got "bind failed: Address in use" on a 40515."""
+        first = audio.free_udp_port()
+        again = iter([first + 1, first])
+        real = audio._ephemeral_port
+        monkeypatch.setattr(audio, "_ephemeral_port", lambda: next(again, None) or real())
+        second = audio.free_udp_port()
+        assert {second, second + 1}.isdisjoint({first, first + 1})
+
+    def test_a_reservation_expires(self, monkeypatch):
+        monkeypatch.setattr(audio, "RESERVE_SECONDS", 0.0)
+        first = audio.free_udp_port()
+        monkeypatch.setattr(audio, "_ephemeral_port", lambda: first)
+        time.sleep(0.01)
+        assert audio.free_udp_port() == first
