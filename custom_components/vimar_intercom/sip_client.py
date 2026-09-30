@@ -1662,7 +1662,8 @@ async def do_system_message(target_uri, body_text, extra_headers=None, timeout=1
     return False, "Timeout"
 
 
-# do_call's result when answer_timeout ran out with no final answer.
+# do_call's result when answer_timeout ran out with no final answer. The
+# result reads "No answer (8s)": callers match it with startswith(NO_ANSWER).
 NO_ANSWER = "No answer"
 
 
@@ -1792,6 +1793,8 @@ async def do_call(target=None, silence_limit=None, answer_timeout=None):
                            q.qsize(), cid in pending_responses, pending_responses.get(cid) is q)
             try:
                 wait = min(3, max(0.01, retx_at - time.time())) if retx else 3
+                if answer_timeout:  # to the deadline, not up to 3 s past it
+                    wait = min(wait, max(0.01, deadline - time.time()))
                 raw = await asyncio.wait_for(q.get(), timeout=wait)
             except asyncio.TimeoutError:
                 if retx and time.time() >= retx_at:
@@ -1891,11 +1894,13 @@ async def do_call(target=None, silence_limit=None, answer_timeout=None):
 
         pending_responses.pop(cid, None)
         _set_calling(False)
-        await _cancel()  # la targa non resti a squillare (e a rispondere dopo)
         if answer_timeout:
             _LOGGER.warning("INVITE: no final answer from %s after %.0fs", target_uri, answer_timeout)
+        else:
+            _LOGGER.error("INVITE timeout (45s) for %s", target_uri)
+        await _cancel()  # la targa non resti a squillare (e a rispondere dopo)
+        if answer_timeout:
             return False, f"{NO_ANSWER} ({answer_timeout:.0f}s)"
-        _LOGGER.error("INVITE timeout (45s) for %s", target_uri)
         return False, "Timeout (45s)"
     finally:
         # Ogni uscita dalla transazione — return, timeout o eccezione sollevata

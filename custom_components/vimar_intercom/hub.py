@@ -45,11 +45,12 @@ HANGUP_LOCAL_SETTLE = 0.5
 HANGUP_BYE_TIMEOUT = 8.0
 # Local UDP only (#41): a panel that has just ended a call can ignore the
 # next INVITE for a few seconds. A view's call with no final answer after
-# AUTO_CALL_ANSWER_TIMEOUT is cancelled and tried once more after
-# AUTO_CALL_RETRY_PAUSE, well inside /av's 25 s, instead of failing at 25 s.
-# The cloud relay answers at once (100 Trying); there, nothing changes.
-AUTO_CALL_ANSWER_TIMEOUT = 8.0
-AUTO_CALL_RETRY_PAUSE = 2.0
+# LOCAL_UDP_ANSWER_TIMEOUT is cancelled and tried once more after
+# LOCAL_UDP_RETRY_PAUSE: at most 8 + 2 + 8 = 18 s, inside /av's 25 s, instead
+# of failing at 25 s. The cloud relay answers at once (100 Trying); there,
+# nothing changes.
+LOCAL_UDP_ANSWER_TIMEOUT = 8.0
+LOCAL_UDP_RETRY_PAUSE = 2.0
 
 # Nomi "umani" degli indirizzi SIP dell'impianto
 SIP_ID_NAMES = {
@@ -565,13 +566,13 @@ class VimarIntercomHub:
         """
         try:
             # Default di do_call: R.INTERCOM, cioè la targa video (camera_target).
-            answer_timeout = AUTO_CALL_ANSWER_TIMEOUT if R.USE_LOCAL_UDP else None
+            answer_timeout = LOCAL_UDP_ANSWER_TIMEOUT if R.USE_LOCAL_UDP else None
             ok, msg = await sip.do_call(silence_limit=R.VIEW_KEEPALIVE,
                                         answer_timeout=answer_timeout)
             if not ok and msg.startswith(sip.NO_ANSWER) and self._view_still_waits(gen):
                 _LOGGER.warning("The panel did not answer the view's call (%s): "
-                                "one more try in %.0fs", msg, AUTO_CALL_RETRY_PAUSE)
-                await asyncio.sleep(AUTO_CALL_RETRY_PAUSE)
+                                "one more try in %.0fs", msg, LOCAL_UDP_RETRY_PAUSE)
+                await asyncio.sleep(LOCAL_UDP_RETRY_PAUSE)
                 if self._view_still_waits(gen):
                     ok, msg = await sip.do_call(silence_limit=R.VIEW_KEEPALIVE,
                                                 answer_timeout=answer_timeout)
@@ -580,7 +581,8 @@ class VimarIntercomHub:
                 _LOGGER.warning(
                     "Video panel %s did not answer (%s): trying %s, the panel "
                     "that last rang", R.CAMERA_TARGET, msg, alt)
-                ok, msg = await sip.do_call(target=sip_uri(alt), silence_limit=R.VIEW_KEEPALIVE)
+                ok, msg = await sip.do_call(target=sip_uri(alt), silence_limit=R.VIEW_KEEPALIVE,
+                                            answer_timeout=answer_timeout)
                 if ok:
                     self._learn_camera_target(alt)
         except Exception as e:  # noqa: BLE001

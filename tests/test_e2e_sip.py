@@ -239,7 +239,7 @@ def test_a_call_with_an_answer_timeout_gives_up_early_and_cancels(monkeypatch):
             started = loop.time()
             ok, msg = await sip.do_call(answer_timeout=0.5)
             assert not ok and msg.startswith(sip.NO_ANSWER)
-            assert loop.time() - started < 5
+            assert loop.time() - started < 0.5 + 1, "to the deadline, not up to 3 s past it"
             assert not sip.calling
             await rig.peer.wait_for(is_("CANCEL"), timeout=2)
     run(s())

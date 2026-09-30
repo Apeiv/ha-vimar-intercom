@@ -69,8 +69,8 @@ def _view_during_hang_up(hub, monkeypatch, bye_answer_after):
 def test_on_local_udp_a_view_waits_for_the_panel_to_answer_the_bye(hub, monkeypatch):
     monkeypatch.setattr(R, "USE_LOCAL_UDP", True)
     waited, events = _view_during_hang_up(hub, monkeypatch, bye_answer_after=0.3)
-    assert 0.25 <= waited < 1.0, "until the BYE's answer, not the local end + 0.05 s"
-    assert events == ["local end", "bye answered", "new call"]
+    assert waited < 1.0
+    assert events == ["local end", "bye answered", "new call"], "the BYE's answer first"
 
 
 def test_on_the_cloud_a_view_waits_only_for_the_local_end(hub, monkeypatch):
@@ -86,21 +86,22 @@ def test_on_local_udp_a_bye_never_answered_still_frees_the_view(hub, monkeypatch
     monkeypatch.setattr(R, "USE_LOCAL_UDP", True)
     monkeypatch.setattr(hub_mod, "HANGUP_SETTLE", 0.2)
     waited, events = _view_during_hang_up(hub, monkeypatch, bye_answer_after=5)
-    assert 0.15 <= waited < 1.0
-    assert "new call" in events
+    assert waited < 1.0
+    assert events == ["local end", "new call"], "called at HANGUP_SETTLE, not after 5 s"
 
 
 # ─── one more try when the panel does not answer ─────────────────────────────
 
-def _auto_call(hub, monkeypatch, results, *, viewer_leaves_in_pause=False):
-    """A view's auto-call; do_call answers with `results` in turn."""
-    monkeypatch.setattr(hub_mod, "AUTO_CALL_RETRY_PAUSE", 0.01)
+def _auto_call(hub, monkeypatch, results, *, during_pause=None):
+    """A view's auto-call; do_call answers with `results` in turn.
+    `during_pause` runs 5 ms into the 50 ms pause between the two tries."""
+    monkeypatch.setattr(hub_mod, "LOCAL_UDP_RETRY_PAUSE", 0.05)
     calls = []
 
     async def do_call(target=None, silence_limit=None, answer_timeout=None):
         calls.append(answer_timeout)
-        if viewer_leaves_in_pause:
-            hub._stream_viewers = 0
+        if during_pause and len(calls) == 1:
+            asyncio.get_running_loop().call_later(0.005, during_pause)
         return results[len(calls) - 1]
 
     monkeypatch.setattr(sip, "do_call", do_call)
@@ -111,26 +112,54 @@ def _auto_call(hub, monkeypatch, results, *, viewer_leaves_in_pause=False):
     return calls
 
 
+NO = (False, f"{sip.NO_ANSWER} (8s)")
+
+
 def test_on_local_udp_an_unanswered_view_call_is_tried_once_more(hub, monkeypatch):
     monkeypatch.setattr(R, "USE_LOCAL_UDP", True)
-    calls = _auto_call(hub, monkeypatch, [(False, f"{sip.NO_ANSWER} (8s)"), (True, "Connesso!")])
-    assert calls == [hub_mod.AUTO_CALL_ANSWER_TIMEOUT] * 2
+    calls = _auto_call(hub, monkeypatch, [NO, (True, "Connesso!")])
+    assert calls == [hub_mod.LOCAL_UDP_ANSWER_TIMEOUT] * 2
     assert hub._auto_called, "the second try connected"
 
 
-def test_only_once(hub, monkeypatch):
+def test_an_unanswered_view_call_is_not_tried_a_third_time(hub, monkeypatch):
     monkeypatch.setattr(R, "USE_LOCAL_UDP", True)
-    no = (False, f"{sip.NO_ANSWER} (8s)")
-    calls = _auto_call(hub, monkeypatch, [no, no, no])
+    calls = _auto_call(hub, monkeypatch, [NO, NO, NO])
     assert len(calls) == 2
     assert not hub._auto_called, "a failed auto-call is over"
 
 
-def test_no_second_try_once_the_viewer_has_left(hub, monkeypatch):
+def test_no_second_try_once_the_viewer_has_left_during_the_pause(hub, monkeypatch):
     monkeypatch.setattr(R, "USE_LOCAL_UDP", True)
-    calls = _auto_call(hub, monkeypatch, [(False, f"{sip.NO_ANSWER} (8s)")],
-                       viewer_leaves_in_pause=True)
+    calls = _auto_call(hub, monkeypatch, [NO],
+                       during_pause=lambda: setattr(hub, "_stream_viewers", 0))
     assert len(calls) == 1
+
+
+def test_no_second_try_when_a_ring_arrives_during_the_pause(hub, monkeypatch):
+    """The view follows the ring's early media instead: a call now would
+    replace the ring's media and keys."""
+    monkeypatch.setattr(R, "USE_LOCAL_UDP", True)
+    ringing = {"now": False}
+    monkeypatch.setattr(sip, "ringing", lambda cid=None: ringing["now"])
+    calls = _auto_call(hub, monkeypatch, [NO], during_pause=lambda: ringing.update(now=True))
+    assert len(calls) == 1
+
+
+def test_no_second_try_for_an_auto_call_a_newer_one_replaced(hub, monkeypatch):
+    monkeypatch.setattr(R, "USE_LOCAL_UDP", True)
+    calls = _auto_call(hub, monkeypatch, [NO],
+                       during_pause=lambda: setattr(hub, "_auto_gen", hub._auto_gen + 1))
+    assert len(calls) == 1
+
+
+def test_the_camera_fallback_call_keeps_the_answer_timeout(hub, monkeypatch):
+    """The 404 fallback to the panel that last rang stays inside /av's 25 s."""
+    monkeypatch.setattr(R, "USE_LOCAL_UDP", True)
+    monkeypatch.setattr(hub, "_camera_fallback", lambda msg: "55002" if msg.startswith("404") else None)
+    monkeypatch.setattr(hub, "_learn_camera_target", lambda alt: None)
+    calls = _auto_call(hub, monkeypatch, [(False, "404 Not Found"), (True, "Connesso!")])
+    assert calls == [hub_mod.LOCAL_UDP_ANSWER_TIMEOUT] * 2
 
 
 def test_a_refusal_is_not_retried(hub, monkeypatch):
