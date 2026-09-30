@@ -49,6 +49,10 @@ Italian and are kept as they were written.
 
 Call and media:
 
+- `/av` no longer starts with a wrapped audio timestamp. When the panel's audio arrived before its
+  video, the AAC encoder's first packet (-1920 in the 90 kHz clock) was written as 2^33 - 1920, and
+  Home Assistant's stream worker logged "Timestamp discontinuity detected" and restarted. The
+  output timestamps now start 50 ms later.
 - The talk queue is capped at 80 ms, oldest audio dropped first: a network hiccup no longer
   leaves the rest of the call late. There is no pre-buffer: a queued packet goes out on the next
   tick.

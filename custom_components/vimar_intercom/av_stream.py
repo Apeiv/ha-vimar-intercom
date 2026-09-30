@@ -237,6 +237,14 @@ async def _start_av_ffmpeg_locked():
         # 0.5 s preload as well: both tracks come from the same call and share
         # its time base, so there is nothing to wait for.
         "-muxdelay", "0", "-muxpreload", "0",
+        # The AAC encoder's first packet is timestamped -1024 samples (its
+        # priming). When the panel's audio arrives before its video, as it
+        # usually does, that is -1920 in MPEG-TS's 90 kHz clock, and the muxer
+        # writes it wrapped: 2^33 - 1920, then 0. Home Assistant's stream
+        # worker takes that as a timestamp discontinuity and restarts. 50 ms
+        # keeps every timestamp positive; it shifts them, it holds nothing back.
+        # Reproduced on loopback, with 1.0.14's flags too (not from -muxpreload 0).
+        "-output_ts_offset", "0.05",
         "-max_interleave_delta", "100000", "-flush_packets", "1",
         "-f", "mpegts",
         "pipe:1",
