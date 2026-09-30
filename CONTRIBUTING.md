@@ -9,8 +9,8 @@ other hardware are genuinely valuable — especially Tab 5S / 2FV2 / IP plants.
 **1. Never guess SIP commands or tokens.**
 This is the single most important rule. A wrong actuator token can physically open
 a door or a gate. Anything that goes into the code as an *active* command must be
-either documented in `docs/PROTOCOL.md` or extracted from the official VIEW app
-(`apk/`). Everything else goes into `docs/ROADMAP.md` marked as a hypothesis.
+either documented from a capture of the official VIEW app or extracted from it. Everything
+else stays out of the code: open an issue and mark it as a hypothesis.
 
 **2. Don't put credentials in the repo.**
 No SIP passwords, QR payloads, HA1 hashes, MAC addresses or cloud tokens — not in
@@ -35,8 +35,9 @@ Targets: Home Assistant **2024.1+**, Python **3.11+** (HA ships 3.11/3.12/3.13).
 
 Runtime dependencies are deliberately minimal: `pycryptodome` and `requests`.
 **No external SIP library** — the stack in `sip_client.py` is custom and stays
-custom. Please don't add `cryptography` as a direct import either; `pycryptodome`
-covers what we need and HA already pins it.
+custom. Please don't add `cryptography` as a runtime requirement either; `pycryptodome`
+covers what we need and HA already pins it. (`requirements-dev.txt` lists `cryptography`
+only so the tests can check our crypto against a second implementation.)
 
 ## Before you open a PR
 
@@ -68,14 +69,6 @@ add a test — those are the parts that break silently on other plants.
 - `python -m pytest -m "media or browser or not live"` runs everything except the `live` tests,
   which need the real panel on the network. Missing tools skip their tests instead of failing.
 
-`tools/sip_probe.py` lets you test protocol behaviour from a PC without touching
-your Home Assistant install:
-
-```bash
-python tools/sip_probe.py options --target 55002   # who answers, and with which UA
-python tools/sip_probe.py listen --seconds 900     # capture announcements/events
-```
-
 ## PR checklist
 
 - [ ] Tests pass, and new behaviour has a test
@@ -83,7 +76,8 @@ python tools/sip_probe.py listen --seconds 900     # capture announcements/event
 - [ ] UI strings kept in sync across `strings.json`, `translations/it.json` and `translations/en.json`
 - [ ] No credentials, MAC addresses or raw QR payloads anywhere in the diff
 - [ ] Says which hardware you tested on: model, article number, firmware, and whether local UDP or cloud TLS
-- [ ] Non-obvious design decisions written up in `docs/DECISIONS.md` (short ADR format)
+- [ ] Line and branch coverage stays at or above 95% (`python -m pytest tests --cov`)
+- [ ] Non-obvious design decisions explained in the PR description, or in `docs/` when they concern hardware behaviour
 
 Small, focused PRs get merged faster than big ones. If you're planning something
 large — a new transport, a rewrite of the media pipeline, cloud REST support —
