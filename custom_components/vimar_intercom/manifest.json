@@ -14,12 +14,12 @@
   "documentation": "https://github.com/lollox80/ha-vimar-intercom/blob/main/README.md",
   "integration_type": "hub",
   "iot_class": "local_push",
-  "single_config_entry": true,
   "issue_tracker": "https://github.com/lollox80/ha-vimar-intercom/issues",
   "requirements": [
     "pycryptodome>=3.19.0",
     "requests>=2.28"
   ],
+  "single_config_entry": true,
   "version": "1.0.14",
   "zeroconf": [
     "_eipvdes._tcp.local."
