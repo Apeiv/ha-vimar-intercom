@@ -260,3 +260,24 @@ def test_the_end_of_the_call_stops_ffmpeg_during_the_grace(monkeypatch, grace):
     task = asyncio.run(run())
     assert grace[0].killed
     assert task.cancelled() and av._idle_stop is None
+
+
+def test_the_output_timestamps_never_start_below_zero(monkeypatch, fresh):
+    """AAC's priming puts the first audio packet at -1920 (90 kHz) when the
+    audio leads the video; wrapped in MPEG-TS, HA's stream worker saw
+    "Timestamp discontinuity detected: last dts = 8589932672, dts = 0"."""
+    async def listening(proc, timeout=0.5):
+        return True
+
+    monkeypatch.setattr(av, "_wait_until_ffmpeg_listens", listening)
+    monkeypatch.setattr(media, "video_proto", None)
+
+    async def run():
+        await av._start_av_ffmpeg_locked()
+        await av._stop_av_ffmpeg_locked()
+
+    asyncio.run(run())
+    cmd = fresh[0].cmd
+    offset = float(cmd[cmd.index("-output_ts_offset") + 1])
+    assert offset * 90000 > 1920, "more than the AAC priming"
+    assert cmd.index("-i") < cmd.index("-output_ts_offset") < cmd.index("-f"), "an output option"
