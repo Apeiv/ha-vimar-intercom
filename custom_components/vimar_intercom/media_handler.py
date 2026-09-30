@@ -483,11 +483,11 @@ class RTPVideoProtocol(asyncio.DatagramProtocol):
         if self._next_seq is None:
             self._next_seq = seq
             self._ssrc = ssrc
-        if rtp and seq not in self._reorder_buf:  # a duplicate is cached once
+        # A duplicate of a packet still in the buffer was cached and forwarded
+        # the first time: only a new one goes to the cache and the taps.
+        if rtp and seq not in self._reorder_buf:
             self._cache_gop(rtp, payload)
-            # A duplicate of a packet still in the buffer: already forwarded.
-            sinks = () if seq in self._reorder_buf else tuple(self.rtp_sinks)
-            for sink in sinks:
+            for sink in tuple(self.rtp_sinks):
                 try:
                     sink(rtp)
                 except Exception:  # noqa: BLE001

@@ -972,6 +972,14 @@ class _Driver(AccessoryDriver):
         self._on_pair_failures = on_pair_failures
         self._pair_failures = 0
 
+    def persist(self) -> None:
+        """The state file holds the accessory's long-term key and the paired
+        controllers: 0600, like the pin file. pyhap writes it through a
+        temporary file that is 0600 today; this keeps it so whatever pyhap
+        does. Runs in the executor, as pyhap's own persist does."""
+        super().persist()
+        os.chmod(self.persist_file, 0o600)
+
     def setup_srp_verifier(self) -> None:
         """pyhap builds a verifier at every pair-setup M1 and checks the code
         with it at M3: ours counts the failures."""

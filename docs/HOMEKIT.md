@@ -28,9 +28,9 @@ One accessory, so the live view shows video, Talk and the gate together:
 | `StatelessProgrammableSwitch` (optional) | The ring as a button for Home app automations, pressed at every ring. Off by default |
 | `LockMechanism` "Cancello" (gate) | Opens the door through the same panel as the integration's lock. Reports unlocked, then returns to unknown after 5 s: the intercom only pulses the strike and cannot know whether the gate is shut, so it never reports locked |
 
-The HAP server listens on port 21099. The pairing state is in
-`.storage/vimar_intercom.<entry>.homekit.state` and the setup code in `.homekit.pin` (mode 0600).
-Deleting the integration entry deletes both files.
+The HAP server listens on port 21099, a fixed port: the phone pairs with it. The pairing state is
+in `.storage/vimar_intercom.<entry>.homekit.state` and the setup code in `.homekit.pin`, both mode
+0600. Deleting the integration entry deletes both files.
 
 ## Pairing and options
 
@@ -139,6 +139,11 @@ line at "stream started", and one when the first audio packet leaves for the pho
 number to compare with the VIEW app.
 
 ## Things to know
+
+- If the log says "HomeKit video doorbell not started" with `Address in use`, something else holds
+  port 21099. Home Assistant's own HomeKit bridges start at 21063 and count up, so it takes many of
+  them to reach it. Only the doorbell is lost; the rest of the integration keeps working. Free the
+  port (`ss -ulpnt | grep 21099` shows who has it) and reload the integration.
 
 - The cloud relay loses packets, two to four in a hundred, before they reach Home Assistant. The phone
   counts exactly as many missing packets as we do, and Wi-Fi loses none. In direct mode a lost packet

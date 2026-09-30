@@ -7,6 +7,7 @@ sink for good, or left ffmpeg running. And three parties can close a session
 (the phone, the panel hanging up, ffmpeg exiting), sometimes at once.
 """
 import asyncio
+import os
 from types import SimpleNamespace
 import socket
 
@@ -1542,3 +1543,20 @@ def test_a_view_without_a_cached_keyframe_asks_the_panel_for_one(acc, monkeypatc
 
     asyncio.run(scenario())
     assert len(sent) == requests
+
+
+def test_the_state_file_with_the_long_term_key_is_0600(monkeypatch, tmp_path):
+    """The state file holds the accessory's key and the paired controllers:
+    0600 like the pin file, whatever mode pyhap's own write leaves."""
+    path = tmp_path / "vimar_intercom.e1.homekit.state"
+
+    def pyhap_persist(self):
+        path.write_text("{}")
+        os.chmod(path, 0o644)                       # a pyhap that doesn't care
+
+    monkeypatch.setattr(hk.AccessoryDriver, "persist", pyhap_persist)
+    driver = object.__new__(hk._Driver)             # no server, no network
+    driver.persist_file = str(path)
+    driver.persist()
+    assert path.read_text() == "{}"
+    assert os.stat(path).st_mode & 0o777 == 0o600
