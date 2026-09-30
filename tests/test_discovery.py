@@ -137,3 +137,8 @@ def test_record_without_any_txt_still_gives_the_host():
     d = discovery.extract_discovery(HOST, None)
     assert d["local_proxy"] == HOST
     assert d["mac"] == "" and d["sip_domain"] == ""
+
+
+def test_txt_values_that_are_not_utf8_or_missing_become_empty():
+    txt = discovery.parse_service_txt({b"domain": b"\xff\xfe", b"proxy": None, b"": b"x"})
+    assert txt == {"domain": "", "proxy": ""}

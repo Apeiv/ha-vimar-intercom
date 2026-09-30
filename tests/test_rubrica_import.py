@@ -156,3 +156,58 @@ def test_camera_target_assente(tmp_path):
     db2 = tmp_path / "r2.db"
     _make_phonebook(db2, [(1, 101, "GA", None), (2, 55200, "P", None)])
     assert rubrica_import.parse_rubrica_file(str(db2), gid="101")["camera"] is None
+
+
+def test_a_path_that_sqlite_cannot_open_is_an_import_error(tmp_path):
+    # A directory exists but is no database: the connect itself fails.
+    with pytest.raises(rubrica_import.RubricaImportError, match="SQLite"):
+        rubrica_import.parse_rubrica_file(str(tmp_path))
+
+
+def test_rules_that_match_no_actuator_fall_back_to_the_whole_list(tmp_path):
+    db = tmp_path / "rubrica.db"
+    _make_db(db)
+    result = rubrica_import.parse_rubrica_file(str(db), gid="555")  # no rule for this flat
+    assert {a["name"] for a in result["actuators"]} == {"Serratura", "LUCE SCALA"}
+
+
+def test_an_actuator_row_without_optional_columns_gets_defaults(tmp_path):
+    db = tmp_path / "rubrica.db"
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE ACTUATOR_LIST (ID INTEGER, NAME TEXT, MSG TEXT)")
+    con.execute("INSERT INTO ACTUATOR_LIST VALUES (1, NULL, NULL)")
+    con.commit()
+    con.close()
+    result = rubrica_import.parse_rubrica_file(str(db))
+    assert result["actuators"] == [{"name": "Attuatore", "msg": None, "target": "AUTO", "icon": "switch"}]
+
+
+def test_system_rows_without_a_parameter_name_are_skipped(tmp_path):
+    db = tmp_path / "rubrica.db"
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE SYSTEM (KEY TEXT, VAL TEXT)")
+    con.execute("INSERT INTO SYSTEM VALUES (NULL, 'x'), ('MAGIC_APT_INTERCOM', NULL), ('A', '1')")
+    con.commit()
+    con.close()
+    assert rubrica_import.parse_rubrica_file(str(db))["system"] == {"MAGIC_APT_INTERCOM": None, "A": "1"}
+
+
+def test_the_camera_skips_plates_without_a_valid_address(tmp_path):
+    db = tmp_path / "rubrica.db"
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE PHONEBOOK (ID INTEGER, GID TEXT, TYPE TEXT, AUTO TEXT)")
+    con.execute("INSERT INTO PHONEBOOK VALUES (1,'101','GA','0'),(2,'abc','PE',NULL),"
+                "(3,'55003','pe_ext',NULL)")
+    con.commit()
+    con.close()
+    assert rubrica_import.parse_rubrica_file(str(db), gid="101")["camera"] == "55003"
+
+
+def test_a_phonebook_without_plates_gives_no_camera(tmp_path):
+    db = tmp_path / "rubrica.db"
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE PHONEBOOK (ID INTEGER, GID TEXT, TYPE TEXT, AUTO TEXT)")
+    con.execute("INSERT INTO PHONEBOOK VALUES (1,'101','GA',NULL)")
+    con.commit()
+    con.close()
+    assert rubrica_import.parse_rubrica_file(str(db), gid="101")["camera"] is None

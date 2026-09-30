@@ -146,3 +146,26 @@ def test_host_con_trucchi_rifiutato(host):
 ])
 def test_host_privati_validi(host):
     assert v.is_private_host(host) is True
+
+
+def test_a_url_python_cannot_split_is_not_a_webhook():
+    assert v.http_url("http://[::1") is False
+
+
+def test_safe_filename_of_none_is_none():
+    assert v.safe_filename(None) is None
+
+
+def test_scan_targets_ignore_empty_items_and_duplicates():
+    assert v.scan_targets(None, None, ",55001;;55001 55002,") == ["55001", "55002"]
+
+
+def test_scan_targets_refuse_too_long_an_explicit_list():
+    many = " ".join(str(55000 + i) for i in range(v.MAX_SCAN_TARGETS + 1))
+    with pytest.raises(ValueError, match="al massimo"):
+        v.scan_targets(None, None, many)
+
+
+def test_scan_targets_made_only_of_separators_are_refused():
+    with pytest.raises(ValueError, match="nessun indirizzo"):
+        v.scan_targets(None, None, ", ;")
