@@ -19,7 +19,6 @@
     "pycryptodome>=3.19.0",
     "requests>=2.28"
   ],
-  "single_config_entry": true,
   "version": "1.0.14",
   "zeroconf": [
     "_eipvdes._tcp.local."

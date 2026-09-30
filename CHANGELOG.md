@@ -6,14 +6,17 @@ Italian and are kept as they were written.
 
 ## [Unreleased]
 
-### Breaking
+### Changed
 
-- **Only one config entry is allowed** (`single_config_entry` in the manifest). The SIP and
-  media state are module-wide, so a second entry never worked reliably: both entries shared one
-  registration and one call. After the update Home Assistant refuses to add a second entry; an
-  existing second entry still loads, with the same shared state as before. **Migration:** if you
-  have two entries, keep the one you use and delete the other (Settings → Devices & services →
-  Vimar Intercom → ⋮ → Delete). Two intercoms on one Home Assistant are not supported.
+- **One installation per Home Assistant.** The SIP and media state are module-wide, so a second
+  entry never worked reliably: both entries shared one registration and one call. Adding a second
+  entry (by hand or from discovery) is now refused with a clear message. Existing installations
+  are not touched: an existing second entry still loads, with the same shared state as before; if
+  you have two, keep the one you use and delete the other (Settings → Devices & services → Vimar
+  Intercom → ⋮ → Delete). The limit lives in the config flow rather than in `single_config_entry`
+  in the manifest: with that flag Home Assistant stops every new flow before the integration sees
+  it, discovery included, and the Tab's new address after a DHCP change was no longer picked up
+  in local UDP mode.
 
 ### Added
 

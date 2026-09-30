@@ -61,7 +61,8 @@
     },
     "abort": {
       "already_configured": "Il dispositivo è già configurato.",
-      "no_mac": "Il citofono si è annunciato senza MAC: aggiungilo a mano da Impostazioni → Dispositivi e servizi."
+      "no_mac": "Il citofono si è annunciato senza MAC: aggiungilo a mano da Impostazioni → Dispositivi e servizi.",
+      "single_instance_allowed": "C'è già un'installazione di Vimar Intercom: ne è supportata una sola."
     },
     "create_entry": {
       "transport_fallback": "Home Assistant non è riuscito a registrarsi via {tried} e usa {used}: {detail}. Funziona, ma se ti aspettavi {tried} controlla le impostazioni di rete del citofono."

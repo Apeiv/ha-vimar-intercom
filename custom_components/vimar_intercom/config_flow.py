@@ -543,6 +543,9 @@ class VimarIntercomConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if same_mac:
                     self._update_proxy(entry, info["local_proxy"])
                 return self.async_abort(reason="already_configured")
+        # Un altro Tab con un'installazione già presente: una sola entry.
+        if self._has_entry():
+            return self.async_abort(reason="single_instance_allowed")
 
         await self.async_set_unique_id(mac)
         self._abort_if_unique_id_configured()   # un «ignora» dell'utente vale
@@ -552,6 +555,16 @@ class VimarIntercomConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             "host": info["local_proxy"],
         }
         return await self.async_step_zeroconf_confirm()
+
+    def _has_entry(self) -> bool:
+        """Una sola installazione: lo stato SIP e media è a livello di modulo, quindi
+        una seconda entry condividerebbe registrazione e chiamata con la prima.
+
+        Il limite sta qui e non in `single_config_entry` del manifest: con quel flag
+        Home Assistant ferma ogni flusso nuovo prima di chiamarci, compreso il
+        discovery mDNS, e il Tab che cambia IP in UDP locale non veniva più seguito
+        (`_update_proxy`, issue #6)."""
+        return bool(self._async_current_entries(include_ignore=False))
 
     @callback
     def _update_proxy(self, entry, proxy: str) -> None:
@@ -607,6 +620,8 @@ class VimarIntercomConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: dict | None = None
     ) -> FlowResult:
         """Step iniziale: scelta modalità (QR o manuale)."""
+        if self._has_entry():
+            return self.async_abort(reason="single_instance_allowed")
         if user_input is not None:
             if user_input.get("mode") == "qr":
                 return await self.async_step_qr()

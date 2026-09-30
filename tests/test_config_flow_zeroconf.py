@@ -157,3 +157,44 @@ def test_dominio_cloud_precompilato_solo_se_e_un_nome(cf):
     from custom_components.vimar_intercom import discovery
     assert not discovery.is_ip(CLOUD) and discovery.is_ip("192.0.2.20")
     assert cf._default("") == {} and cf._default("x") == {"default": "x"}
+
+
+# ─── una sola installazione, senza `single_config_entry` nel manifest ────────
+# Con quel flag Home Assistant fermava il discovery prima di arrivare qui, e il
+# Tab che cambia IP in UDP locale non veniva più seguito.
+
+def test_il_manifest_non_blocca_il_discovery():
+    import json
+    import pathlib
+    manifest = json.loads((pathlib.Path(__file__).parents[1] / "custom_components"
+                           / "vimar_intercom" / "manifest.json").read_text(encoding="utf-8"))
+    assert "single_config_entry" not in manifest
+
+
+def test_con_una_entry_il_cambio_ip_e_seguito(cf):
+    entry = _Entry({"mac": "AA-BB-CC-DD-EE-FF", "local_proxy": "192.0.2.99", "use_local_udp": True})
+    flow, calls = _flow(cf, [entry])
+    r = asyncio.run(flow.async_step_zeroconf(_info("192.0.2.10", TXT_40507)))
+    assert r == {"type": "abort", "reason": "already_configured"}
+    assert calls["reload"] == ["e1"]
+    assert calls["update"][0][0]["local_proxy"] == "192.0.2.10"
+
+
+def test_un_secondo_tab_non_crea_una_seconda_entry(cf):
+    entry = _Entry({"mac": "AA-BB-CC-DD-EE-FF", "local_proxy": "192.0.2.10"})
+    flow, calls = _flow(cf, [entry])
+    r = asyncio.run(flow.async_step_zeroconf(_info("192.0.2.20", TXT_40515)))
+    assert r == {"type": "abort", "reason": "single_instance_allowed"}
+    assert calls["update"] == [] and calls["unique_id"] is None
+
+
+def test_aggiunta_a_mano_con_una_entry_gia_presente(cf):
+    flow, _ = _flow(cf, [_Entry({"mac": "AA-BB-CC-DD-EE-FF"})])
+    r = asyncio.run(flow.async_step_user())
+    assert r == {"type": "abort", "reason": "single_instance_allowed"}
+
+
+def test_aggiunta_a_mano_senza_entry_mostra_il_form(cf):
+    flow, _ = _flow(cf)
+    r = asyncio.run(flow.async_step_user())
+    assert r["type"] == "form" and r["step_id"] == "user"
