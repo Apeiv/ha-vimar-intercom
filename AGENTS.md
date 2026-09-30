@@ -82,6 +82,12 @@ python -m pytest --cov=custom_components/vimar_intercom --cov-branch --cov-repor
 - `# pragma: no cover` only for lines that really cannot run in tests, each with a comment
   giving the reason.
 
+### Lint (enforced in CI)
+
+`ruff check .` must be clean on the whole repo, the integration included (rules in
+`pyproject.toml`; the CI job pins the ruff version). A `# noqa` needs the rule code and, when
+it is not obvious, a comment with the reason.
+
 ## Conventions
 
 - English for new code comments, docstrings, docs, commit messages and PR text. Existing
