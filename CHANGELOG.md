@@ -8,6 +8,7 @@ Italian and are kept as they were written.
 
 ### Changed
 
+- **README badges**: latest release, HACS, minimum Home Assistant version, test status, licence and stars.
 - **Documentation**: the README (the page HACS shows) is now short: what the integration does, compatibility,
   installation in four steps, and links. The reference moved, unchanged, to `docs/` in English and Italian:
   `CONFIGURATION`, `ENTITIES`, `CARD`, `TROUBLESHOOTING`, plus an Italian `HOMEKIT` page. Three statements
