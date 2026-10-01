@@ -51,7 +51,17 @@ decline:
 
 simulate_ring:
   name: Squillo di prova
-  description: Simula uno squillo del citofono (evento doorbell e automazioni) senza la targa.
+  description: Simula uno squillo completo senza la targa né traffico SIP, che finisce da solo.
+  fields:
+    duration:
+      name: Durata (s)
+      default: 20
+      selector:
+        number:
+          min: 1
+          max: 90
+          step: 1
+          unit_of_measurement: s
 
 hangup:
   name: Riaggancia

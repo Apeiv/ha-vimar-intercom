@@ -315,7 +315,13 @@
     },
     "simulate_ring": {
       "name": "Squillo di prova",
-      "description": "Simula uno squillo del citofono (evento doorbell e automazioni) senza la targa."
+      "description": "Simula uno squillo completo senza la targa né traffico SIP: stato «squilla» (card, sensori), evento doorbell e webhook di inizio, poi la fine da sola come uno squillo senza risposta (webhook di fine).",
+      "fields": {
+        "duration": {
+          "name": "Durata",
+          "description": "Secondi di squillo prima della fine automatica."
+        }
+      }
     },
     "hangup": {
       "name": "Riaggancia",

@@ -315,7 +315,13 @@
     },
     "simulate_ring": {
       "name": "Test ring",
-      "description": "Simulate a doorbell ring (doorbell event and automations) without the entrance panel."
+      "description": "Simulate a whole ring with no entrance panel and no SIP traffic: ringing state (card, sensors), doorbell event and start webhook, then it ends by itself like an unanswered ring (end webhook).",
+      "fields": {
+        "duration": {
+          "name": "Duration",
+          "description": "Seconds of ringing before it ends by itself."
+        }
+      }
     },
     "hangup": {
       "name": "Hang up",

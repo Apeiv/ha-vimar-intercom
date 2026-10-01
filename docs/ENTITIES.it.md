@@ -47,7 +47,7 @@
 | `vimar_intercom.open_door` | Comando di apertura (`OPEN_2F`; solo comandi `OPEN` / `OPEN_*`); senza `target` va a `door_target` | `target`, `command` |
 | `vimar_intercom.fetch_local` | GET HTTP Digest verso l'interfaccia locale del Tab (home mode). Solo amministratori e automazioni | `path`, `save_as`, `host`, `scheme` |
 | `vimar_intercom.find_sga` | Cerca il PICG interrogando una serie di indirizzi ([#14](https://github.com/lollox80/ha-vimar-intercom/issues/14)). Solo amministratori e automazioni | `start`, `end`, `targets`, `probe`, `delay`, `reply_wait`, `sip_timeout`, `apply`, `apply_sga` |
-| `vimar_intercom.simulate_ring` | Squillo di prova (admin): fa scattare l'evento campanello e le tue automazioni, senza la targa | — |
+| `vimar_intercom.simulate_ring` | Squillo di prova (admin): uno squillo completo senza la targa e senza traffico SIP. Lo stato passa a squilla (card, sensori), partono l'evento campanello e il webhook di inizio, e dopo `duration` secondi finisce come uno squillo senza risposta (webhook di fine). Non si può rispondere, il messaggio di assenza lo ignora, uno squillo vero lo sostituisce e non finisce nel registro squilli | `duration` (da 1 a 90 s, predefinito 20) |
 
 Esempio (Strumenti per sviluppatori → Azioni):
 

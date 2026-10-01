@@ -102,6 +102,11 @@ FIND_SGA_SCHEMA = vol.Schema({
     vol.Optional("apply", default=False): cv.boolean,
     vol.Optional("apply_sga", default=False): cv.boolean,
 })
+# Test ring length: the default lets a card or dashboard be looked at, the
+# maximum is a real ring's (sip_client.RING_MAX_S).
+SIMULATE_RING_SCHEMA = vol.Schema({
+    vol.Optional("duration", default=20): vol.All(vol.Coerce(float), vol.Range(min=1, max=90)),
+})
 OPEN_DOOR_SCHEMA = vol.Schema({
     vol.Optional("target"): _sip_id,  # vuoto: runtime.DOOR_TARGET (targa dell'attuatore porta, altrimenti SGA)
     # Solo comandi di apertura (OPEN, OPEN_2F, ...): il servizio è aperto a ogni
@@ -473,7 +478,8 @@ def _register_services(hass: HomeAssistant) -> None:
         return {"ok": True, "result": "Chiamata terminata"}
 
     async def _svc_simulate_ring(call: ServiceCall):
-        _entry_data(hass)["hub"].fire_ring_callbacks()
+        ok = _entry_data(hass)["hub"].simulate_ring(call.data["duration"])
+        return {"ok": ok, "result": "Squillo di prova" if ok else "Squillo o chiamata in corso"}
 
     async def _svc_find_sga(call: ServiceCall):
         """Cerca il PICG interrogando gli indirizzi indicati (issue #14).
@@ -603,7 +609,9 @@ def _register_services(hass: HomeAssistant) -> None:
     async_register_admin_service(
         hass, DOMAIN, SERVICE_FETCH_LOCAL, _svc_fetch_local,
         schema=FETCH_LOCAL_SCHEMA, supports_response=SupportsResponse.OPTIONAL)
-    async_register_admin_service(hass, DOMAIN, SERVICE_SIMULATE_RING, _svc_simulate_ring)
+    async_register_admin_service(
+        hass, DOMAIN, SERVICE_SIMULATE_RING, _svc_simulate_ring,
+        schema=SIMULATE_RING_SCHEMA, supports_response=SupportsResponse.OPTIONAL)
     async_register_admin_service(
         hass, DOMAIN, SERVICE_FIND_SGA, _svc_find_sga,
         schema=FIND_SGA_SCHEMA, supports_response=SupportsResponse.OPTIONAL)

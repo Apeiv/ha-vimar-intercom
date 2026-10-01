@@ -122,6 +122,8 @@ MODEL_PROBE_TARGETS = ("55001", "55002", "60001")
 class VimarIntercomHub:
     """Orchestrates SIP registration, calls, door control, and media."""
 
+    _sim_ring: asyncio.Task | None = None  # simulate_ring in progress
+
     def __init__(self):
         self._tasks: list[asyncio.Task] = []
         # Fire-and-forget tasks (see _spawn): the event loop keeps only weak
@@ -330,7 +332,7 @@ class VimarIntercomHub:
         # (l'eco della nostra) non deve trasformare "Microfono" in "Rispondi".
         if sip.in_call:
             return "in_call"
-        if sip.ringing():
+        if self.is_ringing:
             return "ringing"
         if sip.calling:
             return "calling"
@@ -376,7 +378,8 @@ class VimarIntercomHub:
 
     @property
     def is_ringing(self) -> bool:
-        return sip.ringing()
+        """A ring is on: a real one, or the simulate_ring test ring."""
+        return sip.ringing() or self._sim_ring is not None
 
     def _spawn(self, coro, name: str) -> asyncio.Task:
         """Run `coro` in the background, holding the task until it is done.
@@ -397,8 +400,7 @@ class VimarIntercomHub:
         return task
 
     def fire_ring_callbacks(self) -> None:
-        """Evento doorbell → automazioni. Da solo è lo squillo di prova
-        (servizio simulate_ring): niente SIP, push, WebSocket né statistiche."""
+        """Evento doorbell → automazioni, e il webhook di inizio squillo."""
         if R.RING_WEBHOOK_URL:
             self._spawn(webhook.fire(R.RING_WEBHOOK_URL), "ring webhook")
         for cb in self._ring_callbacks:
@@ -910,6 +912,7 @@ class VimarIntercomHub:
             self._hangup_settle = None
         sip.cancel_reconnect()  # non deve riconnettere un hub scaricato
         self._cancel_away()
+        self._sim_ring = None  # its task went with _background; no end webhook, as for a real ring
         if self._photo_task:
             self._photo_task.cancel()
         self._cancel_call_timeout()
@@ -952,6 +955,8 @@ class VimarIntercomHub:
         media.claim_voice()
 
     async def async_answer(self) -> tuple[bool, str]:
+        if self._stop_simulated_ring():
+            return False, "Squillo di prova: niente da rispondere"
         if self._away_task and not self._away_task.done() and sip.in_call:
             # Sta suonando il messaggio di assenza: "Rispondi" prende la chiamata
             # (annullato, il messaggio non riaggancia).
@@ -989,6 +994,8 @@ class VimarIntercomHub:
     async def async_decline(self) -> tuple[bool, str]:
         """Rifiuta lo squillo con 603, come l'app: il PBX smette di far suonare tutta la casa."""
         # Prima della chiamata: il ring_ended parte da dentro do_decline_incoming.
+        if self._stop_simulated_ring():
+            return True, "Squillo di prova chiuso"
         self._ring_declined = True
         declined = await sip.do_decline_incoming()
         self._ring_declined = bool(declined)
@@ -1215,6 +1222,9 @@ class VimarIntercomHub:
             # armato per sempre e scatterebbe al prossimo evento qualsiasi.
             # Un altro "ring" mentre si squilla già (re-INVITE) non riarma il webhook di
             # partenza: ne uscirebbero due per una fine sola (self._was_ringing sotto).
+            # A real ring ends the test ring first: its end webhook, then this
+            # ring's start, so the two never overlap.
+            self._stop_simulated_ring()
             if not self._was_ringing:
                 self.fire_ring_callbacks()
             self._was_ringing = True
@@ -1249,9 +1259,42 @@ class VimarIntercomHub:
         # scaduto (ring_ended, stesso ordine). Non basta guardare solo msg_type
         # "ring_ended": un INVITE risposto passa da "call_started", non da lì.
         if self._was_ringing and not self.is_ringing:
-            self._was_ringing = False
-            if R.RING_END_WEBHOOK_URL:
-                self._spawn(webhook.fire(R.RING_END_WEBHOOK_URL), "ring end webhook")
+            self._ring_over()
+
+    def _ring_over(self) -> None:
+        self._was_ringing = False
+        if R.RING_END_WEBHOOK_URL:
+            self._spawn(webhook.fire(R.RING_END_WEBHOOK_URL), "ring end webhook")
+
+    def simulate_ring(self, duration: float) -> bool:
+        """Test ring (simulate_ring service): "ringing" for `duration` s, then an
+        unanswered end, with the doorbell event and both webhooks. No SIP at all:
+        sip.ringing() stays False, so nothing can answer it (the away message
+        only runs for a real INVITE) and a real ring is not refused as busy.
+        Not in the ring log or the stats: there is no visitor, photo or clip."""
+        if self.is_ringing or sip.in_call or sip.calling or self._busy_now:
+            return False
+        self._sim_ring = self._spawn(self._simulated_ring(duration), "simulated ring")
+        self._was_ringing = True
+        self.fire_ring_callbacks()
+        self._touch()
+        return True
+
+    async def _simulated_ring(self, duration: float) -> None:
+        await asyncio.sleep(duration)
+        self._stop_simulated_ring()
+
+    def _stop_simulated_ring(self) -> bool:
+        """End the test ring, if one is on (timeout, a real ring, answer/decline,
+        unload). True if there was one."""
+        task, self._sim_ring = self._sim_ring, None
+        if task is None:
+            return False
+        if task is not asyncio.current_task():
+            task.cancel()
+        self._ring_over()
+        self._touch()
+        return True
 
     async def _ring_log(self, change: Callable[[list], None]) -> None:
         try:
