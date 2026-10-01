@@ -89,3 +89,39 @@ def test_a_loss_before_any_voice_is_filled_with_silence():
     for seq in (2, 3, 4, 5):
         p.datagram_received(_pkt(seq, 0x60), ("192.0.2.1", 4000))
     assert _played(p)[0] == bytes(320)
+
+
+def test_a_sequence_restart_with_the_same_ssrc_is_followed():
+    """A B2BUA or relay can restart the numbers and keep the SSRC: without a
+    resync every packet looked already played, silence for minutes (#54 review)."""
+    p = _proto()
+    for seq in range(5000, 5010):
+        p.datagram_received(_pkt(seq, 0x70), ("192.0.2.1", 4000))
+    _played(p)
+    for seq in range(100, 120):
+        p.datagram_received(_pkt(seq, 0x71), ("192.0.2.1", 4000))
+    out = _played(p)
+    late = mh.RTPAudioProtocol.RESYNC_LATE - 1
+    assert len(out) == 20 - late  # the first few are dropped, then it follows
+
+
+def test_a_few_late_packets_do_not_resync():
+    p = _proto()
+    for seq in range(1, 11):
+        p.datagram_received(_pkt(seq, 0x72), ("192.0.2.1", 4000))
+    _played(p)
+    for seq in (3, 4, 11, 12):  # two stragglers, then the stream goes on
+        p.datagram_received(_pkt(seq, 0x72), ("192.0.2.1", 4000))
+    assert len(_played(p)) == 2
+
+
+def test_the_queue_holds_a_second_of_voice():
+    """A 200 ms queue dropped voice whenever the loop stalled for longer (#54)."""
+    assert mh.RTPAudioProtocol().audio_buffer.maxsize == 50
+
+
+def test_a_duplicate_of_a_waiting_packet_is_dropped():
+    p = _proto()
+    for seq in (1, 3, 3, 2):  # 3 waits for 2, and comes twice
+        p.datagram_received(_pkt(seq, 0x74), ("192.0.2.1", 4000))
+    assert len(_played(p)) == 3

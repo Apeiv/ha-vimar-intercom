@@ -11,7 +11,8 @@ Italian and are kept as they were written.
 - The visitor's voice clicked on the cloud relay: audio never looked at the RTP sequence number, so a
   packet lost or reordered on the way was skipped or played out of place. Audio is now put back in
   order like the video, duplicates are dropped, and a lost packet is filled with the previous 20 ms at
-  half volume. The server keeps at most 200 ms of voice waiting instead of 4 s (#53).
+  half volume, and a source that restarts its sequence numbers is followed. The server keeps at most
+  1 s of voice waiting instead of 4 s (#53).
 
 ## [1.0.16] - 2026-09-30
 

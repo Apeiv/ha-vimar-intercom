@@ -146,14 +146,17 @@ class RTPAudioProtocol(asyncio.DatagramProtocol):
     def __init__(self):
         self.transport = None
         self.remote_addr = None
-        # 200 ms: after a stall the backlog is dropped, not played late (was 4 s).
-        self.audio_buffer = asyncio.Queue(maxsize=10)
+        # 1 s: a backlog longer than that is dropped, not played late (was 4 s).
+        # Not less: the event loop can stall 200-500 ms, and a shorter queue
+        # dropped that voice instead of delivering it a little late (#54).
+        self.audio_buffer = asyncio.Queue(maxsize=50)
         # Receive order (#53): the relay loses and reorders a few packets in a
         # hundred, and a 20 ms block played out of place, or skipped, is a click.
         self._a_ssrc = None
         self._a_next = None
         self._a_buf: dict[int, bytes] = {}
         self._a_last: bytes | None = None
+        self._a_late = 0  # "already played" packets in a row
         self.rtp_seq = random.randint(0, 65535)
         self.rtp_ts = random.randint(0, 2**32 - 1)
         self.rtp_ssrc = random.randint(0, 2**32 - 1)
@@ -230,6 +233,7 @@ class RTPAudioProtocol(asyncio.DatagramProtocol):
 
     REORDER_MAX = 3   # packets held while one is missing (60 ms): then it is lost
     CONCEAL_MAX = 3   # lost packets filled in a row; a longer gap is skipped
+    RESYNC_LATE = 5   # "late" packets in a row (100 ms): the source restarted its numbers
 
     def _reorder(self, seq: int, ssrc: int, payload: bytes) -> None:
         """Voice in sequence order: late and duplicate packets dropped, a lost one
@@ -239,8 +243,18 @@ class RTPAudioProtocol(asyncio.DatagramProtocol):
             self._a_ssrc, self._a_next = ssrc, seq
             self._a_buf.clear()
         back = (self._a_next - seq) & 0xFFFF
-        if 0 < back < 0x8000 or seq in self._a_buf:
-            return  # already played, or already waiting
+        if 0 < back < 0x8000:
+            # Already played, or the source (a B2BUA switching legs, a relay)
+            # jumped its sequence numbers with the same SSRC: after a few in a
+            # row, follow the new numbers instead of dropping them for minutes.
+            self._a_late += 1
+            if self._a_late < self.RESYNC_LATE:
+                return
+            self._a_next = seq
+            self._a_buf.clear()
+        self._a_late = 0
+        if seq in self._a_buf:
+            return  # already waiting
         self._a_buf[seq] = payload
         while self._a_buf:
             nxt = self._a_buf.pop(self._a_next, None)
@@ -895,6 +909,7 @@ async def setup_media(remote_sdp, local_crypto_key=None, local_video_crypto_key=
         audio_proto.pkt_count = 0
         audio_proto._a_ssrc = audio_proto._a_next = audio_proto._a_last = None
         audio_proto._a_buf.clear()
+        audio_proto._a_late = 0
         # SRTP solo se il remoto negozia crypto E abbiamo una chiave locale.
         # Se il remoto risponde in chiaro (nessun a=crypto) restano None → RTP puro.
         audio_proto.srtp_rx = None
@@ -1022,6 +1037,7 @@ async def stop_media():
         audio_proto.pkt_count = 0
         audio_proto._a_ssrc = audio_proto._a_next = audio_proto._a_last = None
         audio_proto._a_buf.clear()
+        audio_proto._a_late = 0
         audio_proto.srtp_rx = None
         audio_proto.srtp_tx = None
         while not audio_proto.audio_buffer.empty():
