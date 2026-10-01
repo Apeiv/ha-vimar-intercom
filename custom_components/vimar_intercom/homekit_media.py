@@ -27,6 +27,7 @@ from . import frame_grabber
 from . import media_handler as media
 from . import ring_log
 from . import runtime as R
+from .homekit_audio import free_udp_port
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -219,23 +220,6 @@ def last_frame() -> bytes | None:
 
 # ─── audio ───────────────────────────────────────────────────────────────────
 
-def _free_even_port() -> int:
-    """An even UDP port with the next one free too: ffmpeg binds RTP and RTCP."""
-    for _ in range(50):
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
-            probe.bind(("127.0.0.1", 0))
-            port = probe.getsockname()[1] & ~1
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as a, \
-                    socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as b:
-                a.bind(("127.0.0.1", port))
-                b.bind(("127.0.0.1", port + 1))
-            return port
-        except OSError:
-            continue
-    raise OSError("no free UDP port pair for the HomeKit audio tap")
-
-
 _MASK32 = 0xFFFFFFFF
 _PCMU_RATE = 8000
 _SLOT = 0.02            # one PCMU packet, 160 samples
@@ -274,7 +258,7 @@ class AudioTap:
     _SILENCE = b"\xff" * 160
 
     def __init__(self) -> None:
-        self.port = _free_even_port()
+        self.port = free_udp_port()
         fd, self.sdp_path = tempfile.mkstemp(prefix="vimar_intercom_homekit_",
                                              suffix=".sdp")
         with os.fdopen(fd, "w") as f:

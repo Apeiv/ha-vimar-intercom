@@ -21,6 +21,9 @@ Italian and are kept as they were written.
   (a 4:3 panel in the default 4:3 box), where filling and fitting draw the same picture and the
   button seemed to do nothing. When the card falls back to Home Assistant's picture card (no
   WebCodecs, or the card's player failed), the choice now reaches it as `fit_mode`.
+- HomeKit: two ffmpegs starting together (the re-encoder and a view) could be handed overlapping
+  loopback ports, and one logged "bind failed: Address in use". Every ffmpeg RTP input now gets an
+  even port with the next one free (RTCP), and a pair handed out is not handed out again for 10 s.
 
 ## [1.0.16] - 2026-09-30
 

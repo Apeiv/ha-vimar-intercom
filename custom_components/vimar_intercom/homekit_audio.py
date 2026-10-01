@@ -14,6 +14,8 @@ import shutil
 import socket
 import struct
 import tempfile
+import threading
+import time
 
 from . import media_handler as media
 from .srtp import SRTCPContext, SRTPContext
@@ -87,12 +89,47 @@ def is_rtcp(packet: bytes) -> bool:
     return len(packet) >= 2 and 200 <= packet[1] <= 206
 
 
-def free_udp_port() -> int:
-    """A loopback UDP port that is free now. We close it and ffmpeg reopens it,
-    so call it right before starting that ffmpeg."""
+# Ports handed out for an ffmpeg that may not have bound them yet. None is
+# handed out again meanwhile: the transcoder's and a view's ffmpeg start within
+# milliseconds of each other, and one got "bind failed: Address in use".
+_RESERVED: dict[int, float] = {}
+RESERVE_SECONDS = 10.0
+# The audio tap picks its port in an executor thread, the transcoder and the
+# talk decoder on the event loop: the probe and the reservation are one step.
+_RESERVE_LOCK = threading.Lock()
+
+
+def _ephemeral_port() -> int:
+    """A port the kernel considers free right now."""
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         sock.bind(("127.0.0.1", 0))
         return sock.getsockname()[1]
+
+
+def free_udp_port() -> int:
+    """An even loopback UDP port with the next one free too, for an ffmpeg RTP
+    input: ffmpeg binds the port and port + 1 (RTCP). Free now: we close it and
+    ffmpeg reopens it, so call it right before starting that ffmpeg. A pair
+    handed out in the last RESERVE_SECONDS is not handed out again."""
+    with _RESERVE_LOCK:
+        now = time.monotonic()
+        for port, at in list(_RESERVED.items()):
+            if now - at > RESERVE_SECONDS:
+                del _RESERVED[port]
+        for _ in range(50):
+            port = _ephemeral_port() & ~1
+            if port in _RESERVED:
+                continue
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as a, \
+                        socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as b:
+                    a.bind(("127.0.0.1", port))
+                    b.bind(("127.0.0.1", port + 1))
+            except OSError:
+                continue
+            _RESERVED[port] = now
+            return port
+        raise OSError("no free UDP port pair on loopback")
 
 
 def write_sdp(prefix: str, text: str) -> str:
