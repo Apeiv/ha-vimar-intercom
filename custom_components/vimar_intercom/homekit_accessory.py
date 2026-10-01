@@ -64,6 +64,7 @@ from homeassistant.core import HomeAssistant
 
 from . import homekit_media as hkm
 from . import media_handler as media
+from . import runtime as R
 from . import sip_client as sip
 from .const import (
     CONF_HOMEKIT_ANSWER,
@@ -302,9 +303,14 @@ class VimarDoorbell(Camera):
 
     # ── re-encoding ──
 
-    async def _ensure_transcoder(self, session_info=None) -> Transcoder | None:
+    async def _ensure_transcoder(self, session_info=None, early: bool = False) -> Transcoder | None:
         """The current call's encoder, started if needed; None when there is
         no call video to encode (or the view asking is closing).
+
+        ``early``: a view is placing the call, and its video has not come yet.
+        The encoder starts anyway and waits for the first packets on its port
+        (see _open_call). If that call never connects, the end of it
+        (on_video_ended) stops the encoder, as for any call.
 
         media_handler's video protocol lives as long as the hub, so the
         protocol cannot tell two calls apart. The call generation can: an
@@ -314,18 +320,33 @@ class VimarDoorbell(Camera):
             gen = self._call_gen
             tc = self._transcoder
             if tc and tc.running and tc.generation == gen:
+                if not early and not tc.begun:
+                    # Warmed up before the call's video (early): it starts from
+                    # the group in sequence order now, as any encoder does.
+                    tc.begin()
                 return tc
             if tc:
                 # Dead, or another call's: detach it and close its sockets first.
                 self._transcoder = None
                 hkm.remove_video_sink(tc.feed, tc.video_proto)
                 await tc.stop()
-            if (self._closed or not hkm.video_ready(self._hub)
+            if (self._closed or not (early or hkm.video_ready(self._hub))
+                    or (early and not self._hub.call_coming)
                     or (session_info is not None and session_info.get("stopping"))):
+                # (early) The placed call already failed (a busy panel, #41's
+                # silent one) and its end came before this task took the lock:
+                # an encoder started now would wait on its port with nobody
+                # left to stop it (review of #48).
                 # The call is over, or the view is: an encoder started now
                 # would read the end of this call, or the next one's start.
                 return None
-            sps, pps = hkm.parameter_sets()
+            # Early, the call has not set its panel yet: the parameters of the
+            # panel the view calls. Without them the encoder would miss the
+            # first keyframe (seen right after a restart: picture at 3.6 s),
+            # so it waits for the video like before.
+            sps, pps = hkm.parameter_sets(R.INTERCOM) if early else hkm.parameter_sets()
+            if early and not (sps and pps):
+                return None
             tc = Transcoder(sps, pps)
             tc.generation = gen
 
@@ -334,7 +355,7 @@ class VimarDoorbell(Camera):
                 hkm.add_video_sink(tc.feed)
 
             try:
-                ok = await tc.start(hkm.gop_for_direct_video, on_ready=attach)
+                ok = await tc.start(hkm.gop_for_direct_video, on_ready=attach, defer=early)
             except BaseException:
                 # Cancelled (or failed) with ffmpeg possibly running already.
                 hkm.remove_video_sink(tc.feed, tc.video_proto)
@@ -591,6 +612,15 @@ class VimarDoorbell(Camera):
             # Closed while the hub was placing the call: nothing more for it,
             # above all no answer. The close gives the viewer back.
             return False
+        if self._smooth and not hkm.video_ready(self._hub) and not sip.ringing():
+            # Not during a ring: its panel may not be R.INTERCOM, whose SPS/PPS
+            # the early start takes, and its early media brings the video
+            # within a few hundred ms anyway (review of #48).
+            # The re-encoder's ffmpeg takes about half a second to start. Started
+            # only once the call's video arrived, it was the longest stage of a
+            # view on a 40515: call at 1.15 s, re-encoder ready at 2.0-2.1 s (#32).
+            # Started now, it is ready when the first packets arrive.
+            self._spawn(self._ensure_transcoder(session_info, early=True))
         waited = 0.0
         while not (self._hub.video_active or self._hub.in_call) and waited < CALL_WAIT:
             if session_info.get("stopping"):
@@ -615,15 +645,38 @@ class VimarDoorbell(Camera):
         return not session_info.get("stopping")
 
     async def _open_stream(self, session_info, stream_config) -> bool:
-        """Open the call, video, audio and ffmpeg. Each piece goes into
-        session_info as soon as it exists, so a close finds it mid-way."""
+        """Open the call, then video and audio side by side. Each piece goes
+        into session_info as soon as it exists, so a close finds it mid-way.
+
+        The audio needs only to know whether the call has video (without it,
+        its ffmpeg sends a black picture). It used to start after the video,
+        re-encoder included: first audio waited about 0.9 s for a picture it
+        does not depend on (40515, #32)."""
         if not await self._open_call(session_info) or session_info.get("stopping"):
             return False
+        direct = hkm.video_ready(self._hub)
+        # gather: a cancelled start cancels both; each part's pieces are in
+        # session_info already, and the close releases them.
+        video_mode, audio_ok = await asyncio.gather(
+            self._open_video(session_info, stream_config, direct),
+            self._open_audio(session_info, stream_config, direct),
+            return_exceptions=True)
+        for result in (video_mode, audio_ok):
+            if isinstance(result, BaseException):
+                raise result
+        if video_mode is None or not audio_ok or session_info.get("stopping"):
+            return False
+        _LOGGER.info("HomeKit: stream started to %s (PID %d, video %s) in %d ms (%s)",
+                     session_info["address"], session_info["proc"].pid, video_mode,
+                     _elapsed_ms(session_info), _timeline_summary(session_info))
+        return True
 
+    async def _open_video(self, session_info, stream_config, direct: bool) -> str | None:
+        """The panel's video to the phone, direct or re-encoded. None: the
+        view is closing."""
         address = session_info["address"]
         v_port = session_info["v_port"]
         v_pt = _pt(stream_config.get("v_payload_type"), 99)
-        direct = hkm.video_ready(self._hub)
         video_mode = "black (audio-only call)"
         if direct:
             video = DirectVideo(session_info["v_sock"], (address, v_port),
@@ -643,12 +696,12 @@ class VimarDoorbell(Camera):
             if tc:
                 _mark(session_info, "transcoder")
             if session_info.get("stopping"):
-                return False
+                return None
             if tc:
                 waited = 0.0
                 while not tc.gop.has_keyframe and waited < KEYFRAME_WAIT:
                     if session_info.get("stopping"):
-                        return False
+                        return None
                     await asyncio.sleep(0.02)
                     waited += 0.02
             if tc and tc.gop.has_keyframe:
@@ -664,7 +717,7 @@ class VimarDoorbell(Camera):
                 waited = 0.0
                 while not hkm.gop_has_keyframe() and waited < KEYFRAME_WAIT:
                     if session_info.get("stopping"):
-                        return False
+                        return None
                     await asyncio.sleep(0.02)
                     waited += 0.02
                 if hkm.gop_has_keyframe():
@@ -680,6 +733,15 @@ class VimarDoorbell(Camera):
         else:
             _close_quietly(session_info.pop("v_sock", None))
 
+        return video_mode
+
+    async def _open_audio(self, session_info, stream_config, direct: bool) -> bool:
+        """The street's audio to the phone and the phone's to the street, and
+        the view's ffmpeg (which also sends the black picture of a call
+        without video)."""
+        address = session_info["address"]
+        v_port = session_info["v_port"]
+        v_pt = _pt(stream_config.get("v_payload_type"), 99)
         # A port probe and a temporary SDP file: blocking, so off the loop.
         tap = await asyncio.get_running_loop().run_in_executor(None, hkm.AudioTap)
         session_info["tap"] = tap
@@ -748,9 +810,6 @@ class VimarDoorbell(Camera):
             asyncio.create_task(log_stderr(proc, "ffmpeg HomeKit")),
             asyncio.create_task(self._watch(session_info)),
         ]
-        _LOGGER.info("HomeKit: stream started to %s (PID %d, video %s) in %d ms (%s)",
-                     address, proc.pid, video_mode, _elapsed_ms(session_info),
-                     _timeline_summary(session_info))
         return True
 
     async def _watch(self, session_info) -> None:

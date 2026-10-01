@@ -141,6 +141,8 @@ class Transcoder:
         self._tasks: list[asyncio.Task] = []
         self._sinks: list = []
         self._ready = False
+        self._backlog_fn = lambda: ([], [])
+        self._on_ready = None
         # The panel stream (media_handler's video protocol: one per hub, the
         # same for every call) whose packets feed this transcoder. Set by
         # whoever attaches it, to detach it from the same place.
@@ -157,12 +159,20 @@ class Transcoder:
     def running(self) -> bool:
         return self._proc is not None and self._proc.returncode is None
 
-    async def start(self, backlog_fn, on_ready=None) -> bool:
+    async def start(self, backlog_fn, on_ready=None, defer: bool = False) -> bool:
         """Start ffmpeg and, as soon as it listens, give it the panel group.
 
         ``backlog_fn`` returns ``(prefix, group)`` of the panel packets already
         in memory. Without them the transcoder would have no keyframe to start
         from until the panel's next one, three seconds later.
+
+        ``defer``: only start ffmpeg; begin() later gives it the group and the
+        live stream. An encoder started before the call's video exists (#48)
+        must not take the first packets live: the relay delivers them a little
+        out of order, ffmpeg's RTP input dropped the late one as "received too
+        late", the first keyframe was broken, and the view fell back to the
+        panel's next keyframe (3.6 s). The group replayed in sequence order is
+        what the encoder always started from.
         """
         loop = asyncio.get_running_loop()
         self._out_tr, _ = await loop.create_datagram_endpoint(
@@ -238,17 +248,30 @@ class Transcoder:
             waited += 0.02
         if not self.running:
             return False
-        # No await from here to the anchor: the group and the live stream must
-        # join with no lost or duplicated packet.
-        prefix, gop = backlog_fn()
+        self._backlog_fn, self._on_ready = backlog_fn, on_ready
+        if defer:
+            _LOGGER.debug("Transcoder ready, waiting for the call's video")
+        else:
+            self.begin()
+        return True
+
+    @property
+    def begun(self) -> bool:
+        return self._ready
+
+    def begin(self) -> None:
+        """Give ffmpeg the panel group in sequence order, then the live stream.
+        No await inside: the two join with no lost or duplicated packet."""
+        if self._ready:
+            return
+        prefix, gop = self._backlog_fn()
         for pkt in list(prefix) + list(gop):
             self._send(pkt)
         self._ready = True
-        if on_ready:
-            on_ready()          # anchor to the live stream, at the same instant
+        if self._on_ready:
+            self._on_ready()    # anchor to the live stream, at the same instant
         _LOGGER.info("Transcoding started (%d panel packets to start from)",
                      len(prefix) + len(gop))
-        return True
 
     async def _read_pictures(self, stdout) -> None:
         """Keep the latest JPEG. Read to the end whatever happens: a full

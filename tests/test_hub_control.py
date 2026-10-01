@@ -482,3 +482,14 @@ def test_a_keyframe_request_is_sent_for_a_lost_packet(hub, monkeypatch):
     asyncio.run(run())
     assert asked == [1]
 
+
+
+def test_call_coming_is_a_call_not_an_open_websocket(hub, monkeypatch):
+    """HomeKit's early re-encoder asks for this (#48): a call up or being placed,
+    or a ring. An open card or app WebSocket counts for call_pending, not here."""
+    monkeypatch.setattr(sip, "ringing", lambda cid=None: False)
+    hub._has_ws_clients = lambda: True
+    hub._auto_called = False
+    assert hub.call_pending and not hub.call_coming
+    hub._auto_called = True                     # a view's auto-call being placed
+    assert hub.call_coming

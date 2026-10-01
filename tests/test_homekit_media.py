@@ -439,3 +439,17 @@ def test_parameter_sets_never_borrow_another_panels(monkeypatch):
     assert hkm.parameter_sets() == (None, None)
     vp.set_panel("55002")
     assert hkm.parameter_sets() == (SPS, PPS)
+
+
+def test_parameter_sets_of_the_panel_about_to_be_called(monkeypatch):
+    """Before a view's call has set its panel (after a restart: none; after a ring:
+    another panel), the early encoder asks for the called panel's own."""
+    vp = media.RTPVideoProtocol()
+    vp._ps_by_panel = {"55100": (SPS, PPS), "55001": (b"other-sps", b"other-pps")}
+    monkeypatch.setattr(media, "video_proto", vp)
+    vp.set_panel(None)                                      # after a restart
+    assert hkm.parameter_sets() == (None, None)
+    assert hkm.parameter_sets("sip:55100@plant.example.test;transport=tls") == (SPS, PPS)
+    vp.set_panel("55001")                                   # the last call was a ring
+    assert hkm.parameter_sets("sip:55100@plant.example.test") == (SPS, PPS)
+    assert hkm.parameter_sets("sip:55999@plant.example.test") == (None, None)

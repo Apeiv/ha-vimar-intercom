@@ -59,12 +59,17 @@ def video_ready(hub) -> bool:
     return bool(hub.video_active and vp and vp.pkt_count > 0)
 
 
-def parameter_sets() -> tuple[bytes | None, bytes | None]:
+def parameter_sets(panel_uri: str | None = None) -> tuple[bytes | None, bytes | None]:
     # Only the calling panel's own parameters: on a plant with several panels
     # another panel's SPS/PPS would garble the first frames. A panel never
     # seen before costs a slower first picture instead, never a wrong one.
+    # panel_uri: the panel about to be called, before its call has set the
+    # current one (after a restart there is none; before a view, the last
+    # call's panel, maybe another one).
     vp = media.video_proto
-    ps = vp.sps_pps(own_only=True) if vp else None
+    if not vp:
+        return None, None
+    ps = vp.sps_pps_of(media.panel_id(panel_uri)) if panel_uri else vp.sps_pps(own_only=True)
     return ps if ps else (None, None)
 
 

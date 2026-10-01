@@ -158,3 +158,36 @@ def test_the_latest_picture_is_kept_across_reads():
         t._feed.close()
         return t.last_jpeg
     assert asyncio.run(scenario()) == two
+
+
+def test_a_deferred_start_feeds_nothing_until_begin(monkeypatch):
+    """#48: an encoder warmed up before the call's video takes no live packet;
+    begin() gives it the group in sequence order first, then the live stream."""
+    import asyncio
+
+    async def spawn(*_a, **_kw):
+        return FakeFfmpeg()
+
+    monkeypatch.setattr(tc.asyncio, "create_subprocess_exec", spawn)
+    monkeypatch.setattr(tc, "port_bound", lambda _port: True)
+    group = [rtp(b"\x67" + b"\x00" * 4), rtp(b"\x68" + b"\x00" * 2), rtp(b"\x65" + b"\x00" * 8)]
+    live = rtp(b"\x41" + b"\x00" * 6)
+    attached = []
+
+    async def scenario():
+        t = tc.Transcoder(None, None)
+        sent = []
+        t._send = sent.append
+        assert await t.start(lambda: ([], group), on_ready=lambda: attached.append(1), defer=True)
+        t.feed(live)                              # a live packet before begin: ignored
+        early = (list(sent), t.begun, list(attached))
+        t.begin()
+        t.feed(live)
+        t.begin()                                 # once only
+        await t.stop()
+        return early, sent
+
+    (early_sent, early_begun, early_attached), sent = asyncio.run(scenario())
+    assert early_sent == [] and not early_begun and early_attached == []
+    assert sent == group + [live], "the group in order first, then the live stream"
+    assert attached == [1]

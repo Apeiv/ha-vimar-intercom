@@ -338,6 +338,11 @@ class RTPVideoProtocol(asyncio.DatagramProtocol):
             return self._last_sps, self._last_pps
         return None if own_only else next((ps for ps in self._ps_by_panel.values() if all(ps)), None)
 
+    def sps_pps_of(self, panel: str | None) -> tuple[bytes, bytes] | None:
+        """The stored SPS and PPS of this panel, when both are known."""
+        ps = self._ps_by_panel.get(panel or "")
+        return ps if ps and all(ps) else None
+
     def set_panel(self, panel: str | None) -> None:
         """Chiamata (o anteprima) con questa targa: si riparte dai suoi SPS/PPS."""
         self.panel = panel
@@ -810,13 +815,18 @@ async def restore_sps_pps(store) -> None:
                             for k, (s, p) in video_proto._ps_by_panel.items()}}, 5)
 
 
+def panel_id(uri: str | None) -> str | None:
+    """The SIP id of a panel's URI (sip:55100@domain;x=y -> 55100)."""
+    return uri.split(":")[-1].split("@")[0].split(";")[0] if uri else None
+
+
 def _current_panel() -> str | None:
     """Id SIP della targa di questa chiamata: chi suona (anche in anteprima), o chi
     abbiamo chiamato. Import in ritardo: sip_client importa questo modulo."""
     from . import sip_client as sip
     pi = sip.pending_incoming
     uri = (pi.get("caller_uri") if pi.get("active") else None) or sip.call_state.get("original_target")
-    return uri.split(":")[-1].split("@")[0].split(";")[0] if uri else None
+    return panel_id(uri)
 
 
 async def setup_media(remote_sdp, local_crypto_key=None, local_video_crypto_key=None,
