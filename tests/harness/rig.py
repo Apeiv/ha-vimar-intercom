@@ -73,6 +73,10 @@ class Rig:
 
     async def __aenter__(self):
         mp = self.mp
+        # The fake panel answers any INVITE at once: it has none of a 2-wire
+        # panel's busy seconds after a dialog (#44), which the settle before a
+        # local UDP call waits out. Those are tested in test_view_after_hangup.
+        mp.setattr(hub_mod, "LOCAL_UDP_SETTLE", 0.0)
         self.peer = peer = await FakePeer(self.transport).start()
         if self.srtp:
             peer.key = base64.b64encode(os.urandom(30)).decode()

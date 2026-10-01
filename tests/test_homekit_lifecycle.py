@@ -85,6 +85,7 @@ class Hub:
 
     def __init__(self, gate):
         self.gate = gate
+        self.call_coming = True
         self.in_call = True
         self.calling = False
         self.video_active = True
@@ -832,11 +833,19 @@ class FakeTranscoder:
     def running(self):
         return not self.stopped
 
-    async def start(self, _backlog, on_ready=None):
+    async def start(self, _backlog, on_ready=None, defer=False):
         if FakeTranscoder.gate:
             await FakeTranscoder.gate.wait()
-        on_ready()
+        self._on_ready, self.begun, self.begins = on_ready, False, 0
+        if not defer:
+            self.begin()
         return True
+
+    def begin(self):
+        if not self.begun:
+            self.begun = True
+            self.begins += 1
+            self._on_ready()
 
     def feed(self, _p):
         pass
@@ -1560,3 +1569,197 @@ def test_the_state_file_with_the_long_term_key_is_0600(monkeypatch, tmp_path):
     driver.persist()
     assert path.read_text() == "{}"
     assert os.stat(path).st_mode & 0o777 == 0o600
+
+
+def test_the_audio_does_not_wait_for_the_picture(acc, monkeypatch):
+    """The audio's ffmpeg needs nothing from the video path. It started after it,
+    re-encoder and keyframe wait included: on a 40515 first audio waited ~0.9 s
+    for a picture it does not depend on (#32). Now it starts while the video
+    still waits for its keyframe."""
+    a, procs, gate = acc
+    keyframe = {"in": False}
+    monkeypatch.setattr(hk.hkm, "gop_has_keyframe", lambda: keyframe["in"])
+    info = session()
+
+    async def scenario():
+        gate["open"].set()
+        start = asyncio.create_task(a.start_stream(info, {}))
+        for _ in range(100):                      # the audio's ffmpeg starts...
+            await asyncio.sleep(0.01)
+            if procs:
+                break
+        early = dict(info["timeline"])
+        keyframe["in"] = True                     # ...then the panel's keyframe
+        assert await start
+        return early
+
+    early = asyncio.run(scenario())
+    assert "ffmpeg" in early and "video begin" not in early
+    assert "video begin" in info["timeline"]
+    _close(a, info)
+
+
+def test_the_re_encoder_starts_while_the_call_connects(acc, monkeypatch):
+    """Its ffmpeg takes about half a second to start. It used to start only once the
+    call's video had arrived: the longest stage of a view on a 40515 (#32)."""
+    a, procs, gate = acc
+    a._smooth = True
+    FakeTranscoder.instances.clear()
+    FakeTranscoder.gate = None
+    monkeypatch.setattr(hk, "Transcoder", FakeTranscoder)
+    video = {"in": False}
+    monkeypatch.setattr(hk.hkm, "video_ready", lambda _hub: video["in"])
+    monkeypatch.setattr(hk.hkm, "parameter_sets", lambda panel_uri=None: (b"sps", b"pps"))
+    info = session()
+
+    async def scenario():
+        gate["open"].set()                      # the hub places the call...
+        a._hub.in_call = a._hub.video_active = False   # ...which is still connecting
+        start = asyncio.create_task(a.start_stream(info, {}))
+        await asyncio.sleep(0.05)
+        before_the_call = len(FakeTranscoder.instances)
+        a._hub.in_call = a._hub.video_active = video["in"] = True
+        assert await start
+        return before_the_call
+
+    assert asyncio.run(scenario()) == 1, "started before the call was up"
+    assert len(FakeTranscoder.instances) == 1, "the view uses that one, not a second"
+    assert info["timeline"].get("transcoder") is not None
+    _close(a, info)
+
+
+def test_an_early_re_encoder_goes_with_a_call_that_never_connects(acc, monkeypatch):
+    a, procs, gate = acc
+    a._smooth = True
+    FakeTranscoder.instances.clear()
+    FakeTranscoder.gate = None
+    monkeypatch.setattr(hk, "Transcoder", FakeTranscoder)
+    monkeypatch.setattr(hk.hkm, "video_ready", lambda _hub: False)
+    monkeypatch.setattr(hk.hkm, "parameter_sets", lambda panel_uri=None: (b"sps", b"pps"))
+
+    async def scenario():
+        await a._ensure_transcoder(early=True)
+        a.on_video_ended()                      # the placed call failed (busy, no answer)
+        while a._tasks:
+            await asyncio.gather(*a._tasks)
+
+    asyncio.run(scenario())
+    assert FakeTranscoder.instances and all(t.stopped for t in FakeTranscoder.instances)
+    assert a._transcoder is None
+
+
+def test_no_early_re_encoder_without_the_panels_parameters(acc, monkeypatch):
+    """Right after a restart no call has set the panel yet: an early encoder had
+    no SPS/PPS, missed the first keyframe, and the picture came at 3.6 s. It now
+    waits for the video, as before, and the view still gets one."""
+    a, procs, gate = acc
+    a._smooth = True
+    FakeTranscoder.instances.clear()
+    FakeTranscoder.gate = None
+    monkeypatch.setattr(hk, "Transcoder", FakeTranscoder)
+    video = {"in": False}
+    monkeypatch.setattr(hk.hkm, "video_ready", lambda _hub: video["in"])
+    asked = []
+
+    def params(panel_uri=None):
+        asked.append(panel_uri)
+        return (None, None) if panel_uri else (b"sps", b"pps")
+    monkeypatch.setattr(hk.hkm, "parameter_sets", params)
+    monkeypatch.setattr(hk.R, "INTERCOM", "sip:55100@plant.example.test")
+    info = session()
+
+    async def scenario():
+        gate["open"].set()
+        a._hub.in_call = a._hub.video_active = False
+        start = asyncio.create_task(a.start_stream(info, {}))
+        await asyncio.sleep(0.05)
+        early = len(FakeTranscoder.instances)
+        a._hub.in_call = a._hub.video_active = video["in"] = True
+        assert await start
+        return early
+
+    assert asyncio.run(scenario()) == 0
+    assert "sip:55100@plant.example.test" in asked, "asked for the called panel's"
+    assert len(FakeTranscoder.instances) == 1, "the view still gets one, once the video is in"
+    _close(a, info)
+
+
+def test_no_early_re_encoder_for_a_call_that_already_failed(acc, monkeypatch):
+    """Review of #48: a placed call failing at once (486, or #41's silent panel)
+    can end before the spawned early start takes its lock. The start must not
+    leave an idle ffmpeg that nothing stops."""
+    a, procs, gate = acc
+    a._smooth = True
+    FakeTranscoder.instances.clear()
+    FakeTranscoder.gate = None
+    monkeypatch.setattr(hk, "Transcoder", FakeTranscoder)
+    monkeypatch.setattr(hk.hkm, "video_ready", lambda _hub: False)
+    monkeypatch.setattr(hk.hkm, "parameter_sets", lambda panel_uri=None: (b"sps", b"pps"))
+    a._hub.call_coming = False                  # the call is already over
+
+    assert asyncio.run(a._ensure_transcoder(early=True)) is None
+    assert FakeTranscoder.instances == []
+
+
+def test_no_early_re_encoder_during_a_ring(acc, monkeypatch):
+    """Review of #48: a ring from another panel also makes a view "in view". The
+    early start would take R.INTERCOM's SPS/PPS, not the ringing panel's; the
+    ring's early media brings the video soon anyway. The view still gets an
+    encoder, the usual way."""
+    a, procs, gate = acc
+    a._smooth = True
+    FakeTranscoder.instances.clear()
+    FakeTranscoder.gate = None
+    monkeypatch.setattr(hk, "Transcoder", FakeTranscoder)
+    monkeypatch.setattr(hk.sip, "ringing", lambda: True)
+    video = {"in": False}
+    monkeypatch.setattr(hk.hkm, "video_ready", lambda _hub: video["in"])
+    monkeypatch.setattr(hk.hkm, "parameter_sets", lambda panel_uri=None: (b"sps", b"pps"))
+    info = session()
+
+    async def scenario():
+        gate["open"].set()
+        a._hub.in_call = a._hub.video_active = False
+        start = asyncio.create_task(a.start_stream(info, {}))
+        await asyncio.sleep(0.05)
+        early = len(FakeTranscoder.instances)
+        a._hub.in_call = a._hub.video_active = video["in"] = True
+        assert await start
+        return early
+
+    assert asyncio.run(scenario()) == 0
+    assert len(FakeTranscoder.instances) == 1
+    _close(a, info)
+
+
+def test_the_early_re_encoder_starts_from_the_group_in_order(acc, monkeypatch):
+    """Field test on 5G (#48): fed live from the first packet, the early encoder
+    lost one the relay delivered out of order ("RTP: dropping old packet received
+    too late"), its first keyframe was broken and the view fell back to the
+    panel's next keyframe (3.6 s). It only warms up early; the view begins it,
+    from the group replayed in sequence order, when its video is in."""
+    a, procs, gate = acc
+    a._smooth = True
+    FakeTranscoder.instances.clear()
+    FakeTranscoder.gate = None
+    monkeypatch.setattr(hk, "Transcoder", FakeTranscoder)
+    video = {"in": False}
+    monkeypatch.setattr(hk.hkm, "video_ready", lambda _hub: video["in"])
+    monkeypatch.setattr(hk.hkm, "parameter_sets", lambda panel_uri=None: (b"sps", b"pps"))
+    info = session()
+
+    async def scenario():
+        gate["open"].set()
+        a._hub.in_call = a._hub.video_active = False
+        start = asyncio.create_task(a.start_stream(info, {}))
+        await asyncio.sleep(0.05)
+        tc = FakeTranscoder.instances[0]
+        before = (tc.begun, list(a.sinks))
+        a._hub.in_call = a._hub.video_active = video["in"] = True
+        assert await start
+        return tc, before
+
+    tc, (begun_early, sinks_early) = asyncio.run(scenario())
+    assert not begun_early and tc.feed not in sinks_early, "warmed up, not fed"
+    assert tc.begun and tc.begins == 1 and tc.feed in a.sinks
+    _close(a, info)

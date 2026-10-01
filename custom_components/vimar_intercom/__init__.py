@@ -5,6 +5,7 @@ import ipaddress
 import json
 import logging
 import os
+import time
 from pathlib import Path
 
 from aiohttp import web
@@ -982,6 +983,7 @@ class VimarAVStreamView(HomeAssistantView):
             if not wait:
                 return web.Response(status=503, text="No call")
             waited = 0
+            asked_at = time.monotonic()
             # 25 s: col cloud Vimar la chiamata a volte parte dopo ~15 s (riconnessione TLS).
             # Ma una chiamata finita, annullata o rifiutata (486) non darà video: 503
             # subito, non 25 s di rotella sull'iPhone (contando come spettatore).
@@ -989,7 +991,10 @@ class VimarAVStreamView(HomeAssistantView):
                 await asyncio.sleep(0.1)  # ogni decimo conta: la targa chiude dopo ~10 s
                 waited += 0.1
             if not hub.video_active:
-                _LOGGER.warning("AV stream: call not established after 25s")
+                # waited counts 0.1 s steps; the loop also ends early when the
+                # call is given up, so the real time says what happened (#44).
+                _LOGGER.warning("AV stream: call not established (%.1f s)",
+                                time.monotonic() - asked_at)
                 return web.Response(status=503, text="Call not established")
 
             queue = await av_stream.av_subscribe()
