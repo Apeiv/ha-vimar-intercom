@@ -14,6 +14,9 @@ Italian and are kept as they were written.
 
 ### Changed
 
+- SRTP costs a quarter less per packet (28 µs instead of 38 µs for a video packet on a Raspberry
+  Pi 5): the IV is one integer XOR, the AES-CTR cipher is set up without a Counter object, and the
+  HMAC is copied from one keyed once. The bytes on the wire are the same (known-answer tests).
 - The voice to the panel (the card's microphone, HomeKit's Talk, the away message) is μ-law encoded
   through a lookup table: 13 µs instead of 113 µs per 20 ms packet on a Raspberry Pi 5, the same
   bytes, on the event loop that also carries the call's video.
