@@ -43,19 +43,20 @@ HANGUP_SETTLE = 6.0
 HANGUP_LOCAL_SETTLE = 0.5
 # Upper bound for the whole automatic hang-up, BYE answer included.
 HANGUP_BYE_TIMEOUT = 8.0
-# Local UDP only (#41): a panel that has just ended a call can ignore the
-# next INVITE for a few seconds. A view's call with no final answer after
-# LOCAL_UDP_ANSWER_TIMEOUT is cancelled and tried once more after
-# LOCAL_UDP_RETRY_PAUSE: at most 8 + 2 + 8 = 18 s, inside /av's 25 s, instead
-# of failing at 25 s. The cloud relay answers at once (100 Trying); there,
-# nothing changes.
+# Local UDP only (#41, #44): a panel that has just ended a call can swallow the
+# next INVITE in two ways, seen on a 40507: the Tab's proxy answers 100 Trying
+# and the panel never sends its 180, or the panel rings (180) and never
+# answers. A call to the panel is given up after LOCAL_UDP_RING_TIMEOUT with a
+# 100 and no 180, or after LOCAL_UDP_ANSWER_TIMEOUT without a final answer,
+# and tried again after LOCAL_UDP_RETRY_PAUSE, as long as it is wanted and
+# LOCAL_UDP_CALL_BUDGET (inside /av's 25 s) leaves room for another try. A
+# single retry could land on the other face of the stuck state. The cloud
+# relay answers at once (100 Trying); there, nothing changes.
 LOCAL_UDP_ANSWER_TIMEOUT = 8.0
-LOCAL_UDP_RETRY_PAUSE = 2.0
-# The stuck state seen on a 40507 (#44): the Tab's proxy answers 100 Trying and
-# the panel never sends its 180, which in a good call follows within ~50 ms.
-# A panel call with a 100 and no 180/183 after this long is given up (and
-# retried) without waiting for LOCAL_UDP_ANSWER_TIMEOUT.
 LOCAL_UDP_RING_TIMEOUT = 3.0
+LOCAL_UDP_RETRY_PAUSE = 3.0         # the retry 2.1 s after a 487 was swallowed again
+LOCAL_UDP_CALL_BUDGET = 21.0
+LOCAL_UDP_MIN_TRY = 4.0             # a try needs its ring timeout and an answer
 
 # Nomi "umani" degli indirizzi SIP dell'impianto
 SIP_ID_NAMES = {
@@ -606,27 +607,35 @@ class VimarIntercomHub:
             self._auto_ended_at = time.monotonic()
 
     async def _call_panel(self, target, still_wanted, **kw) -> tuple[bool, str]:
-        """Call a video panel (None: R.INTERCOM). On local UDP a panel that
-        has just ended a call can swallow the next INVITE (#41, #44): no final
-        answer after LOCAL_UDP_ANSWER_TIMEOUT, or a 100 Trying and no 180
-        after LOCAL_UDP_RING_TIMEOUT, is cancelled and tried once more after
-        LOCAL_UDP_RETRY_PAUSE, if `still_wanted()`. The cloud call is
-        unchanged: 45 s, no retry."""
-        if R.USE_LOCAL_UDP:
-            kw.update(answer_timeout=LOCAL_UDP_ANSWER_TIMEOUT, ring_timeout=LOCAL_UDP_RING_TIMEOUT)
-        ok, msg = await sip.do_call(target=target, **kw)
-        if ok or not msg.startswith(sip.NO_ANSWER) or not still_wanted():
-            return ok, msg
-        _LOGGER.warning("The panel did not answer (%s): one more try in %.0fs",
-                        msg, LOCAL_UDP_RETRY_PAUSE)
-        self._panel_retry = True
-        try:
-            await asyncio.sleep(LOCAL_UDP_RETRY_PAUSE)
-        finally:
-            self._panel_retry = False
-        if not still_wanted():
-            return ok, msg
-        return await sip.do_call(target=target, **kw)
+        """Call a video panel (None: R.INTERCOM). On local UDP a call the panel
+        swallows is cancelled and tried again (see LOCAL_UDP_CALL_BUDGET),
+        while `still_wanted()`. The cloud call is unchanged: 45 s, no retry."""
+        if not R.USE_LOCAL_UDP:
+            return await sip.do_call(target=target, **kw)
+        started = time.monotonic()
+        tries = 0
+        while True:
+            left = LOCAL_UDP_CALL_BUDGET - (time.monotonic() - started)
+            tries += 1
+            ok, msg = await sip.do_call(
+                target=target, answer_timeout=max(1.0, min(LOCAL_UDP_ANSWER_TIMEOUT, left)),
+                ring_timeout=LOCAL_UDP_RING_TIMEOUT, **kw)
+            if ok or not msg.startswith(sip.NO_ANSWER) or not still_wanted():
+                return ok, msg
+            left = LOCAL_UDP_CALL_BUDGET - (time.monotonic() - started)
+            if left < LOCAL_UDP_RETRY_PAUSE + LOCAL_UDP_MIN_TRY:
+                _LOGGER.warning("The panel did not answer (%s) after %d tries in %.0fs: giving up",
+                                msg, tries, time.monotonic() - started)
+                return ok, msg
+            _LOGGER.warning("The panel did not answer (%s): trying again in %.0fs",
+                            msg, LOCAL_UDP_RETRY_PAUSE)
+            self._panel_retry = True
+            try:
+                await asyncio.sleep(LOCAL_UDP_RETRY_PAUSE)
+            finally:
+                self._panel_retry = False
+            if not still_wanted():
+                return ok, msg
 
     def _view_still_waits(self, gen: int | None) -> bool:
         """This auto-call is still wanted: the newest one, a viewer waiting,

@@ -8,6 +8,7 @@ tried once more. The cloud relay never answers a BYE: there nothing changes.
 from __future__ import annotations
 
 import asyncio
+import types
 
 import pytest
 
@@ -102,7 +103,7 @@ def _auto_call(hub, monkeypatch, results, *, during_pause=None):
         calls.append(answer_timeout)
         if during_pause and len(calls) == 1:
             asyncio.get_running_loop().call_later(0.005, during_pause)
-        return results[len(calls) - 1]
+        return results[min(len(calls), len(results)) - 1]   # the last one repeats
 
     monkeypatch.setattr(sip, "do_call", do_call)
     hub._stream_viewers = 1
@@ -122,11 +123,45 @@ def test_on_local_udp_an_unanswered_view_call_is_tried_once_more(hub, monkeypatc
     assert hub._auto_called, "the second try connected"
 
 
-def test_an_unanswered_view_call_is_not_tried_a_third_time(hub, monkeypatch):
+def test_the_retries_stop_when_the_budget_runs_out(hub, monkeypatch):
     monkeypatch.setattr(R, "USE_LOCAL_UDP", True)
-    calls = _auto_call(hub, monkeypatch, [NO, NO, NO])
-    assert len(calls) == 2
+    monkeypatch.setattr(hub_mod, "LOCAL_UDP_CALL_BUDGET", 0.3)
+    monkeypatch.setattr(hub_mod, "LOCAL_UDP_MIN_TRY", 0.05)
+    calls = _auto_call(hub, monkeypatch, [NO])
+    assert 2 <= len(calls) < 10, "a few tries, then it gives up"
     assert not hub._auto_called, "a failed auto-call is over"
+
+
+def test_the_other_face_of_the_stuck_panel_gets_another_try(hub, monkeypatch):
+    """#44 on a 40507: the first try rang (180) and was never answered, the retry
+    got only 100 Trying. A single retry failed the view; a third try connects."""
+    monkeypatch.setattr(R, "USE_LOCAL_UDP", True)
+    rang = (False, f"{sip.NO_ANSWER} (8s)")
+    silent = (False, f"{sip.NO_ANSWER} (no 180 after 3s)")
+    calls = _auto_call(hub, monkeypatch, [rang, silent, (True, "Connesso!")])
+    assert len(calls) == 3 and hub._auto_called
+
+
+def test_the_tries_fit_in_the_budget(hub, monkeypatch):
+    """Each try's answer timeout is capped by what is left: 8 + 8 + 5 = 21 s, and
+    no try is started without room for its ring timeout and an answer."""
+    monkeypatch.setattr(R, "USE_LOCAL_UDP", True)
+    monkeypatch.setattr(hub_mod, "LOCAL_UDP_RETRY_PAUSE", 0.01)
+    clock = {"t": 0.0}
+    monkeypatch.setattr(hub_mod, "time", types.SimpleNamespace(monotonic=lambda: clock["t"]))
+    calls = []
+
+    async def do_call(target=None, silence_limit=None, answer_timeout=None, ring_timeout=None):
+        calls.append(answer_timeout)
+        clock["t"] += answer_timeout             # each try runs out its timeout
+        return NO
+
+    monkeypatch.setattr(sip, "do_call", do_call)
+    hub._stream_viewers, hub._auto_called = 1, True
+    hub._auto_gen += 1
+    asyncio.run(hub._do_auto_call(hub._auto_gen))
+    assert calls == [8.0, 8.0, 5.0]
+    assert sum(calls) <= hub_mod.LOCAL_UDP_CALL_BUDGET
 
 
 def test_no_second_try_once_the_viewer_has_left_during_the_pause(hub, monkeypatch):
