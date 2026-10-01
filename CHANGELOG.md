@@ -8,6 +8,8 @@ Italian and are kept as they were written.
 
 ### Fixed
 
+- **Away message text and audio file** can be changed by administrators only. The two entities
+  were writable by any user who could call the service; a call with no user (automations) still works.
 - **Card shortcut buttons** no longer inject markup: the `friendly_name` and `icon` of a `button.*`
   entity are escaped, and an icon not shaped like `prefix:name` falls back to the default.
 - **Card popup layout**: the popup now opens when the card first sees a call already in progress
