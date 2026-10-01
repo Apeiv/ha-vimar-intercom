@@ -621,6 +621,49 @@ def test_video_webcodecs_primo_fotogramma_subito(monkeypatch, engine):  # noqa: 
     run(s())
 
 
+# The card's _pcmSink on a fake AudioContext at 48 kHz (WebKit of Playwright has no Web Audio): one second of a 440 Hz sine in 20 ms
+# packets, then two packets after the playout clock ran dry.
+PCM_SINK = """(() => {
+  const starts = [], srcs = [], lp = {};
+  let now = 0;
+  const ctx = { sampleRate: 48000, get currentTime() { return now; },
+    createBiquadFilter: () => Object.assign(lp, { frequency: {}, connect: (g) => (lp.to = g) }),
+    createBuffer: (c, n, r) => { const d = new Float32Array(n); return { sampleRate: r, duration: n / r, getChannelData: () => d }; },
+    createBufferSource: () => { const s = { connect: (d) => (s.to = d), start: (t) => starts.push(t) }; srcs.push(s); return s; } };
+  const sink = card._pcmSink(ctx, "GAIN");
+  const pkt = (k) => { const b = new ArrayBuffer(321), v = new DataView(b); v.setUint8(0, 1);
+    for (let i = 0; i < 160; i++) v.setInt16(1 + 2 * i, Math.round(16000 * Math.sin(2 * Math.PI * 440 * (k * 160 + i) / 8000)), true);
+    return b; };
+  for (let k = 0; k < 50; k++) sink({ data: pkt(k) });
+  const out = srcs.flatMap((s) => [...s.buffer.getChannelData(0)]);
+  let jump = 0;
+  for (let i = 1; i < out.length; i++) jump = Math.max(jump, Math.abs(out[i] - out[i - 1]));
+  const gapless = starts.slice(1).every((t, i) => Math.abs(t - starts[i] - srcs[i].buffer.duration) < 1e-9);
+  now = 10; sink({ data: pkt(50) }); const ahead1 = starts.at(-1) - now;
+  now = 20; sink({ data: pkt(51) }); const ahead2 = starts.at(-1) - now;
+  return { n: out.length, rates: [...new Set(srcs.map((s) => s.buffer.sampleRate))], jump, gapless,
+           first: starts[0], ahead1, ahead2, lp: [lp.type, lp.frequency?.value],
+           chain: srcs.every((s) => s.to === lp) && lp.to === "GAIN" };
+})()"""
+
+
+def test_voice_resampled_continuously_low_passed_growing_buffer(monkeypatch, engine):  # noqa: F811
+    """#53: each 20 ms packet was an 8 kHz AudioBuffer resampled by the browser on its own,
+    a click at every edge. The sink now resamples to the context's rate across packets (no
+    jump bigger than the sine's own slope, exactly 6 samples per input sample), plays through
+    a 3.6 kHz low-pass, starts 120 ms ahead and adds 40 ms at every underrun."""
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            async with Card(rig, engine) as c:
+                r = await c.page.evaluate(PCM_SINK)
+                assert r["rates"] == [48000] and abs(r["n"] - 48000) <= 1, r
+                assert r["jump"] < 0.035, r  # 440 Hz at 0.49 full scale: max slope 0.028 per 48 kHz sample
+                assert r["gapless"] and r["chain"] and r["lp"] == ["lowpass", 3600], r
+                assert r["first"] == pytest.approx(0.12) and r["ahead1"] == pytest.approx(0.16), r
+                assert r["ahead2"] == pytest.approx(0.2), r
+    run(s())
+
+
 @pytest.mark.parametrize("engine", ["chromium"], indirect=True)  # WebKit di Playwright: niente WebCodecs
 @pytest.mark.parametrize("ios", [False, True])
 def test_decoder_gets_avc_description_and_length_prefixed_nals(monkeypatch, engine, ios):  # noqa: F811

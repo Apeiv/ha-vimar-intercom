@@ -1545,18 +1545,43 @@ class VimarIntercomCard extends HTMLElement {
   // (_startListen, senza microfono). Un chiusura sola per chiamata: `playAt` vive qui.
   // Passa da un GainNode (_gain) così il tasto "Audio" può azzerare solo questa
   // riproduzione: niente riaggancio, niente microfono, WebSocket sempre aperto.
+  // The 8 kHz voice is resampled here to the context's rate, continuously across packets
+  // (the last sample and the fractional position carry over): an 8 kHz AudioBuffer per
+  // 20 ms packet was resampled by the browser one packet at a time, with a click at every
+  // edge, 50 times a second (#53). 120 ms ahead of the clock absorbs the relay's jitter
+  // (up to ~150 ms measured); each underrun adds 40 ms, up to 300 ms. A 3.6 kHz low-pass (the
+  // G.711 band ends at 3.4 kHz) removes the images that linear interpolation leaves above
+  // the voice, heard as a metallic hiss.
   _pcmSink(ctx, gain) {
-    let playAt = 0;
+    const step = RATE / ctx.sampleRate;
+    const lp = ctx.createBiquadFilter();
+    lp.type = "lowpass";
+    lp.frequency.value = 3600;
+    lp.connect(gain);
+    let playAt = 0, last = 0, pos = 0, ahead = 0.12, started = false;
     return (ev) => {
       if (typeof ev.data === "string" || new Uint8Array(ev.data, 0, 1)[0] !== 0x01) return;
-      const pcm = new Int16Array(ev.data.slice(1));
-      const buf = ctx.createBuffer(1, pcm.length, RATE);
+      const pcm = new Int16Array(ev.data.slice(1)), n = pcm.length;
+      if (!n) return;
+      const at = (i) => (i < 0 ? last : pcm[i] / 32768);  // index -1 is the previous packet's last sample
+      const count = Math.ceil((n - pos) / step);
+      const buf = ctx.createBuffer(1, count, ctx.sampleRate);
       const ch = buf.getChannelData(0);
-      for (let i = 0; i < pcm.length; i++) ch[i] = pcm[i] / 32768;
+      let p = pos;
+      for (let k = 0; k < count; k++, p += step) {
+        const i = Math.floor(p), f = p - i;
+        ch[k] = at(i - 1) + (at(i) - at(i - 1)) * f;
+      }
+      pos = p - n;
+      last = pcm[n - 1] / 32768;
       const src = ctx.createBufferSource();
       src.buffer = buf;
-      src.connect(gain);
-      playAt = Math.max(playAt, ctx.currentTime + 0.05);  // piccolo buffer contro gli scatti
+      src.connect(lp);
+      if (playAt < ctx.currentTime + 0.01) {
+        if (started) ahead = Math.min(ahead + 0.04, 0.3);  // ran dry: keep more in hand
+        started = true;
+        playAt = ctx.currentTime + ahead;
+      }
       src.start(playAt);
       playAt += buf.duration;
     };

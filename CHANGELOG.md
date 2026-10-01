@@ -8,6 +8,9 @@ Italian and are kept as they were written.
 
 ### Fixed
 
+- **Card voice playback** no longer clicks 50 times a second: the 8 kHz voice is resampled to the
+  audio context's rate continuously across packets and low-passed at 3.6 kHz, and the playout
+  buffer starts 120 ms ahead and grows by 40 ms at every underrun, up to 300 ms (#53).
 - **Card live video on iPhone** no longer smears between keyframes: the WebCodecs decoder is fed
   AVC (an `avcC` description built from SPS/PPS, length-prefixed NAL units) instead of Annex B, is
   reconfigured only when SPS/PPS change, and runs with `optimizeForLatency` off on iOS (#53).
