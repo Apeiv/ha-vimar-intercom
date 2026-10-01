@@ -65,6 +65,6 @@ def test_the_integer_iv_is_the_byte_by_byte_one():
     for ssrc, index in ((0xDEADBEEF, 0), (0, 0xFFFFFFFFFFFF), (0xFFFFFFFF, 0x1_0000), (1, 65535)):
         ssrc_index = (b"\x00\x00\x00\x00" + ssrc.to_bytes(4, "big")
                       + index.to_bytes(6, "big") + b"\x00\x00")
-        reference = bytes(a ^ b for a, b in zip(salt_padded, ssrc_index))
+        reference = bytes(a ^ b for a, b in zip(salt_padded, ssrc_index, strict=True))
         assert _packet_iv(_iv_base(ctx.salt), ssrc, index) == reference
         assert ctx._compute_iv(ssrc, index) == reference
