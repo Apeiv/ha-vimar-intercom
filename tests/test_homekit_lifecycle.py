@@ -1691,3 +1691,34 @@ def test_no_early_re_encoder_for_a_call_that_already_failed(acc, monkeypatch):
 
     assert asyncio.run(a._ensure_transcoder(early=True)) is None
     assert FakeTranscoder.instances == []
+
+
+def test_no_early_re_encoder_during_a_ring(acc, monkeypatch):
+    """Review of #48: a ring from another panel also makes a view "in view". The
+    early start would take R.INTERCOM's SPS/PPS, not the ringing panel's; the
+    ring's early media brings the video soon anyway. The view still gets an
+    encoder, the usual way."""
+    a, procs, gate = acc
+    a._smooth = True
+    FakeTranscoder.instances.clear()
+    FakeTranscoder.gate = None
+    monkeypatch.setattr(hk, "Transcoder", FakeTranscoder)
+    monkeypatch.setattr(hk.sip, "ringing", lambda: True)
+    video = {"in": False}
+    monkeypatch.setattr(hk.hkm, "video_ready", lambda _hub: video["in"])
+    monkeypatch.setattr(hk.hkm, "parameter_sets", lambda panel_uri=None: (b"sps", b"pps"))
+    info = session()
+
+    async def scenario():
+        gate["open"].set()
+        a._hub.in_call = a._hub.video_active = False
+        start = asyncio.create_task(a.start_stream(info, {}))
+        await asyncio.sleep(0.05)
+        early = len(FakeTranscoder.instances)
+        a._hub.in_call = a._hub.video_active = video["in"] = True
+        assert await start
+        return early
+
+    assert asyncio.run(scenario()) == 0
+    assert len(FakeTranscoder.instances) == 1
+    _close(a, info)

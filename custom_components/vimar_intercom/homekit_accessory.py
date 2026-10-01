@@ -608,7 +608,10 @@ class VimarDoorbell(Camera):
             # Closed while the hub was placing the call: nothing more for it,
             # above all no answer. The close gives the viewer back.
             return False
-        if self._smooth and not hkm.video_ready(self._hub):
+        if self._smooth and not hkm.video_ready(self._hub) and not sip.ringing():
+            # Not during a ring: its panel may not be R.INTERCOM, whose SPS/PPS
+            # the early start takes, and its early media brings the video
+            # within a few hundred ms anyway (review of #48).
             # The re-encoder's ffmpeg takes about half a second to start. Started
             # only once the call's video arrived, it was the longest stage of a
             # view on a 40515: call at 1.15 s, re-encoder ready at 2.0-2.1 s (#32).
