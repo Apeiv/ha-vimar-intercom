@@ -97,7 +97,9 @@ citofono e il dominio SIP locale arrivano dal Tab stesso. Conta sugli impianti i
 (il suo indirizzo) invece di quello cloud. Un citofono già configurato si riconosce dal MAC, e se il
 DHCP gli dà un altro indirizzo Home Assistant propone quello nuovo tra i dispositivi trovati e lo usa
 quando confermi (solo in modalità locale). La conferma serve perché chiunque nella rete locale può
-annunciarsi con il MAC del Tab. Dove l'mDNS è
+annunciarsi con il MAC del Tab. Se premi Ignora per sbaglio, anche i cambi successivi vengono
+ignorati: Impostazioni → Dispositivi e servizi → Ignorati → Vimar Intercom → Smetti di ignorare. Dove
+l'mDNS è
 filtrato non cambia nulla: si aggiunge a mano come prima.
 
 ### Opzioni (dopo l'aggiunta)

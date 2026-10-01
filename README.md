@@ -96,7 +96,9 @@ whose QR says `domain=127.0.0.1`, such as a 40515: the domain the Tab announces 
 is used for local registration instead of the cloud domain. An intercom that is already set up
 is recognised by its MAC, and if the DHCP gives it a new address Home Assistant offers the new
 one under Discovered, and switches to it once you confirm (local mode only). The confirmation is
-there because anyone on the local network can announce the Tab's MAC. Where mDNS is filtered, nothing changes: add it by hand as before.
+there because anyone on the local network can announce the Tab's MAC. If you press Ignore by
+mistake, later moves are ignored too: Settings → Devices & services → Ignored → Vimar Intercom →
+Stop ignoring. Where mDNS is filtered, nothing changes: add it by hand as before.
 
 ### Options (after adding the integration)
 
