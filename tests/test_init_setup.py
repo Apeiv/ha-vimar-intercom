@@ -174,7 +174,8 @@ def init(monkeypatch):
     def admin_service(hass, domain, name, handler, schema=None, supports_response=None):
         hass.services.async_register(domain, name, handler)
         hass.services.admin.add(name)
-    monkeypatch.setattr(mod, "async_register_admin_service", admin_service)
+    monkeypatch.setattr(sys.modules["custom_components.vimar_intercom.services"],
+                        "async_register_admin_service", admin_service)
 
     removed: list = []
     registry = types.SimpleNamespace(

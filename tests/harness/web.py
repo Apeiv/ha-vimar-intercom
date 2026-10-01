@@ -112,6 +112,8 @@ def load_views(monkeypatch, web=WEB):
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     monkeypatch.setattr(mod, "web", web)
+    # The views live in views.py (#33): they read `web` from there.
+    monkeypatch.setattr(importlib.import_module("custom_components.vimar_intercom.views"), "web", web)
     return mod
 
 

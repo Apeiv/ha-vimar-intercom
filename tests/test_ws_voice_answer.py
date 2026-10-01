@@ -6,6 +6,7 @@ from harness.web import Request, load_views, make_hass
 
 from custom_components.vimar_intercom import media_handler as media
 from custom_components.vimar_intercom import runtime
+from custom_components.vimar_intercom import sip_client as sip
 
 SILENCE = b"\x02" + b"\x00\x00" * 341                # 42,6 ms a 8 kHz, RMS 0
 VOICE = b"\x02" + (10000).to_bytes(2, "little") * 341  # RMS 10000
@@ -14,7 +15,6 @@ VOICE = b"\x02" + (10000).to_bytes(2, "little") * 341  # RMS 10000
 def _run(monkeypatch, hub, frames, ringing, declared=True, mode="declared"):
     monkeypatch.setattr(runtime, "VOICE_ANSWER", mode)
     views = load_views(monkeypatch)
-    sip = views.sip
     monkeypatch.setattr(sip, "ringing", lambda: ringing)
     answered, sent = [], []
 
