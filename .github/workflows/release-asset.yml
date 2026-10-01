@@ -1,0 +1,47 @@
+# Attaches vimar_intercom.zip to every published release. HACS installs from it
+# (hacs.json: zip_release), and GitHub counts its downloads for the README badge.
+# Run it by hand (Actions -> Release asset -> Run workflow) to attach the zip to
+# a release that was published before this workflow existed.
+name: Release asset
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to attach the zip to, e.g. v1.0.17"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  zip:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: The manifest version must match the tag
+        run: |
+          v=$(python3 -c "import json; print(json.load(open('custom_components/vimar_intercom/manifest.json'))['version'])")
+          if [ "v$v" != "$TAG" ]; then
+            echo "manifest.json says $v, the tag is $TAG"
+            exit 1
+          fi
+
+      - name: Build the zip (the integration's files at its root, as HACS expects)
+        run: |
+          cd custom_components/vimar_intercom
+          zip -r -X "$GITHUB_WORKSPACE/vimar_intercom.zip" . -x '*/__pycache__/*' '__pycache__/*' '*.pyc'
+          cd "$GITHUB_WORKSPACE"
+          unzip -l vimar_intercom.zip | grep -q ' manifest.json$'
+
+      - name: Attach it to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" vimar_intercom.zip --clobber --repo "$GITHUB_REPOSITORY"

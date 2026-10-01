@@ -8,6 +8,9 @@ Italian and are kept as they were written.
 
 ### Changed
 
+- **HACS installs from a release zip**: every release gets `vimar_intercom.zip` attached by a workflow, and
+  HACS downloads that instead of the source archive (`zip_release`). Nothing changes for users; it lets the
+  README show a download count (installs and updates from the first release with a zip on).
 - **README badges**: latest release, HACS, minimum Home Assistant version, test status, licence and stars.
 - **Documentation**: the README (the page HACS shows) is now short: what the integration does, compatibility,
   installation in four steps, and links. The reference moved, unchanged, to `docs/` in English and Italian:
