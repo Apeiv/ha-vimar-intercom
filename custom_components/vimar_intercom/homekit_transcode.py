@@ -223,6 +223,13 @@ class Transcoder:
             # A tenth of a second to reorder the packets the relay delivers out
             # of order, then move on. More would only add delay.
             "-max_delay", "100000",
+            # One decoding thread. ffmpeg's default frame threading (4 threads
+            # on a Pi 5) keeps 4 frames in the decoder: measured on a 40517,
+            # every re-encoded frame reached the phone 335-345 ms after it was
+            # fed (p90 up to 538 ms); 69 ms with one thread on the synthetic
+            # stream. 320x240 is nothing for one core. The photo and passive
+            # stream decoders already run this way.
+            "-threads", "1",
             *LOOPBACK_INPUT, "-i", self._sdp,
             "-an", "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
             "-profile:v", "baseline", "-pix_fmt", "yuv420p",

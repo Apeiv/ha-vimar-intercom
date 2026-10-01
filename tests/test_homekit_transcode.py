@@ -122,6 +122,10 @@ def test_the_panel_video_is_read_on_loopback_from_a_private_sdp(monkeypatch):
     assert out[1:] == ("image2pipe", "pipe:1"), "pictures for the Home app on stdout"
     i = seen["args"].index("-i")
     assert seen["args"][i - 2:i] == ("-localaddr", "127.0.0.1")
+    # One decoding thread, as an input option: frame threading kept every frame
+    # ~340 ms behind the panel on a 40517 (#56).
+    j = seen["args"].index("-threads")
+    assert j < i and seen["args"][j + 1] == "1"
     assert seen["mode"] == 0o600 and f"/vimar_intercom_transcode_{t._in_port}.sdp" not in path
     assert f"m=video {t._in_port} " in seen["sdp"]
     assert not os.path.exists(path)
