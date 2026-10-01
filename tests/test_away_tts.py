@@ -106,7 +106,8 @@ def test_senza_testo_o_senza_hass_niente(tts, monkeypatch):
 def hub(monkeypatch):
     h = hub_mod.VimarIntercomHub()
     monkeypatch.setattr(h, "_touch", lambda: None)
-    monkeypatch.setattr(R, "AWAY_MESSAGE_DELAY", 0)
+    # 0 means "the 20 s default" (0 or 20 == 20), so each test slept 20 real seconds.
+    monkeypatch.setattr(R, "AWAY_MESSAGE_DELAY", 0.01)
     monkeypatch.setattr(R, "AWAY_MESSAGE_FILE", "")
     monkeypatch.setattr(R, "AWAY_MESSAGE_TEXT", TESTO)
     monkeypatch.setitem(sip.pending_incoming, "active", True)

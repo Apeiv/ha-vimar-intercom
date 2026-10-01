@@ -26,6 +26,7 @@ import time
 from . import frame_grabber, ring_log
 from . import media_handler as media
 from . import runtime as R
+from .homekit_audio import free_udp_port
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -57,12 +58,17 @@ def video_ready(hub) -> bool:
     return bool(hub.video_active and vp and vp.pkt_count > 0)
 
 
-def parameter_sets() -> tuple[bytes | None, bytes | None]:
+def parameter_sets(panel_uri: str | None = None) -> tuple[bytes | None, bytes | None]:
     # Only the calling panel's own parameters: on a plant with several panels
     # another panel's SPS/PPS would garble the first frames. A panel never
     # seen before costs a slower first picture instead, never a wrong one.
+    # panel_uri: the panel about to be called, before its call has set the
+    # current one (after a restart there is none; before a view, the last
+    # call's panel, maybe another one).
     vp = media.video_proto
-    ps = vp.sps_pps(own_only=True) if vp else None
+    if not vp:
+        return None, None
+    ps = vp.sps_pps_of(media.panel_id(panel_uri)) if panel_uri else vp.sps_pps(own_only=True)
     return ps if ps else (None, None)
 
 
@@ -218,23 +224,6 @@ def last_frame() -> bytes | None:
 
 # ─── audio ───────────────────────────────────────────────────────────────────
 
-def _free_even_port() -> int:
-    """An even UDP port with the next one free too: ffmpeg binds RTP and RTCP."""
-    for _ in range(50):
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
-            probe.bind(("127.0.0.1", 0))
-            port = probe.getsockname()[1] & ~1
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as a, \
-                    socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as b:
-                a.bind(("127.0.0.1", port))
-                b.bind(("127.0.0.1", port + 1))
-            return port
-        except OSError:
-            continue
-    raise OSError("no free UDP port pair for the HomeKit audio tap")
-
-
 _MASK32 = 0xFFFFFFFF
 _PCMU_RATE = 8000
 _SLOT = 0.02            # one PCMU packet, 160 samples
@@ -273,7 +262,7 @@ class AudioTap:
     _SILENCE = b"\xff" * 160
 
     def __init__(self) -> None:
-        self.port = _free_even_port()
+        self.port = free_udp_port()
         fd, self.sdp_path = tempfile.mkstemp(prefix="vimar_intercom_homekit_",
                                              suffix=".sdp")
         with os.fdopen(fd, "w") as f:

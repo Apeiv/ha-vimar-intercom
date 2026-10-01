@@ -119,7 +119,7 @@ def test_40515_il_dominio_locale_viene_dal_record_non_dal_qr(cf, monkeypatch):
     locale con quello riceve 503. Il test di registrazione usa il dominio annunciato."""
     flow, _ = _flow(cf)
     asyncio.run(flow.async_step_zeroconf(_info("192.0.2.20", TXT_40515)))
-    flow._credentials = {"sip_user": "60992", "sip_password": "pw", "sip_domain": CLOUD,
+    flow._credentials = {"sip_user": "60902", "sip_password": "pw", "sip_domain": CLOUD,
                          "local_domain": "127.0.0.1", "cloud_domain": CLOUD, "mac": ""}
     flow._apply_discovered()
     assert flow._credentials["local_domain"] == "192.0.2.20"

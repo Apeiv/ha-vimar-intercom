@@ -64,6 +64,7 @@ python -m pytest tests/test_srtp.py        # one file
 python -m pytest tests -k manifest         # by name
 python -m pytest tests -m media            # real ffmpeg/aiohttp media (needs ffmpeg, aiohttp)
 python -m pytest tests -m browser          # the card in Chromium/WebKit (needs playwright, aiohttp)
+.claude/skills/card-browser-tests/run.sh   # the same, in a disposable Playwright container
 ```
 
 `live`, `media` and `browser` are excluded by default (`addopts` in `pyproject.toml`). Missing
@@ -108,6 +109,10 @@ it is not obvious, a comment with the reason.
 
 ## Safety rules for agents
 
+- Never install anything on the host machine: no system packages, no global `pip install`,
+  no browsers downloaded into `~/.cache`. Dependencies go in a virtualenv or a disposable
+  Docker container (`docker run --rm`). The card's browser tests have a ready-made runner:
+  `.claude/skills/card-browser-tests/run.sh`.
 - Never open the gate or door, never place calls or open views on a real intercom, never run
   `live` tests, unless the owner explicitly asks for that specific action.
 - Never guess SIP commands or actuator tokens: a wrong one can physically open a door.

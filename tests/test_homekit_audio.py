@@ -10,6 +10,7 @@ import base64
 import os
 import socket
 import struct
+import time
 
 import pytest
 
@@ -481,3 +482,66 @@ class TestFirstVoice:
         for _ in range(50):
             b._note_voice(self.frame(5000))
         assert fired == [True]
+
+
+class TestPortPairs:
+    """Every ffmpeg RTP input binds its port and the next one (RTCP)."""
+
+    def test_ports_come_in_even_pairs_that_are_free(self):
+        port = audio.free_udp_port()
+        assert port % 2 == 0
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as a, \
+                socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as b:
+            a.bind(("127.0.0.1", port))
+            b.bind(("127.0.0.1", port + 1))
+
+    def test_a_pair_just_handed_out_is_not_handed_out_again(self, monkeypatch):
+        """The transcoder's and a view's ffmpeg start together, before either has
+        bound its ports: the kernel may suggest the same port twice. One of them
+        got "bind failed: Address in use" on a 40515."""
+        first = audio.free_udp_port()
+        again = iter([first + 1, first])
+        real = audio._ephemeral_port
+        monkeypatch.setattr(audio, "_ephemeral_port", lambda: next(again, None) or real())
+        second = audio.free_udp_port()
+        assert {second, second + 1}.isdisjoint({first, first + 1})
+
+    def test_two_threads_never_get_the_same_pair(self, monkeypatch):
+        """The audio tap picks its port in an executor thread while the transcoder
+        picks on the loop: both could probe the same pair before either reserved
+        it (review of #45). Here the kernel suggests the same port to both, and
+        each pauses between closing its probe and reserving the pair."""
+        import threading
+        import types
+        first = audio.free_udp_port()           # a pair known to be free...
+        audio._RESERVED.pop(first)              # ...and not reserved any more
+
+        class SlowClose(socket.socket):
+            def __exit__(self, *exc):
+                super().__exit__(*exc)
+                time.sleep(0.05)                # the gap before _RESERVED is written
+
+        monkeypatch.setattr(audio, "socket", types.SimpleNamespace(
+            socket=SlowClose, AF_INET=socket.AF_INET, SOCK_DGRAM=socket.SOCK_DGRAM))
+        real, asked = audio._ephemeral_port, []
+
+        def suggest():                          # the same port for the first two probes
+            asked.append(1)
+            return first if len(asked) <= 2 else real()
+
+        monkeypatch.setattr(audio, "_ephemeral_port", suggest)
+        got = []
+        threads = [threading.Thread(target=lambda: got.append(audio.free_udp_port())) for _ in range(2)]
+        threads[0].start()
+        time.sleep(0.07)                        # both probe sockets closed, not yet reserved
+        threads[1].start()
+        for t in threads:
+            t.join(5)
+        assert len(got) == 2 and len(set(got)) == 2, got
+
+    def test_a_reservation_expires(self, monkeypatch):
+        monkeypatch.setattr(audio, "RESERVE_SECONDS", 0.0)
+        first = audio.free_udp_port()
+        monkeypatch.setattr(audio, "_ephemeral_port", lambda: first)
+        time.sleep(0.01)
+        assert audio.free_udp_port() == first

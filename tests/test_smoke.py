@@ -53,5 +53,5 @@ def test_no_credentials_in_const():
 
     from custom_components.vimar_intercom import const
     src = inspect.getsource(const)
-    for bad in ("PWD=", "password=", "60992:"):
+    for bad in ("PWD=", "password=", "HA1="):
         assert bad not in src
