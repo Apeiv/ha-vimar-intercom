@@ -139,6 +139,7 @@ def test_a_viewer_leaving_during_the_hang_up_wait_gets_no_call(hub, monkeypatch)
 def test_a_view_after_a_local_hang_up_does_not_wait_for_the_bye_answer(hub, monkeypatch):
     """The cloud never answers our BYE: do_hangup ends the call locally, then
     waits 5 s for nothing. The view must not wait for that answer."""
+    monkeypatch.setattr(hub_mod.R, "USE_LOCAL_UDP", False)  # the cloud: see test_view_after_hangup
     monkeypatch.setattr(hub_mod, "HANGUP_LOCAL_SETTLE", 0.1)
 
     async def hangup_without_answer():
@@ -461,6 +462,7 @@ def test_async_hangup_returns_once_the_call_ended_locally(hub, monkeypatch):
 
 
 def test_a_view_opening_right_after_async_hangup_waits_for_the_local_end(hub, monkeypatch):
+    monkeypatch.setattr(hub_mod.R, "USE_LOCAL_UDP", False)  # the cloud: see test_view_after_hangup
     monkeypatch.setattr(hub_mod, "HANGUP_LOCAL_SETTLE", 0.05)
     monkeypatch.setattr(sip, "in_call", True)
     events = []

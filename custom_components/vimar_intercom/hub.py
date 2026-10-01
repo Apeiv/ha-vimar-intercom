@@ -43,6 +43,24 @@ HANGUP_SETTLE = 6.0
 HANGUP_LOCAL_SETTLE = 0.5
 # Upper bound for the whole automatic hang-up, BYE answer included.
 HANGUP_BYE_TIMEOUT = 8.0
+# Local UDP only (#41, #44): a panel that has just ended a call can swallow the
+# next INVITE in two ways, seen on a 40507: the Tab's proxy answers 100 Trying
+# and the panel never sends its 180, or the panel rings (180) and never
+# answers. Measured over 35 openings: an INVITE less than 1 s after the
+# previous dialog ended was never answered (8 of 8), 2-3.5 s later about half
+# the time, from 5 s on almost always; a real answer comes 3.2-5.0 s after the
+# INVITE. So a call to the panel waits until LOCAL_UDP_SETTLE after the last
+# dialog (a call that ended, or our own cancelled try), is given up after
+# LOCAL_UDP_RING_TIMEOUT with a 100 and no 180 or after
+# LOCAL_UDP_ANSWER_TIMEOUT without a final answer, and is tried again as long
+# as it is wanted and LOCAL_UDP_CALL_BUDGET (inside /av's 25 s) leaves room.
+# The cloud relay answers at once (100 Trying); there, nothing changes.
+LOCAL_UDP_SETTLE = 5.0
+LOCAL_UDP_ANSWER_TIMEOUT = 6.0      # the slowest real answer measured: 5.0 s
+LOCAL_UDP_RING_TIMEOUT = 3.0
+LOCAL_UDP_CALL_BUDGET = 21.0       # from the first INVITE
+LOCAL_UDP_TAP_LIMIT = 24.0          # from the tap, settle included: inside /av's 25 s
+LOCAL_UDP_MIN_TRY = 5.0             # a try needs room for an answer
 
 # Nomi "umani" degli indirizzi SIP dell'impianto
 SIP_ID_NAMES = {
@@ -137,6 +155,9 @@ class VimarIntercomHub:
         # Registro squilli: aggiornamenti in ordine di richiesta (l'executor non lo garantisce).
         self._ring_log_lock = asyncio.Lock()
         self._auto_ended_at = -1e9  # monotonic: fine dell'ultima chiamata
+        # When the last dialog on the line ended (local UDP: the panel needs a
+        # few seconds before it answers the next INVITE, see LOCAL_UDP_SETTLE).
+        self._dialog_ended_at = -1e9
         self._viewers_left_at = -1e9  # monotonic: l'ultimo spettatore di /av se n'è andato
         self._was_busy = False      # in_call or calling, all'ultimo cambio di stato
         self._photo_task: asyncio.Task | None = None
@@ -147,6 +168,10 @@ class VimarIntercomHub:
         media.request_keyframe = self._request_keyframe  # pacchetto video perso
         self._auto_called = False
         self._auto_gen = 0  # which auto-call is the current one (_do_auto_call)
+        # A panel call waiting to be tried again (_call_panel): the line is
+        # free for 2 s, but a call is coming, for /av and for a new view.
+        self._panel_retry = False
+        self._explicit_gen = 0  # which explicit call or hang-up is the latest
 
         # ─── Statistiche / stato esteso (esposte da sensor.py) ───────────
         self.stats: dict = {
@@ -339,7 +364,7 @@ class VimarIntercomHub:
 
         Shared by stream_opened and call_pending so the two cannot drift.
         """
-        return bool(self._busy_now or sip.ringing() or self._auto_called)
+        return bool(self._busy_now or sip.ringing() or self._auto_called or self._panel_retry)
 
     @property
     def call_coming(self) -> bool:
@@ -479,12 +504,15 @@ class VimarIntercomHub:
         # (→ 486 dalla targa ancora occupata → un altro auto-call al retry).
         busy = self._busy_now
         if self._was_busy and not busy:
-            self._auto_ended_at = time.monotonic()
+            self._auto_ended_at = self._dialog_ended_at = time.monotonic()
             self._video_ended()
         self._was_busy = busy
-        if self._hanging_up and not busy and self._hangup_settle is None:
-            # The automatic hang-up has ended the call locally; its BYE may
-            # still wait for an answer that never comes on the cloud.
+        if self._hanging_up and not busy and self._hangup_settle is None and not R.USE_LOCAL_UDP:
+            # The hang-up has ended the call locally; its BYE may still wait
+            # for an answer that never comes on the cloud. On local UDP the
+            # panel does answer the BYE, and it is busy until it has (#41):
+            # there the guard drops only when the BYE is done
+            # (_hangup_finished), still within HANGUP_SETTLE for a view.
             try:
                 self._hangup_settle = asyncio.get_running_loop().call_later(
                     HANGUP_LOCAL_SETTLE, self._end_hanging_up, self._hangup_done)
@@ -561,13 +589,15 @@ class VimarIntercomHub:
         """
         try:
             # Default di do_call: R.INTERCOM, cioè la targa video (camera_target).
-            ok, msg = await sip.do_call(silence_limit=R.VIEW_KEEPALIVE)
+            ok, msg = await self._call_panel(None, lambda: self._view_still_waits(gen),
+                                             silence_limit=R.VIEW_KEEPALIVE)
             alt = None if ok else self._camera_fallback(msg)
             if alt:
                 _LOGGER.warning(
                     "Video panel %s did not answer (%s): trying %s, the panel "
                     "that last rang", R.CAMERA_TARGET, msg, alt)
-                ok, msg = await sip.do_call(target=sip_uri(alt), silence_limit=R.VIEW_KEEPALIVE)
+                ok, msg = await self._call_panel(sip_uri(alt), lambda: self._view_still_waits(gen),
+                                                 silence_limit=R.VIEW_KEEPALIVE)
                 if ok:
                     self._learn_camera_target(alt)
         except Exception as e:  # noqa: BLE001
@@ -588,6 +618,68 @@ class VimarIntercomHub:
             if gen is None or gen == self._auto_gen:
                 self._auto_called = False
             self._auto_ended_at = time.monotonic()
+
+    async def _call_panel(self, target, still_wanted, **kw) -> tuple[bool, str]:
+        """Call a video panel (None: R.INTERCOM). On local UDP: let the panel
+        settle after the last dialog, and try again a call it swallows (see
+        LOCAL_UDP_SETTLE), while `still_wanted()`. The cloud call is
+        unchanged: at once, 45 s, no retry."""
+        if not R.USE_LOCAL_UDP:
+            return await sip.do_call(target=target, **kw)
+        tapped, started = time.monotonic(), None
+        tries, last_try = 0, -1e9
+
+        def time_left() -> float:
+            now = time.monotonic()
+            return min(LOCAL_UDP_CALL_BUDGET - (now - started), LOCAL_UDP_TAP_LIMIT - (now - tapped))
+        ok, msg = False, "Not wanted any more"
+        while True:
+            if not await self._settle(still_wanted, last_try):
+                return ok, msg
+            if started is None:
+                # The budget counts from the first INVITE, not from the tap: a
+                # settle right after a hang-up (up to 5 s) left no room for a
+                # second try, in the case that needs it (#44, 40507). The tap
+                # limit keeps every try inside /av's 25 s: a call answered after
+                # /av gave up would be one nobody watches.
+                started = time.monotonic()
+            left = time_left()
+            tries += 1
+            ok, msg = await sip.do_call(
+                target=target, answer_timeout=max(1.0, min(LOCAL_UDP_ANSWER_TIMEOUT, left)),
+                ring_timeout=LOCAL_UDP_RING_TIMEOUT, **kw)
+            last_try = time.monotonic()
+            if ok or not msg.startswith(sip.NO_ANSWER) or not still_wanted():
+                return ok, msg
+            left = time_left()
+            if left < LOCAL_UDP_SETTLE + LOCAL_UDP_MIN_TRY:
+                _LOGGER.warning("The panel did not answer (%s) after %d tries in %.0fs: giving up",
+                                msg, tries, last_try - started)
+                return ok, msg
+            _LOGGER.warning("The panel did not answer (%s): trying again in %.0fs",
+                            msg, LOCAL_UDP_SETTLE)
+
+    async def _settle(self, still_wanted, last_try: float) -> bool:
+        """Wait until LOCAL_UDP_SETTLE after the last dialog on the line, or our
+        own last try, whichever is later. Meanwhile a call is coming: /av keeps
+        waiting and a new view does not place its own. False: not wanted any
+        more."""
+        wait = LOCAL_UDP_SETTLE - (time.monotonic() - max(self._dialog_ended_at, last_try))
+        if wait <= 0:
+            return True
+        _LOGGER.info("Panel call in %.1fs: the panel is settling after the last call", wait)
+        self._panel_retry = True
+        try:
+            await asyncio.sleep(wait)
+        finally:
+            self._panel_retry = False
+        return still_wanted()
+
+    def _view_still_waits(self, gen: int | None) -> bool:
+        """This auto-call is still wanted: the newest one, a viewer waiting,
+        and nothing else started on the line meanwhile."""
+        return ((gen is None or gen == self._auto_gen) and self._stream_viewers > 0
+                and self._auto_called and not self._busy_now and not sip.ringing())
 
     def set_persist_callback(self, callback: Callable[[dict], None]) -> None:
         """Who saves the values learned from the plant into the entry."""
@@ -844,7 +936,17 @@ class VimarIntercomHub:
 
     async def async_call(self, target: str | None = None) -> tuple[bool, str]:
         self._auto_called = False
-        return await (sip.do_call(target=sip_uri(target)) if target else sip.do_call())
+        self._explicit_gen += 1
+        uri = sip_uri(target) if target else None
+        if uri is None or uri == R.INTERCOM:
+            # The video panel (the card's "view outside", the call buttons):
+            # the same timeout and single retry as a view's auto-call (#44),
+            # unless the user hangs up or calls again, or a ring starts, meanwhile.
+            gen = self._explicit_gen
+            return await self._call_panel(
+                uri, lambda: gen == self._explicit_gen and not self._busy_now and not sip.ringing())
+        # A flat or the switchboard: a person answers, it may ring for long.
+        return await sip.do_call(target=uri)
 
     def claim_call(self) -> None:
         """Qualcuno parla (microfono sul WS audio): la chiamata è sua. Il messaggio
@@ -912,6 +1014,7 @@ class VimarIntercomHub:
         locally raises, as before.
         """
         self._auto_called = False  # chiusa da noi: niente riaggancio automatico
+        self._explicit_gen += 1   # a panel call waiting for its retry is not retried
         self._cancel_call_timeout()
         ended = asyncio.Event()
         done = self._begin_hanging_up()
