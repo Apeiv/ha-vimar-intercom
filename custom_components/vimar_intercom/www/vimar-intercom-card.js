@@ -551,9 +551,15 @@ const STYLE = `
   }
 `;
 
-const btn = (id, icon, label) =>
-  `<button${id ? ` id="${id}"` : ""} data-icon="${icon}" data-label="${label}"><span class="ic"><ha-icon icon="${icon}" aria-hidden="true"></ha-icon></span>` +
-  `<span class="lbl">${label}</span></button>`;
+// Entity names and icons come from the states of other entities (friendly_name, icon): escape them
+// before they reach innerHTML, and accept only a "prefix:name" icon.
+const esc = (v) => String(v).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+const btn = (id, icon, label) => {
+  icon = /^[a-z0-9_-]+:[a-z0-9_-]+$/.test(icon) ? icon : "mdi:gesture-tap-button";
+  label = esc(label);
+  return `<button${id ? ` id="${id}"` : ""} data-icon="${icon}" data-label="${label}"><span class="ic"><ha-icon icon="${icon}" aria-hidden="true"></ha-icon></span>` +
+    `<span class="lbl">${label}</span></button>`;
+};
 const DRAWER = `<aside class="drawer" id="drawer" aria-label="Ultimi squilli"><div class="hist"></div>
   <div class="empty"><ha-icon icon="mdi:bell-off-outline" aria-hidden="true"></ha-icon><span></span></div></aside>`;
 const SCENE = `<div id="video"></div><img class="still" alt="">

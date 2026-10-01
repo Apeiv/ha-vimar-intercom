@@ -8,6 +8,8 @@ Italian and are kept as they were written.
 
 ### Fixed
 
+- **Card shortcut buttons** no longer inject markup: the `friendly_name` and `icon` of a `button.*`
+  entity are escaped, and an icon not shaped like `prefix:name` falls back to the default.
 - **Card popup layout**: the popup now opens when the card first sees a call already in progress
   (notification "Answer", app reopened after the ring), not only on `ringing` or with the anchor in
   the URL. A period that starts with `calling` (a tap on the card, HomeKit, Alexa) still needs the

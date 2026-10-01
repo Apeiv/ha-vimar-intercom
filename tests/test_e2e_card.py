@@ -1141,6 +1141,43 @@ def test_layout_popup_opens_when_card_starts_in_call(monkeypatch, engine):  # no
 
 
 @pytest.mark.parametrize("engine", ["chromium"], indirect=True)
+def test_shortcut_names_and_icons_cannot_inject_markup(monkeypatch, engine):  # noqa: F811
+    """A button entity's friendly_name and icon go into the shortcut tile: a name with markup or
+    a quote-breaking one must stay text, and a malformed icon falls back to the default."""
+    hostile = [
+        ("button.garage", '<img src=x onerror=window.__xss=1>', "mdi:evil\" onmouseover=\"window.__xss=2"),
+        ("button.garage2", 'x" data-pwn="1" y="', "mdi:ok-icon"),
+    ]
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            await rig.register()
+            async with Card(rig, engine, layout="popup", shortcuts="button.garage,button.garage2") as c:
+                await c.until(IDLE)
+                await c.page.evaluate("""(h) => {
+                  const st = {...card._hass.states};
+                  for (const [id, name, icon] of h) st[id] = { state: "unknown", attributes: { friendly_name: name, icon } };
+                  card.hass = {...card._hass, states: st};
+                }""", hostile)
+                await c.until("card.shadowRoot.querySelectorAll('.sc button').length === 2 && "
+                              "card.shadowRoot.querySelectorAll('.sc button .lbl')[0].textContent.startsWith('<img')")
+                r = await c.page.evaluate("""() => {
+                  const bs = [...card.shadowRoot.querySelectorAll('.sc button')];
+                  return { xss: window.__xss ?? null,
+                    imgs: card.shadowRoot.querySelectorAll('.sc img').length,
+                    labels: bs.map((b) => b.querySelector('.lbl').textContent),
+                    attrs: bs.map((b) => [...b.attributes].map((a) => a.name).sort().join()),
+                    icons: bs.map((b) => b.querySelector('ha-icon').getAttribute('icon')),
+                    iconAttrs: bs.map((b) => [...b.querySelector('ha-icon').attributes].map((a) => a.name).sort().join()) };
+                }""")
+                assert r["xss"] is None and r["imgs"] == 0, r
+                assert r["labels"] == [hostile[0][1], hostile[1][1]], r
+                assert r["attrs"] == ["data-icon,data-label"] * 2, r
+                assert r["icons"] == ["mdi:gesture-tap-button", "mdi:ok-icon"], r
+                assert r["iconAttrs"] == ["aria-hidden,icon"] * 2, r
+    run(s())
+
+
+@pytest.mark.parametrize("engine", ["chromium"], indirect=True)
 def test_editor_visuale(monkeypatch, engine):  # noqa: F811
     """L'editor (getConfigElement, ha-form finto) manda `config-changed` con le sole chiavi
     diverse dai default; la card viva riceve setConfig e cambia layout e nome subito."""
