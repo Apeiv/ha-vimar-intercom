@@ -4,6 +4,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [semver](ht
 Newest entries on top. **Entries are written in English from 1.0.1 onwards**; earlier ones are in
 Italian and are kept as they were written.
 
+## [Unreleased]
+
+### Security
+
+- One crafted SIP datagram could stall Home Assistant for seconds: the `Authorization` pattern in
+  `log_redact` was quadratic on a run of bare line feeds, and every received message goes through it
+  on the event loop. The pattern now matches only spaces and tabs around the header name, and a log
+  line longer than 16 KB is cut once it has been redacted (#46).
+
 ## [1.0.16] - 2026-09-30
 
 ### Added
