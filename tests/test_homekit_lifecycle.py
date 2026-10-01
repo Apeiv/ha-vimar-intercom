@@ -85,6 +85,7 @@ class Hub:
 
     def __init__(self, gate):
         self.gate = gate
+        self.call_coming = True
         self.in_call = True
         self.calling = False
         self.video_active = True
@@ -1673,3 +1674,20 @@ def test_no_early_re_encoder_without_the_panels_parameters(acc, monkeypatch):
     assert "sip:55100@plant.example.test" in asked, "asked for the called panel's"
     assert len(FakeTranscoder.instances) == 1, "the view still gets one, once the video is in"
     _close(a, info)
+
+
+def test_no_early_re_encoder_for_a_call_that_already_failed(acc, monkeypatch):
+    """Review of #48: a placed call failing at once (486, or #41's silent panel)
+    can end before the spawned early start takes its lock. The start must not
+    leave an idle ffmpeg that nothing stops."""
+    a, procs, gate = acc
+    a._smooth = True
+    FakeTranscoder.instances.clear()
+    FakeTranscoder.gate = None
+    monkeypatch.setattr(hk, "Transcoder", FakeTranscoder)
+    monkeypatch.setattr(hk.hkm, "video_ready", lambda _hub: False)
+    monkeypatch.setattr(hk.hkm, "parameter_sets", lambda panel_uri=None: (b"sps", b"pps"))
+    a._hub.call_coming = False                  # the call is already over
+
+    assert asyncio.run(a._ensure_transcoder(early=True)) is None
+    assert FakeTranscoder.instances == []

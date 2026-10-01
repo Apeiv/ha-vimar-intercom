@@ -342,6 +342,12 @@ class VimarIntercomHub:
         return bool(self._busy_now or sip.ringing() or self._auto_called)
 
     @property
+    def call_coming(self) -> bool:
+        """A call of ours is up or being placed (an auto-call too), or a ring
+        is on. Not the open WebSockets that call_pending also counts."""
+        return self._call_in_view
+
+    @property
     def call_pending(self) -> bool:
         """Il video può ancora arrivare: chiamata attiva o in partenza (anche un
         auto-call), squillo, o l'app iOS collegata che chiamerà da sé. /av aspetta

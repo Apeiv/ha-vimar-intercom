@@ -327,7 +327,12 @@ class VimarDoorbell(Camera):
                 hkm.remove_video_sink(tc.feed, tc.video_proto)
                 await tc.stop()
             if (self._closed or not (early or hkm.video_ready(self._hub))
+                    or (early and not self._hub.call_coming)
                     or (session_info is not None and session_info.get("stopping"))):
+                # (early) The placed call already failed (a busy panel, #41's
+                # silent one) and its end came before this task took the lock:
+                # an encoder started now would wait on its port with nobody
+                # left to stop it (review of #48).
                 # The call is over, or the view is: an encoder started now
                 # would read the end of this call, or the next one's start.
                 return None
