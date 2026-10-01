@@ -140,7 +140,8 @@ const mkHass = (status, lastRing = {}) => ({
     if (d === "lock" && !j.ok) throw new Error(j.result);
     return { context: {}, response: j };
   },
-  callWS: async (m) => ({ path: m.path + (m.path.includes("?") ? "&" : "?") + "authSig=x" }),  // come HA: firma anche la query
+  // come HA: firma anche la query; `?signs` numera le firme (x1, x2…) per distinguerle
+  callWS: async (m) => ({ path: m.path + (m.path.includes("?") ? "&" : "?") + "authSig=x" + (QS.has("signs") ? (T.signs = (T.signs || 0) + 1) : "") }),
   callApi: async (method, path) => (await fetch("/api/" + path)).json(),
 });
 let last = "";

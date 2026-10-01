@@ -8,6 +8,10 @@ Italian and are kept as they were written.
 
 ### Fixed
 
+- **Card history photos and clips** no longer stay broken behind an expired signed path: a photo or
+  clip the browser fetches again after the ~30 s signature has expired (HA logged "Login attempt or
+  request with invalid authentication" for `/api/vimar_intercom/rings/*.jpg`) is signed again once
+  and reloaded.
 - **Card voice playback** no longer clicks 50 times a second: the 8 kHz voice is resampled to the
   audio context's rate continuously across packets and low-passed at 3.6 kHz, and the playout
   buffer starts 120 ms ahead and grows by 40 ms at every underrun, up to 300 ms (#53).

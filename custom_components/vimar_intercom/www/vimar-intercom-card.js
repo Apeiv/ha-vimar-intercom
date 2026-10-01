@@ -1014,6 +1014,18 @@ class VimarIntercomCard extends HTMLElement {
     // Tocco ovunque (o Esc) chiude, tranne sui controlli del video.
     this._dlg.onclick = (e) => e.target !== this._clipEl && this._dlg.close();
     this._dlg.onclose = () => { this._clipEl.pause(); this._clipEl.removeAttribute("src"); this._clipEl.load(); };
+    // A signed path expires ~30 s after auth/sign_path. A photo or clip the browser fetches
+    // again later (a purged image shown again on the phone, a clip resumed) gets a 401, which
+    // HA logs as a failed login: the element is signed again, once until it loads.
+    this._root.addEventListener("error", async (e) => {
+      const el = e.target, m = el.src?.match(/\/api\/vimar_intercom\/rings\/(.+?)[?&]authSig=/);
+      if (!m || el._resigned) return;
+      el._resigned = true;
+      const t = el.currentTime;
+      try { el.src = await this._sign(m[1]); } catch { return; }  // HA scollegato: resta com'è
+      if (t) el.currentTime = t;
+    }, true);
+    for (const ev of ["load", "loadeddata"]) this._root.addEventListener(ev, (e) => (e.target._resigned = false), true);
     // Popup chiuso (X, Esc, fuori): la card torna al suo posto, audio chiuso, riaggancio solo se la chiamata è della card.
     this._pop.onclick = (e) => e.target === this._pop && this._pop.close();
     this._pop.onclose = () => {

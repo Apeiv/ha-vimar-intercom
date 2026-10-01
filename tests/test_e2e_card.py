@@ -10,6 +10,7 @@ card con webcodecs=False; il bench e la prova di ripiego stanno in fondo.
 from __future__ import annotations
 
 import asyncio
+import base64
 import re
 import struct
 import time
@@ -543,6 +544,55 @@ def test_clip_nella_cronologia_play_e_video(monkeypatch, engine, tmp_path):  # n
                 await c.until("!!card.shadowRoot.querySelector('.hist button').querySelector('.play')")
                 assert (await c.page.evaluate(js))["rows"][0] == [True, True, False]
                 assert not rig.services and not rig.peer.got(is_("INVITE")) and not (await c.T())["errors"]
+    run(s())
+
+
+PNG_1PX = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=")
+
+
+def test_history_photos_re_signed_after_expiry(monkeypatch, engine, tmp_path):  # noqa: F811
+    """Signed paths expire ~30 s after auth/sign_path; a photo the phone fetched again later
+    got a 401 ("invalid authentication" in HA's log) and stayed broken. Here the first fetch
+    of every photo after the history reloads is refused as expired: thumbnails, the last
+    ring's still and the photo opened from the list all end up loaded, each with a new
+    signature."""
+    for n in ("squillo_20260927_090000.jpg", "squillo_20260927_100000.jpg"):
+        (tmp_path / n).write_bytes(PNG_1PX)
+    ring_log.update_ring_log(str(tmp_path), lambda r: r.append(
+        {"time": "2026-09-27T09:00:00+02:00", "photo": "squillo_20260927_090000.jpg", "outcome": "missed"}))
+    loaded = """[...card.shadowRoot.querySelectorAll('.hist img, .still, #photo img')]
+      .every((i) => i.complete && i.naturalWidth > 0)"""
+
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            monkeypatch.setattr(R, "SNAPSHOT_DIR", str(tmp_path))
+            await rig.register()
+            async with Card(rig, engine, query="&signs") as c:
+                await c.until("card.shadowRoot.querySelectorAll('.hist img').length === 1 && " + loaded)
+                refused, seen = [], set()
+
+                async def expire_first(route):
+                    path = route.request.url.split("?")[0]
+                    if path in seen:
+                        await route.continue_()
+                    else:
+                        seen.add(path)
+                        refused.append(route.request.url)
+                        await route.fulfill(status=401)
+                await c.page.route(re.compile(r"/api/vimar_intercom/rings/[^?]+\.jpg\?"), expire_first)
+                ring_log.update_ring_log(str(tmp_path), lambda r: r.append(
+                    {"time": "2026-09-27T10:00:00+02:00", "photo": "squillo_20260927_100000.jpg", "outcome": "missed"}))
+                rig.hub.stats.update(last_photo="squillo_20260927_100000.jpg", last_photo_v=2)
+                await c.until("card.shadowRoot.querySelectorAll('.hist img').length === 2 && " + loaded)
+                assert len(refused) == 2, refused
+                srcs = await c.page.evaluate(
+                    "[...card.shadowRoot.querySelectorAll('.hist img, .still, #photo img')].map((i) => i.src)")
+                assert not set(srcs) & set(refused), (srcs, refused)
+                await c.page.evaluate("card.shadowRoot.querySelectorAll('.hist button')[0].click()")
+                await c.until("((i) => i.complete && i.naturalWidth > 0)(card.shadowRoot.querySelector('dialog.photo img'))")
+                opened = await c.page.evaluate("card.shadowRoot.querySelector('dialog.photo img').src")
+                assert "squillo_20260927_100000.jpg" in opened and opened not in srcs + refused, (opened, srcs)
+                assert not (await c.T())["errors"]
     run(s())
 
 
