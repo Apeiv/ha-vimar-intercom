@@ -73,8 +73,10 @@ class FakeHub:
         self.calls.append(("door", target, command))
         return True, "opened"
 
-    def fire_ring_callbacks(self):
+    def simulate_ring(self, duration):
         self.rings += 1
+        self.calls.append(("simulate_ring", duration))
+        return True
 
     async def async_find_picg(self, targets, **kw):
         self.calls.append(("find_picg", targets, kw))
@@ -475,7 +477,8 @@ def test_call_services_reach_the_hub_and_report_the_outcome(svc):
     assert svc.run("open_door", target="55003", command="OPEN") == {"ok": True, "result": "opened"}
     assert svc.hub.calls[1:] == [("call", "55002"), ("answer",), ("decline",), ("hangup",),
                                  ("door", "55003", "OPEN")]
-    assert svc.run("simulate_ring") is None and svc.hub.rings == 1
+    assert svc.run("simulate_ring", duration=5.0) == {"ok": True, "result": "Squillo di prova"}
+    assert svc.hub.rings == 1 and svc.hub.calls[-1] == ("simulate_ring", 5.0)
 
 
 def test_the_sip_id_validator_accepts_numbers_and_rejects_the_rest(init):

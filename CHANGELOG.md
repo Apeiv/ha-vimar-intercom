@@ -13,6 +13,12 @@ Italian and are kept as they were written.
   `CONFIGURATION`, `ENTITIES`, `CARD`, `TROUBLESHOOTING`, plus an Italian `HOMEKIT` page. Three statements
   were corrected on the way: the away message entities are admin-only since 1.0.17, the 40515's port 80
   refuses the connection, and how long "Vedi esterno" lasts depends on the plant.
+- `vimar_intercom.simulate_ring` now simulates a whole ring ([#33](../../issues/33) item 14): the
+  state goes to `ringing` (card popup, sensors, binary sensor), the doorbell event and the start
+  webhook fire, and after `duration` seconds (default 20) it ends like an unanswered ring, end
+  webhook included. Before, the end never came and a doorbell switch driven by the webhooks stayed
+  on. Still no SIP traffic: Answer just ends it, the away message never answers it, a real ring
+  replaces it, and it is not written to the ring log or counted in the stats.
 
 ## [1.0.17] - 2026-10-01
 
