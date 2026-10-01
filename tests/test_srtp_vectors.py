@@ -13,7 +13,9 @@ import struct
 from custom_components.vimar_intercom.srtp import (
     SRTCPContext,
     SRTPContext,
+    _aes_cm_keystream,
     _iv_base,
+    _kdf,
     _packet_iv,
 )
 
@@ -68,3 +70,35 @@ def test_the_integer_iv_is_the_byte_by_byte_one():
         reference = bytes(a ^ b for a, b in zip(salt_padded, ssrc_index))
         assert _packet_iv(_iv_base(ctx.salt), ssrc, index) == reference
         assert ctx._compute_iv(ssrc, index) == reference
+
+
+def test_rfc3711_b2_aes_cm_keystream():
+    """RFC 3711 B.2: the 1,044,512-byte keystream segment, the first three
+    blocks and the last three (counters 0xFEFF, 0xFF00, 0xFF01)."""
+    key = bytes.fromhex("2B7E151628AED2A6ABF7158809CF4F3C")
+    iv = _packet_iv(_iv_base(bytes.fromhex("F0F1F2F3F4F5F6F7F8F9FAFBFCFD")), 0, 0)
+    assert iv.hex().upper() == "F0F1F2F3F4F5F6F7F8F9FAFBFCFD0000"
+    ks = _aes_cm_keystream(key, iv, 1044512)
+    assert len(ks) == 65282 * 16
+
+    def block(i):
+        return ks[16 * i:16 * i + 16].hex().upper()
+
+    assert block(0) == "E03EAD0935C95E80E166B16DD92B4EB4"
+    assert block(1) == "D23513162B02D0F72A43A2FE4A5F97AB"
+    assert block(2) == "41E95B3BB0A2E8DD477901E4FCA894C0"
+    assert block(0xFEFF) == "EC8CDF7398607CB0F2D21675EA9EA1E4"
+    assert block(0xFF00) == "362B7C3C6773516318A077D7FC5073AE"
+    assert block(0xFF01) == "6A2CC3787889374FBEB4C81B17BA6C44"
+
+
+def test_rfc3711_b3_key_derivation():
+    """RFC 3711 B.3: cipher key, cipher salt and the full 94-byte auth key."""
+    ctx = SRTPContext(KEY_B64)
+    assert ctx.cipher_key.hex().upper() == "C61E7A93744F39EE10734AFE3FF7A087"
+    assert ctx.salt.hex().upper() == "30CBBC08863D8C85D49DB34A9AE1"
+    assert ctx.auth_key.hex().upper() == "CEBE321F6FF7716B6FD4AB49AF256A156D38BAA4"
+    assert _kdf(MASTER_KEY, MASTER_SALT, 0x01, 94).hex().upper() == (
+        "CEBE321F6FF7716B6FD4AB49AF256A15" "6D38BAA48F0A0ACF3C34E2359E6CDBCE"
+        "E049646C43D9327AD175578EF7227098" "6371C10C9A369AC2F94A8C5FBCDDDC25"
+        "6D6E919A48B610EF17C2041E47403576" "6B68642C59BBFC2F34DB60DBDFB2")
