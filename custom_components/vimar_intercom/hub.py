@@ -58,7 +58,8 @@ HANGUP_BYE_TIMEOUT = 8.0
 LOCAL_UDP_SETTLE = 5.0
 LOCAL_UDP_ANSWER_TIMEOUT = 6.0      # the slowest real answer measured: 5.0 s
 LOCAL_UDP_RING_TIMEOUT = 3.0
-LOCAL_UDP_CALL_BUDGET = 21.0
+LOCAL_UDP_CALL_BUDGET = 21.0       # from the first INVITE
+LOCAL_UDP_TAP_LIMIT = 24.0          # from the tap, settle included: inside /av's 25 s
 LOCAL_UDP_MIN_TRY = 5.0             # a try needs room for an answer
 
 # Nomi "umani" degli indirizzi SIP dell'impianto
@@ -619,13 +620,24 @@ class VimarIntercomHub:
         unchanged: at once, 45 s, no retry."""
         if not R.USE_LOCAL_UDP:
             return await sip.do_call(target=target, **kw)
-        started = time.monotonic()
+        tapped, started = time.monotonic(), None
         tries, last_try = 0, -1e9
+
+        def time_left() -> float:
+            now = time.monotonic()
+            return min(LOCAL_UDP_CALL_BUDGET - (now - started), LOCAL_UDP_TAP_LIMIT - (now - tapped))
         ok, msg = False, "Not wanted any more"
         while True:
             if not await self._settle(still_wanted, last_try):
                 return ok, msg
-            left = LOCAL_UDP_CALL_BUDGET - (time.monotonic() - started)
+            if started is None:
+                # The budget counts from the first INVITE, not from the tap: a
+                # settle right after a hang-up (up to 5 s) left no room for a
+                # second try, in the case that needs it (#44, 40507). The tap
+                # limit keeps every try inside /av's 25 s: a call answered after
+                # /av gave up would be one nobody watches.
+                started = time.monotonic()
+            left = time_left()
             tries += 1
             ok, msg = await sip.do_call(
                 target=target, answer_timeout=max(1.0, min(LOCAL_UDP_ANSWER_TIMEOUT, left)),
@@ -633,7 +645,7 @@ class VimarIntercomHub:
             last_try = time.monotonic()
             if ok or not msg.startswith(sip.NO_ANSWER) or not still_wanted():
                 return ok, msg
-            left = LOCAL_UDP_CALL_BUDGET - (last_try - started)
+            left = time_left()
             if left < LOCAL_UDP_SETTLE + LOCAL_UDP_MIN_TRY:
                 _LOGGER.warning("The panel did not answer (%s) after %d tries in %.0fs: giving up",
                                 msg, tries, last_try - started)

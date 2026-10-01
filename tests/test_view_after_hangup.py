@@ -355,3 +355,54 @@ def test_a_call_that_ends_on_the_line_starts_the_settle_clock(hub, monkeypatch):
     before = hub_mod.time.monotonic()
     hub._on_sip_state_change()
     assert hub._dialog_ended_at >= before
+
+
+def test_a_settle_before_the_first_try_leaves_room_for_a_second(hub, monkeypatch):
+    """#44 on the 40507: the call had to settle 4.9 s after a hang-up, its first try
+    (with a 407 round trip) rang and was never answered, and 21 s counted from the
+    tap left no room for another try. The budget counts from the first INVITE."""
+    monkeypatch.setattr(R, "USE_LOCAL_UDP", True)
+    clock = {"t": 0.0}
+    monkeypatch.setattr(hub_mod, "time", types.SimpleNamespace(monotonic=lambda: clock["t"]))
+    calls = []
+
+    async def settle(still_wanted, last_try):
+        clock["t"] += hub_mod.LOCAL_UDP_SETTLE        # right after a dialog, every time
+        return still_wanted()
+
+    async def do_call(target=None, silence_limit=None, answer_timeout=None, ring_timeout=None):
+        calls.append(answer_timeout)
+        clock["t"] += answer_timeout + 0.5            # rang, no answer, plus a 407 round trip
+        return (False, f"{sip.NO_ANSWER} (6s)") if len(calls) == 1 else (True, "Connesso!")
+
+    monkeypatch.setattr(hub, "_settle", settle)
+    monkeypatch.setattr(sip, "do_call", do_call)
+    ok, _ = asyncio.run(hub.async_call())
+    assert ok and len(calls) == 2, "the second try happens"
+    assert clock["t"] <= hub_mod.LOCAL_UDP_SETTLE + hub_mod.LOCAL_UDP_CALL_BUDGET + 1
+
+
+def test_no_try_runs_past_av_s_wait(hub, monkeypatch):
+    """With the budget counted from the first INVITE, quick "no 180" tries after a
+    settle could leave room for a try ending 26 s after the tap, past /av's 25 s:
+    a call answered then is one nobody watches. Every try ends by the tap limit."""
+    monkeypatch.setattr(R, "USE_LOCAL_UDP", True)
+    clock = {"t": 0.0}
+    monkeypatch.setattr(hub_mod, "time", types.SimpleNamespace(monotonic=lambda: clock["t"]))
+    ends = []
+
+    async def settle(still_wanted, last_try):
+        clock["t"] += hub_mod.LOCAL_UDP_SETTLE
+        return still_wanted()
+
+    async def do_call(target=None, silence_limit=None, answer_timeout=None, ring_timeout=None):
+        quick = len(ends) < 2                    # two "100, no 180", then one that rings
+        clock["t"] += min(ring_timeout, answer_timeout) if quick else answer_timeout
+        ends.append(clock["t"])
+        return False, f"{sip.NO_ANSWER} (6s)"
+
+    monkeypatch.setattr(hub, "_settle", settle)
+    monkeypatch.setattr(sip, "do_call", do_call)
+    ok, _ = asyncio.run(hub.async_call())
+    assert not ok and len(ends) >= 2
+    assert max(ends) < 25, ends              # /av's wait; without the tap limit: 26 s

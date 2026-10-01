@@ -11,7 +11,8 @@ Italian and are kept as they were written.
 - "View outside" opened right after hanging up no longer fails after 25 s on local UDP (#41). The
   view waits for the panel to answer our BYE (at most 6 s) before calling it again. A call to the
   video panel (a view's, the card's "view outside", the call buttons) that the panel leaves
-  unanswered is cancelled and tried again, within 21 s: after 3 s when the panel's proxy said 100
+  unanswered is cancelled and tried again, within 21 s of the first try and 24 s of the tap
+  (inside `/av`'s 25 s): after 3 s when the panel's proxy said 100
   Trying and the panel never rang, else after 6 s. Every try waits until 5 s after the last call
   on the line (or our own cancelled try) ended: a 2-wire panel ignores an INVITE that comes
   sooner. Calls to a flat or the switchboard, and cloud plants, are unchanged. The 487 that ends our own cancelled INVITE is
