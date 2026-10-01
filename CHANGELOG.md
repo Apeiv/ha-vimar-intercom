@@ -4,6 +4,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [semver](ht
 Newest entries on top. **Entries are written in English from 1.0.1 onwards**; earlier ones are in
 Italian and are kept as they were written.
 
+## [Unreleased]
+
+### Fixed
+
+- The visitor's voice clicked on the cloud relay: audio never looked at the RTP sequence number, so a
+  packet lost or reordered on the way was skipped or played out of place. Audio is now put back in
+  order like the video, duplicates are dropped, and a lost packet is filled with the previous 20 ms at
+  half volume. The server keeps at most 200 ms of voice waiting instead of 4 s (#53).
+
 ## [1.0.16] - 2026-09-30
 
 ### Added
