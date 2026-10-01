@@ -20,6 +20,8 @@ plant.
 | Media | **plain RTP**. Offering SRTP does not work: the baresip entrance panel does not answer at all |
 | H.264 | the panel offers and accepts only `packetization-mode=0`; the answer uses the offered parameters |
 | Cloud | not needed |
+| Outgoing view | the panel ends it by itself after exactly 120 s (its BYE, 2 minutes after the 200 OK) |
+| A panel that just ended a call | may swallow the next INVITE: `100 Trying` and no `180`, or `180` and no `200`. A cancel and a new INVITE a few seconds later go through |
 
 ## Due Fili Plus EVO (`planttype=2FV2`)
 

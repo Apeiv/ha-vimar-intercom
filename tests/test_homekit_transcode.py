@@ -122,6 +122,10 @@ def test_the_panel_video_is_read_on_loopback_from_a_private_sdp(monkeypatch):
     assert out[1:] == ("image2pipe", "pipe:1"), "pictures for the Home app on stdout"
     i = seen["args"].index("-i")
     assert seen["args"][i - 2:i] == ("-localaddr", "127.0.0.1")
+    # One decoding thread, as an input option: frame threading kept every frame
+    # ~340 ms behind the panel on a 40517 (#56).
+    j = seen["args"].index("-threads")
+    assert j < i and seen["args"][j + 1] == "1"
     assert seen["mode"] == 0o600 and f"/vimar_intercom_transcode_{t._in_port}.sdp" not in path
     assert f"m=video {t._in_port} " in seen["sdp"]
     assert not os.path.exists(path)
@@ -158,3 +162,90 @@ def test_the_latest_picture_is_kept_across_reads():
         t._feed.close()
         return t.last_jpeg
     assert asyncio.run(scenario()) == two
+
+
+def test_a_deferred_start_feeds_nothing_until_begin(monkeypatch):
+    """#48: an encoder warmed up before the call's video takes no live packet;
+    begin() gives it the group in sequence order first, then the live stream."""
+    import asyncio
+
+    async def spawn(*_a, **_kw):
+        return FakeFfmpeg()
+
+    monkeypatch.setattr(tc.asyncio, "create_subprocess_exec", spawn)
+    monkeypatch.setattr(tc, "port_bound", lambda _port: True)
+    group = [rtp(b"\x67" + b"\x00" * 4), rtp(b"\x68" + b"\x00" * 2), rtp(b"\x65" + b"\x00" * 8)]
+    live = rtp(b"\x41" + b"\x00" * 6)
+    attached = []
+
+    async def scenario():
+        t = tc.Transcoder(None, None)
+        sent = []
+        t._send = sent.append
+        assert await t.start(lambda: ([], group), on_ready=lambda: attached.append(1), defer=True)
+        t.feed(live)                              # a live packet before begin: ignored
+        early = (list(sent), t.begun, list(attached))
+        t.begin()
+        t.feed(live)
+        t.begin()                                 # once only
+        await t.stop()
+        return early, sent
+
+    (early_sent, early_begun, early_attached), sent = asyncio.run(scenario())
+    assert early_sent == [] and not early_begun and early_attached == []
+    assert sent == group + [live], "the group in order first, then the live stream"
+    assert attached == [1]
+
+
+def test_the_frame_delay_is_measured_from_feed_to_encoder_output(monkeypatch):
+    """How far behind the panel the re-encoded video runs (#56): input frames by
+    their RTP timestamp relative to the first one fed, output frames likewise
+    (-fps_mode passthrough keeps them), matched on the output frame's last packet."""
+    import struct as st
+
+    def pkt(ts, marker=False):
+        return st.pack("!BBHII", 0x80, (0x80 if marker else 0) | 96, 1, ts, 0x1234) + b"\x41\x00"
+
+    clock = {"t": 100.0}
+    monkeypatch.setattr(tc.time, "monotonic", lambda: clock["t"])
+    t = tc.Transcoder(None, None)
+    t._feed.close()
+    t._feed = type("F", (), {"sendto": lambda *_a: None})()
+    t._send(pkt(9000))                 # frame 0 fed at 100.00
+    clock["t"] = 100.066
+    t._send(pkt(15000))                # frame 1 fed at 100.066
+    clock["t"] = 100.30
+    t._from_encoder(pkt(777, marker=True), ("127.0.0.1", 1))    # frame 0 out: 300 ms
+    clock["t"] = 100.40
+    t._from_encoder(pkt(777 + 6000), ("127.0.0.1", 1))          # not its last packet
+    t._from_encoder(pkt(777 + 6000, marker=True), ("127.0.0.1", 1))  # frame 1 out: 334 ms
+    assert [round(d * 1000) for d in t.frame_delays] == [300, 334]
+    assert t.delay_summary() == ", frame delay median 334 ms (p90 334 ms, 2 frames)"
+    assert tc.Transcoder(None, None).delay_summary() == ""
+
+
+def test_the_frame_delay_matches_the_panels_irregular_timestamps(monkeypatch):
+    """Field test (#56): the encoder rounds its timestamps to its 15 fps clock
+    (exact 6000-tick steps), the panel's are a little irregular. Exact matching
+    measured one frame per view; the nearest input frame within half a frame
+    is the one."""
+    import struct as st
+
+    def pkt(ts, marker=False):
+        return st.pack("!BBHII", 0x80, (0x80 if marker else 0) | 96, 1, ts, 0x1234) + b"\x41\x00"
+
+    clock = {"t": 0.0}
+    monkeypatch.setattr(tc.time, "monotonic", lambda: clock["t"])
+    t = tc.Transcoder(None, None)
+    t._feed.close()
+    t._feed = type("F", (), {"sendto": lambda *_a: None})()
+    panel = [0, 5940, 12090, 17950, 24060]           # irregular, about 6000 apart
+    for i, ts in enumerate(panel):
+        clock["t"] = i * 0.066
+        t._send(pkt(50000 + ts))
+    for i in range(len(panel)):
+        clock["t"] = i * 0.066 + 0.3                  # each frame out 300 ms later
+        t._from_encoder(pkt(9 + i * 6000, marker=True), ("127.0.0.1", 1))
+    assert [round(d * 1000) for d in t.frame_delays] == [300] * 5
+    t._from_encoder(pkt(9 + 40 * 6000, marker=True), ("127.0.0.1", 1))   # nothing near: no sample
+    assert len(t.frame_delays) == 5

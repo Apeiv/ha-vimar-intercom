@@ -1372,3 +1372,64 @@ def test_websocket_video_caduto_di_continuo_riapre_con_attesa_crescente(monkeypa
                 await asyncio.sleep(1.5)
                 assert (await c.T())["ws"] == ws_n, "il player chiuso non deve riaprire"
     run(s())
+
+
+# ─── Fill / Fit (#42) ────────────────────────────────────────────────────────
+
+FIT_MODE = "card._videoBox.firstElementChild?.cfg?.fit_mode"
+
+
+@pytest.mark.parametrize("engine", ["chromium"], indirect=True)
+def test_fill_fit_reaches_home_assistants_picture_card(monkeypatch, engine):  # noqa: F811
+    """#42: without WebCodecs the live picture is HA's picture-entity card, whose <video>
+    sits in its own shadow DOM where our object-fit cannot reach. The choice goes in as
+    its fit_mode, and a toggle rebuilds the card. The button stays: the video's shape is
+    not known on this path."""
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            await rig.register()
+            async with Card(rig, engine, webcodecs=False) as c:
+                await c.until(IDLE)
+                rig.state_override = "ringing"
+                await c.until("info().video === 'live'", 3)
+                assert await c.page.evaluate(FIT_MODE) == "contain"
+                await c.page.evaluate("card._fit.click()")
+                await c.until(f"{FIT_MODE} === 'cover'", 3)
+                assert await c.page.evaluate("card._videoBox.firstElementChild.cfg.camera_view") == "live"
+                assert not await c.page.evaluate("card._card.hasAttribute('data-fit-same')")
+                assert not rig.services and not (await c.T())["errors"]
+                assert not rig.peer.got(is_("INVITE"))
+    run(s())
+
+
+@pytest.mark.parametrize("engine", ["chromium"], indirect=True)
+def test_fill_fit_is_hidden_while_video_and_box_have_the_same_shape(monkeypatch, engine):  # noqa: F811
+    """#42: the panel's 320x240 video in the default 4:3 box looks the same filled or
+    fitted, so the button would seem to do nothing: it is hidden. A box of another shape
+    (popup, overlay, a rotated phone) brings it back."""
+    if not hm.FFMPEG:
+        pytest.skip("serve ffmpeg per il video della targa finta")
+
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            await rig.register()
+
+            async def on_invite(peer, inv):
+                peer.reply(inv, 100, "Trying")
+                peer.pending_invite = None
+                peer.reply(inv, 200, "OK", body=peer.sdp())
+                rig.start_media(inv.body)
+            rig.peer.on_invite = on_invite
+
+            async with Card(rig, engine) as c:
+                await c.until(IDLE)
+                await c.tap("view")
+                await c.until("info().player?.frames > 0", 8)
+                shown = "getComputedStyle(card.shadowRoot.querySelector('#fit')).display !== 'none'"
+                await c.until("card._card.hasAttribute('data-fit-same')", 3)
+                assert not await c.page.evaluate(shown)
+                await c.page.evaluate("card._videoBox.style.height = '60px'")    # a wide, flat box
+                await c.until("!card._card.hasAttribute('data-fit-same')", 3)
+                assert await c.page.evaluate(shown)
+                assert not (await c.T())["errors"]
+    run(s())
