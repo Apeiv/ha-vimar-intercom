@@ -11,8 +11,10 @@ import types
 import pytest
 from harness.web import Request, load_views
 
+from custom_components.vimar_intercom import av_stream as av_stream_mod
 from custom_components.vimar_intercom import media_handler as media
 from custom_components.vimar_intercom import ring_log, runtime
+from custom_components.vimar_intercom import sip_client as sip
 
 
 class ViewHub:
@@ -208,7 +210,7 @@ def test_call_success_is_broadcast(views, monkeypatch):
 def test_call_while_already_in_call_tells_the_client_at_once(views, monkeypatch):
     hub = ViewHub()
     hub.results["call"] = (False, "busy")
-    monkeypatch.setattr(views.sip, "in_call", True)
+    monkeypatch.setattr(sip, "in_call", True)
     got = _action(views, monkeypatch, hub, {"action": "call"})
     assert got[0]["type"] == "call_started" and got[0]["msg"] == "Already in call"
 
@@ -216,15 +218,15 @@ def test_call_while_already_in_call_tells_the_client_at_once(views, monkeypatch)
 def test_call_while_calling_waits_for_the_connect(views, monkeypatch):
     hub = ViewHub()
     hub.results["call"] = (False, "busy")
-    monkeypatch.setattr(views.sip, "in_call", False)
-    monkeypatch.setattr(views.sip, "calling", True)
+    monkeypatch.setattr(sip, "in_call", False)
+    monkeypatch.setattr(sip, "calling", True)
     assert _action(views, monkeypatch, hub, {"action": "call"}) == []
 
 
 def test_call_failure_and_exception_are_errors(views, monkeypatch):
     hub = ViewHub()
-    monkeypatch.setattr(views.sip, "in_call", False)
-    monkeypatch.setattr(views.sip, "calling", False)
+    monkeypatch.setattr(sip, "in_call", False)
+    monkeypatch.setattr(sip, "calling", False)
     hub.results["call"] = (False, "486 Busy")
     assert _action(views, monkeypatch, hub, {"action": "call"}) == [{"type": "error", "msg": "486 Busy"}]
     hub.results["call"] = RuntimeError("socket closed")
@@ -301,7 +303,7 @@ def test_register_reports_success_failure_and_errors(views, monkeypatch):
         if isinstance(r, Exception):
             raise r
         return r
-    monkeypatch.setattr(views.sip, "do_register", do_register)
+    monkeypatch.setattr(sip, "do_register", do_register)
     hub = ViewHub()
     assert _action(views, monkeypatch, hub, {"action": "register"}) == [
         {"type": "registered", "msg": "SIP registered", "registered": True, "in_call": False}]
@@ -352,7 +354,7 @@ def test_reconnect_reports_its_outcome(views, monkeypatch):
         if isinstance(r, Exception):
             raise r
         return r
-    monkeypatch.setattr(views.sip, "reconnect", reconnect)
+    monkeypatch.setattr(sip, "reconnect", reconnect)
     hub = ViewHub()
     assert _action(views, monkeypatch, hub, {"action": "reconnect"})[0]["msg"] == "Reconnected"
     assert _action(views, monkeypatch, hub, {"action": "reconnect"})[0]["msg"] == "Reconnect failed"
@@ -454,8 +456,8 @@ def av_stream(views, monkeypatch):
 
     async def unsubscribe(q):
         state.unsubscribed.append(q)
-    monkeypatch.setattr(views.av_stream, "av_subscribe", subscribe)
-    monkeypatch.setattr(views.av_stream, "av_unsubscribe", unsubscribe)
+    monkeypatch.setattr(av_stream_mod, "av_subscribe", subscribe)
+    monkeypatch.setattr(av_stream_mod, "av_unsubscribe", unsubscribe)
     return state
 
 

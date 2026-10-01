@@ -311,7 +311,7 @@ def test_la_serratura_non_fissa_un_indirizzo():
 
 def test_open_door_senza_target_non_ripiega_sull_sga():
     """Con default = SGA il servizio mandava sempre al 61000 su un 2FV2."""
-    src = (COMPONENT / "__init__.py").read_text(encoding="utf-8")
+    src = (COMPONENT / "services.py").read_text(encoding="utf-8")
     blocco = src.split("OPEN_DOOR_SCHEMA = vol.Schema({", 1)[1].split("})", 1)[0]
     assert 'vol.Optional("target"):' in blocco and "default=_default_sga_target" not in blocco
     yaml = (COMPONENT / "services.yaml").read_text(encoding="utf-8")
@@ -322,7 +322,7 @@ def test_open_door_senza_target_non_ripiega_sull_sga():
 def test_open_door_accetta_open_e_open_2f_ma_non_altri_message():
     """`command: OPEN` (la colonna MSG dell'attuatore porta) e `OPEN_2F` passano;
     un MESSAGE qualsiasi no, il servizio è aperto a ogni utente."""
-    src = (COMPONENT / "__init__.py").read_text(encoding="utf-8")
+    src = (COMPONENT / "services.py").read_text(encoding="utf-8")
     blocco = src.split("OPEN_DOOR_SCHEMA = vol.Schema({", 1)[1]
     pattern = re.search(r'"command".*vol\.Match\(r"([^"]+)"\)', blocco).group(1)
     for ok in ("OPEN", "OPEN_2F", "OPEN_3F"):

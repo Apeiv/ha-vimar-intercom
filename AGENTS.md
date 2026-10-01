@@ -33,8 +33,9 @@ All in `custom_components/vimar_intercom/`.
   continuous re-encoded stream (standby image when idle) for Scrypted/go2rtc/Frigate.
 - `frame_grabber.py`: per-call ffmpeg keeping the latest JPEG, plus the MP4 ring clip.
   `ring_log.py` stores ring photos/clips and the log the card reads.
-- `__init__.py`: entry setup/teardown, services, HTTP views (`/api/vimar_intercom/av`,
-  `audio_ws`, `debug`, `rings`), static path for the card.
+- `__init__.py`: entry setup/teardown, static path for the card. `services.py`: the
+  `vimar_intercom.*` services. `views.py`: the HTTP views (`/api/vimar_intercom/av`,
+  `audio_ws`, `debug`, `rings`).
 - `config_flow.py`: config flow (QR, manual, zeroconf `_eipvdes._tcp`) with transport probe,
   and the options flow (network, settings, phonebook fetch/import from intercom or cloud).
 - `runtime.py`: module-wide settings (`R.*`) filled by `configure(entry.data)` at setup;

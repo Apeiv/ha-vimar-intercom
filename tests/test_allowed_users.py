@@ -6,6 +6,7 @@ import pytest
 from harness.web import Request, load_views, make_hass
 
 from custom_components.vimar_intercom import runtime
+from custom_components.vimar_intercom import views as views_mod
 
 
 class _NotAllowed(Exception):
@@ -26,7 +27,7 @@ def _req(admin=False, uid="u1"):
 ])
 def test_rings_solo_agli_utenti_ammessi(monkeypatch, hub, allowed, admin, uid, ok):
     views = load_views(monkeypatch)
-    monkeypatch.setattr(views, "Unauthorized", _NotAllowed)
+    monkeypatch.setattr(views_mod, "Unauthorized", _NotAllowed)
     monkeypatch.setattr(runtime, "ALLOWED_USERS", allowed)
     monkeypatch.setattr(runtime, "SNAPSHOT_DIR", "")
     monkeypatch.setattr(views.web, "json_response", lambda d: d, raising=False)
