@@ -833,11 +833,19 @@ class FakeTranscoder:
     def running(self):
         return not self.stopped
 
-    async def start(self, _backlog, on_ready=None):
+    async def start(self, _backlog, on_ready=None, defer=False):
         if FakeTranscoder.gate:
             await FakeTranscoder.gate.wait()
-        on_ready()
+        self._on_ready, self.begun, self.begins = on_ready, False, 0
+        if not defer:
+            self.begin()
         return True
+
+    def begin(self):
+        if not self.begun:
+            self.begun = True
+            self.begins += 1
+            self._on_ready()
 
     def feed(self, _p):
         pass
@@ -1721,4 +1729,37 @@ def test_no_early_re_encoder_during_a_ring(acc, monkeypatch):
 
     assert asyncio.run(scenario()) == 0
     assert len(FakeTranscoder.instances) == 1
+    _close(a, info)
+
+
+def test_the_early_re_encoder_starts_from_the_group_in_order(acc, monkeypatch):
+    """Field test on 5G (#48): fed live from the first packet, the early encoder
+    lost one the relay delivered out of order ("RTP: dropping old packet received
+    too late"), its first keyframe was broken and the view fell back to the
+    panel's next keyframe (3.6 s). It only warms up early; the view begins it,
+    from the group replayed in sequence order, when its video is in."""
+    a, procs, gate = acc
+    a._smooth = True
+    FakeTranscoder.instances.clear()
+    FakeTranscoder.gate = None
+    monkeypatch.setattr(hk, "Transcoder", FakeTranscoder)
+    video = {"in": False}
+    monkeypatch.setattr(hk.hkm, "video_ready", lambda _hub: video["in"])
+    monkeypatch.setattr(hk.hkm, "parameter_sets", lambda panel_uri=None: (b"sps", b"pps"))
+    info = session()
+
+    async def scenario():
+        gate["open"].set()
+        a._hub.in_call = a._hub.video_active = False
+        start = asyncio.create_task(a.start_stream(info, {}))
+        await asyncio.sleep(0.05)
+        tc = FakeTranscoder.instances[0]
+        before = (tc.begun, list(a.sinks))
+        a._hub.in_call = a._hub.video_active = video["in"] = True
+        assert await start
+        return tc, before
+
+    tc, (begun_early, sinks_early) = asyncio.run(scenario())
+    assert not begun_early and tc.feed not in sinks_early, "warmed up, not fed"
+    assert tc.begun and tc.begins == 1 and tc.feed in a.sinks
     _close(a, info)

@@ -320,6 +320,10 @@ class VimarDoorbell(Camera):
             gen = self._call_gen
             tc = self._transcoder
             if tc and tc.running and tc.generation == gen:
+                if not early and not tc.begun:
+                    # Warmed up before the call's video (early): it starts from
+                    # the group in sequence order now, as any encoder does.
+                    tc.begin()
                 return tc
             if tc:
                 # Dead, or another call's: detach it and close its sockets first.
@@ -351,7 +355,7 @@ class VimarDoorbell(Camera):
                 hkm.add_video_sink(tc.feed)
 
             try:
-                ok = await tc.start(hkm.gop_for_direct_video, on_ready=attach)
+                ok = await tc.start(hkm.gop_for_direct_video, on_ready=attach, defer=early)
             except BaseException:
                 # Cancelled (or failed) with ffmpeg possibly running already.
                 hkm.remove_video_sink(tc.feed, tc.video_proto)
