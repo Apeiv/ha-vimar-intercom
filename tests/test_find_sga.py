@@ -218,3 +218,29 @@ def test_reply_senza_picg_non_marca_tardive_le_sonde_successive(monkeypatch, hub
     r = asyncio.run(hub.async_find_picg(["55001", "55002", "55003"], reply_wait=0.2, delay=0.01))
     assert r["picg"] is None
     assert not any(p.get("late_reply") for p in r["probes"][1:])
+
+
+# ─── 202 Accepted dal relay cloud (#14) ──────────────────────────────────────
+
+def test_202_del_relay_e_queued_non_exists(monkeypatch, hub):
+    """Sul 40515 in cloud di #14 il relay risponde 202 dopo ~15 s e nessuna reply segue:
+    il messaggio è stato accettato ma non consegnato, non è «esiste ma non è il PICG»."""
+    _impianto(monkeypatch, hub, {"55001": "OK (202)", "60001": "OK (200)"}, replica_da=None)
+    r = asyncio.run(hub.async_find_picg(
+        ["55001", "60001"], probe="GET_INIT_STATUS", reply_wait=1, delay=0.01))
+    assert r["picg"] is None
+    assert [p["outcome"] for p in r["probes"]] == ["queued", "exists"]
+
+
+def test_202_seguito_dalla_reply_resta_replied(monkeypatch, hub):
+    _impianto(monkeypatch, hub, {"60001": "OK (202)"}, replica_da="60001")
+    r = asyncio.run(hub.async_find_picg(["60001"], probe="GET_INIT_STATUS", reply_wait=1, delay=0.01))
+    assert r["picg"] == "60001" and r["probes"][0]["outcome"] == "replied"
+
+
+@pytest.mark.parametrize("ok, msg, atteso", [
+    (True, "OK (202)", "queued"), (True, "OK (200)", "exists"),
+    (False, "Errore: 404", "absent"), (False, "Timeout", "no_response"), (False, "Errore: 486", "error"),
+])
+def test_probe_outcome(ok, msg, atteso):
+    assert hub_mod.VimarIntercomHub._probe_outcome(ok, msg) == atteso

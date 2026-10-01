@@ -8,6 +8,50 @@ Italian and are kept as they were written.
 
 ### Fixed
 
+- "View outside" opened right after hanging up no longer fails after 25 s on local UDP (#41). The
+  view waits for the panel to answer our BYE (at most 6 s) before calling it again. A call to the
+  video panel (a view's, the card's "view outside", the call buttons) that the panel leaves
+  unanswered is cancelled and tried again, within 21 s of the first try and 24 s of the tap
+  (inside `/av`'s 25 s): after 3 s when the panel's proxy said 100
+  Trying and the panel never rang, else after 6 s. Every try waits until 5 s after the last call
+  on the line (or our own cancelled try) ended: a 2-wire panel ignores an INVITE that comes
+  sooner. Calls to a flat or the switchboard, and cloud plants, are unchanged. The 487 that ends our own cancelled INVITE is
+  logged at DEBUG, and `/av`'s "call not established" says how long it really waited.
+- The card's Fill/Fit button (#42). It is hidden while the video and its box have the same shape
+  (a 4:3 panel in the default 4:3 box), where filling and fitting draw the same picture and the
+  button seemed to do nothing. When the card falls back to Home Assistant's picture card (no
+  WebCodecs, or the card's player failed), the choice now reaches it as `fit_mode`.
+- In cloud mode, finding the local IP resolved the proxy's name on the event loop, at setup and at
+  every reconnect: with the network down (Home Assistant starting before the router) that DNS
+  lookup froze every integration for seconds. It runs in the executor now.
+- HomeKit: two ffmpegs starting together (the re-encoder and a view) could be handed overlapping
+  loopback ports, and one logged "bind failed: Address in use". Every ffmpeg RTP input now gets an
+  even port with the next one free (RTCP), and a pair handed out is not handed out again for 10 s.
+
+### Changed
+
+- SRTP costs a quarter less per packet (28 µs instead of 38 µs for a video packet on a Raspberry
+  Pi 5): the IV is one integer XOR, the AES-CTR cipher is set up without a Counter object, and the
+  HMAC is copied from one keyed once. The bytes on the wire are the same (known-answer tests).
+- The voice to the panel (the card's microphone, HomeKit's Talk, the away message) is μ-law encoded
+  through a lookup table: 13 µs instead of 113 µs per 20 ms packet on a Raspberry Pi 5, the same
+  bytes, on the event loop that also carries the call's video.
+- HomeKit views open faster. The view's audio no longer waits for the video path (re-encoder and
+  keyframe included), and with Smoother video on, the re-encoder starts while the view's call is
+  still connecting instead of after its video arrives.
+### Security
+
+- One crafted SIP datagram could stall Home Assistant for seconds: the `Authorization` pattern in
+  `log_redact` was quadratic on a run of bare line feeds, and every received message goes through it
+  on the event loop. The pattern now matches only spaces and tabs around the header name, and a log
+  line longer than 16 KB is cut once it has been redacted (#46).
+- A device on the local network could change the intercom's address in Home Assistant by announcing
+  the Tab's MAC (which the Tab publishes) over mDNS with another address: REGISTER, door commands
+  and calls then went there. A new address is now offered only when it is a private IPv4 address that
+  the record announces as its own, and applied only after you confirm it under Discovered (#46).
+- `find_sga` reports a `202 Accepted` as `queued` instead of `exists`: the cloud relay accepted the
+  probe but no device took it, so nothing at that address can answer over the cloud (#14). The
+  service's `sip_timeout` now goes up to 30 s, because over the relay that `202` can take ~15 s.
 - The visitor's voice clicked on the cloud relay: audio never looked at the RTP sequence number, so a
   packet lost or reordered on the way was skipped or played out of place. Audio is now put back in
   order like the video, duplicates are dropped, and a lost packet is filled with the previous 20 ms at
@@ -260,9 +304,12 @@ Documentation:
 
 ### Added
 
-- Do Not Disturb and Voicemail switches are unavailable while not registered, without an apartment
-  intercom address, or until the Tab has reported their state (they used to show a guess). Protocol
-  ported from noiseheroes-lab/ha-vimar-intercom by Luca Lo Tito (MIT).
+- Do Not Disturb and Voicemail switches are available as soon as the link is registered. Until the
+  Tab reports their state they show it as unknown (or the state it confirmed before a restart)
+  instead of a guess, so they stay usable on plants that never announce it (#9). Protocol ported
+  from noiseheroes-lab/ha-vimar-intercom by Luca Lo Tito (MIT). *Corrected on 2026-10-01: this
+  entry first said the switches stay unavailable until the Tab has reported their state; the
+  released code never behaved that way.*
 - **Decline** button (only while it rings) and `vimar_intercom.decline` service: answers `603 Decline`, so the
   whole house stops ringing, as in the official app. Protocol ported from
   noiseheroes-lab/ha-vimar-intercom by Luca Lo Tito (MIT).

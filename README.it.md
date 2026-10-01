@@ -95,7 +95,11 @@ Impostazioni → Dispositivi e servizi → Aggiungi integrazione → **Vimar Int
 citofono e il dominio SIP locale arrivano dal Tab stesso. Conta sugli impianti il cui QR dice
 `domain=127.0.0.1`, come un 40515: per la registrazione locale si usa il dominio annunciato dal Tab
 (il suo indirizzo) invece di quello cloud. Un citofono già configurato si riconosce dal MAC, e se il
-DHCP gli dà un altro indirizzo l'integrazione lo segue (solo in modalità locale). Dove l'mDNS è
+DHCP gli dà un altro indirizzo Home Assistant propone quello nuovo tra i dispositivi trovati e lo usa
+quando confermi (solo in modalità locale). La conferma serve perché chiunque nella rete locale può
+annunciarsi con il MAC del Tab. Se premi Ignora per sbaglio, anche i cambi successivi vengono
+ignorati: Impostazioni → Dispositivi e servizi → Ignorati → Vimar Intercom → Smetti di ignorare. Dove
+l'mDNS è
 filtrato non cambia nulla: si aggiunge a mano come prima.
 
 ### Opzioni (dopo l'aggiunta)
@@ -342,8 +346,11 @@ Se un impianto lascia `GET_NICKS` senza risposta SIP (segnalato su un 40515 in c
 `GET_INIT_STATUS` riceveva `200`), usa `probe: get_init_status`: dà i tre esiti puliti, e l'indirizzo la
 cui sonda provoca la `GET_INIT_STATUS_REPLY` è il PICG; ma all'SGA vero fa comparire «Configurazione
 appartamento modificata» sull'app a ogni invio. `sip_timeout` (default 8 s) limita l'attesa della
-risposta SIP di ogni sonda. La risposta elenca ogni sonda con il suo esito: `absent` (404), `exists`
-(accettata, nessuna reply), `replied`, `no_response`, `error`; più `picg` e i nickname dichiarati.
+risposta SIP di ogni sonda; via relay cloud usa 20, perché il suo `202` può arrivare dopo ~15 s. La
+risposta elenca ogni sonda con il suo esito: `absent` (404), `exists` (accettata, nessuna reply),
+`queued` (`202`: il relay cloud ha accettato il messaggio ma nessun dispositivo l'ha preso, quindi via
+cloud a quell'indirizzo non risponde nessuno), `replied`, `no_response`, `error`; più `picg` e i
+nickname dichiarati.
 
 ---
 

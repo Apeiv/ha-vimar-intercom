@@ -129,7 +129,6 @@ def _row_to_actuator(r: sqlite3.Row) -> dict:
     name = _get(r, "NAME") or "Attuatore"
     msg = _get(r, "MSG")
     gid_pe = _get(r, "GID_PE")
-    att_id = _get(r, "ATT_ID")
     icon = _norm_icon(_get(r, "ICON"))
     # Il comando va a GID_PE (destinatario dell'attuatore). Solo se GID_PE manca
     # del tutto si ricade su PHONEBOOK.AUTO. (ATT_ID è l'id del modulo, non il target.)

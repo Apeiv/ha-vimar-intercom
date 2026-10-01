@@ -89,15 +89,63 @@ def test_citofono_nuovo_chiede_conferma_con_i_dati_del_record(cf):
 
 
 def test_gia_configurato_col_mac_del_qr_aggiorna_l_ip_e_ricarica(cf):
-    """Il MAC nel QR ha un'altra forma: si confronta normalizzato. Il DHCP ha cambiato l'IP."""
+    """Il MAC nel QR ha un'altra forma: si confronta normalizzato. Il DHCP ha cambiato l'IP:
+    the new address is offered, and applied only once the user confirms (#46)."""
     entry = _Entry({"mac": "aabbccddeeff", "local_proxy": "192.0.2.99", "use_local_udp": True},
                    {"local_proxy": "192.0.2.99"})
     flow, calls = _flow(cf, [entry])
     r = asyncio.run(flow.async_step_zeroconf(_info("192.0.2.10", TXT_40507)))
-    assert r == {"type": "abort", "reason": "already_configured"}
+    assert r["type"] == "form" and r["step_id"] == "zeroconf_moved"
+    assert r["description_placeholders"] == {"old": "192.0.2.99", "new": "192.0.2.10"}
+    assert calls["update"] == [] and calls["reload"] == []
+    assert calls["unique_id"] == "AABBCCDDEEFF"
+    r = asyncio.run(flow.async_step_zeroconf_moved({}))
+    assert r == {"type": "abort", "reason": "address_updated"}
     data, options = calls["update"][0]
     assert data["local_proxy"] == "192.0.2.10" and options["local_proxy"] == "192.0.2.10"
     assert calls["reload"] == ["e1"]
+
+
+# ─── #46: nothing in an mDNS record is authenticated, the MAC is public ─────
+
+def _moved_entry():
+    return _Entry({"mac": "AA-BB-CC-DD-EE-FF", "local_proxy": "192.0.2.99", "use_local_udp": True})
+
+
+def test_an_address_in_the_txt_that_is_not_the_sender_is_ignored(cf):
+    """Anyone on the LAN can announce the Tab's MAC with `proxy=` pointing elsewhere."""
+    txt = {**TXT_40507, b"proxy": b"192.0.2.66"}
+    flow, calls = _flow(cf, [_moved_entry()])
+    r = asyncio.run(flow.async_step_zeroconf(_info("192.0.2.10", txt)))
+    assert r == {"type": "abort", "reason": "already_configured"}
+    assert calls["update"] == [] and calls["reload"] == []
+
+
+@pytest.mark.parametrize("address", ["8.8.8.8", "1.1.1.1", "169.254.1.10", "fd00::10"])
+def test_only_a_private_ipv4_address_is_offered(cf, address):
+    txt = {**TXT_40507, b"proxy": address.encode()}
+    flow, calls = _flow(cf, [_moved_entry()])
+    r = asyncio.run(flow.async_step_zeroconf(_info(address, txt)))
+    assert r == {"type": "abort", "reason": "already_configured"}
+    assert calls["update"] == []
+
+
+def test_a_name_from_the_sender_is_never_offered(cf):
+    """A TXT `proxy` that is not routable falls back to the sender, which must be an IP."""
+    txt = {k: v for k, v in TXT_40507.items() if k != b"proxy"}
+    flow, calls = _flow(cf, [_moved_entry()])
+    r = asyncio.run(flow.async_step_zeroconf(_info("tab.example.test", txt)))
+    assert r == {"type": "abort", "reason": "already_configured"}
+    assert calls["update"] == []
+
+
+def test_the_address_is_not_applied_without_confirmation(cf):
+    flow, calls = _flow(cf, [_moved_entry()])
+    r = asyncio.run(flow.async_step_zeroconf(_info("192.0.2.10", TXT_40507)))
+    assert r["step_id"] == "zeroconf_moved"
+    assert flow.context["title_placeholders"] == {"name": "Vimar Intercom", "host": "192.0.2.10"}
+    assert asyncio.run(flow.async_step_zeroconf_moved())["step_id"] == "zeroconf_moved"
+    assert calls["update"] == [] and calls["reload"] == []
 
 
 def test_gia_configurato_in_cloud_non_tocca_niente(cf):
@@ -175,7 +223,8 @@ def test_con_una_entry_il_cambio_ip_e_seguito(cf):
     entry = _Entry({"mac": "AA-BB-CC-DD-EE-FF", "local_proxy": "192.0.2.99", "use_local_udp": True})
     flow, calls = _flow(cf, [entry])
     r = asyncio.run(flow.async_step_zeroconf(_info("192.0.2.10", TXT_40507)))
-    assert r == {"type": "abort", "reason": "already_configured"}
+    assert r["step_id"] == "zeroconf_moved"
+    asyncio.run(flow.async_step_zeroconf_moved({}))
     assert calls["reload"] == ["e1"]
     assert calls["update"][0][0]["local_proxy"] == "192.0.2.10"
 
@@ -198,3 +247,13 @@ def test_aggiunta_a_mano_senza_entry_mostra_il_form(cf):
     flow, _ = _flow(cf)
     r = asyncio.run(flow.async_step_user())
     assert r["type"] == "form" and r["step_id"] == "user"
+
+
+def test_an_ignored_discovery_is_not_offered_again(cf):
+    """The user pressed Ignore on this Tab's discovery: HA keeps an ignored entry with
+    the MAC as unique id, and the address change must not come back at every announcement."""
+    flow, calls = _flow(cf, [_moved_entry()])
+    checked = []
+    flow._abort_if_unique_id_configured = lambda **kw: checked.append(calls["unique_id"])
+    asyncio.run(flow.async_step_zeroconf(_info("192.0.2.10", TXT_40507)))
+    assert checked == ["AABBCCDDEEFF"]

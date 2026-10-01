@@ -11,13 +11,12 @@ import random
 import socket
 import struct
 import subprocess
+import sys
 import time
 
-from .const import RTP_AUDIO_PORT, RTP_VIDEO_PORT
-from . import av_stream
+from . import av_stream, frame_grabber, rtcp
 from . import runtime as R
-from . import frame_grabber
-from . import rtcp
+from .const import RTP_AUDIO_PORT, RTP_VIDEO_PORT
 from .srtp import SRTPContext
 
 _LOGGER = logging.getLogger(__name__)
@@ -69,26 +68,71 @@ def ulaw_decode(data: bytes) -> bytes:
     return bytes(out)
 
 
-def ulaw_encode(pcm_data: bytes) -> bytes:
-    """16-bit signed LE PCM → μ-law bytes."""
+def _ulaw_encode_sample(sample: int) -> int:
+    """One 16-bit signed sample → its μ-law code (the reference algorithm)."""
     BIAS = 0x84
     CLIP = 32635
+    sign = 0x80 if sample < 0 else 0
+    if sample < 0:
+        sample = -sample
+    sample = min(sample, CLIP) + BIAS
+    exp = 7
+    mask = 0x4000
+    while exp > 0 and not (sample & mask):
+        exp -= 1
+        mask >>= 1
+    mantissa = (sample >> (exp + 3)) & 0x0F
+    return (~(sign | (exp << 4) | mantissa)) & 0xFF
+
+
+def _build_ulaw_encode_table() -> bytes:
+    """The μ-law code of every 16-bit sample, indexed by its unsigned value.
+
+    Built from the shape of the code rather than one sample at a time (that
+    took 80 ms at import): after the bias, the magnitudes whose top bit is
+    bit ``exp + 7`` share the exponent, and inside that range each of the 16
+    mantissa values covers a run of ``2 ** (exp + 3)`` consecutive magnitudes.
+    The negative half is the positive one mirrored with the sign bit flipped
+    (the complement at the end turns ``sign | code`` into ``code ^ 0x80``).
+    """
+    BIAS = 0x84
+    CLIP = 32635
+    runs = []
+    for exp in range(8):
+        for mantissa in range(16):
+            code = (~((exp << 4) | mantissa)) & 0xFF
+            runs.append(bytes([code]) * (1 << (exp + 3)))
+    # Index: the biased magnitude minus 0x80 (the first run starts at the
+    # smallest magnitude with bit 7 set; the bias alone is above it).
+    by_magnitude = b"".join(runs)
+    first, last = BIAS - 0x80, CLIP + BIAS - 0x80
+    clipped = by_magnitude[last]
+    # Samples 0 .. 32767 (unsigned 0 .. 32767): magnitude = sample.
+    positive = by_magnitude[first:last + 1] + bytes([clipped]) * (32768 - CLIP - 1)
+    # Samples -32768 .. -1 (unsigned 32768 .. 65535): magnitude 32768 .. 1.
+    flip_sign = bytes(b ^ 0x80 for b in range(256))
+    negative = (positive[1:] + bytes([clipped]))[::-1].translate(flip_sign)
+    return positive + negative
+
+
+_ULAW_ENCODE = _build_ulaw_encode_table()
+
+
+def ulaw_encode(pcm_data: bytes) -> bytes:
+    """16-bit signed LE PCM → μ-law bytes.
+
+    One table lookup per sample instead of the exponent loop: 13 µs against
+    113 µs for a 20 ms packet (160 samples) on a Raspberry Pi 5, the same
+    bytes out. The talk path encodes one packet every 20 ms, on the event
+    loop, for as long as someone talks (the card's microphone, HomeKit's
+    Talk, the away message).
+    """
     n = len(pcm_data) // 2
-    out = bytearray(n)
-    for i in range(n):
-        sample = struct.unpack_from('<h', pcm_data, i * 2)[0]
-        sign = 0x80 if sample < 0 else 0
-        if sample < 0:
-            sample = -sample
-        sample = min(sample, CLIP) + BIAS
-        exp = 7
-        mask = 0x4000
-        while exp > 0 and not (sample & mask):
-            exp -= 1
-            mask >>= 1
-        mantissa = (sample >> (exp + 3)) & 0x0F
-        out[i] = (~(sign | (exp << 4) | mantissa)) & 0xFF
-    return bytes(out)
+    samples = array.array("H")
+    samples.frombytes(pcm_data[:n * 2])
+    if sys.byteorder != "little":  # pragma: no cover - PCM is little-endian, the host may not be
+        samples.byteswap()
+    return bytes(map(_ULAW_ENCODE.__getitem__, samples))
 
 
 # Voce sul WS mentre squilla = «Rispondi»: RMS del PCM16 sopra VOICE_RMS per almeno
@@ -396,6 +440,11 @@ class RTPVideoProtocol(asyncio.DatagramProtocol):
         if self._last_sps and self._last_pps:
             return self._last_sps, self._last_pps
         return None if own_only else next((ps for ps in self._ps_by_panel.values() if all(ps)), None)
+
+    def sps_pps_of(self, panel: str | None) -> tuple[bytes, bytes] | None:
+        """The stored SPS and PPS of this panel, when both are known."""
+        ps = self._ps_by_panel.get(panel or "")
+        return ps if ps and all(ps) else None
 
     def set_panel(self, panel: str | None) -> None:
         """Chiamata (o anteprima) con questa targa: si riparte dai suoi SPS/PPS."""
@@ -869,13 +918,18 @@ async def restore_sps_pps(store) -> None:
                             for k, (s, p) in video_proto._ps_by_panel.items()}}, 5)
 
 
+def panel_id(uri: str | None) -> str | None:
+    """The SIP id of a panel's URI (sip:55100@domain;x=y -> 55100)."""
+    return uri.split(":")[-1].split("@")[0].split(";")[0] if uri else None
+
+
 def _current_panel() -> str | None:
     """Id SIP della targa di questa chiamata: chi suona (anche in anteprima), o chi
     abbiamo chiamato. Import in ritardo: sip_client importa questo modulo."""
     from . import sip_client as sip
     pi = sip.pending_incoming
     uri = (pi.get("caller_uri") if pi.get("active") else None) or sip.call_state.get("original_target")
-    return uri.split(":")[-1].split("@")[0].split(";")[0] if uri else None
+    return panel_id(uri)
 
 
 async def setup_media(remote_sdp, local_crypto_key=None, local_video_crypto_key=None,
@@ -1263,7 +1317,7 @@ async def _audio_broadcast():
             try:
                 pcm = await asyncio.wait_for(
                     audio_proto.audio_buffer.get(), timeout=0.5)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
             if ws_send_bytes:
                 await ws_send_bytes(b'\x01' + pcm)

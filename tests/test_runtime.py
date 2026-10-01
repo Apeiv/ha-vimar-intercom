@@ -7,8 +7,7 @@ quando l'utente non ha impostato nulla in options), non l'intero modulo.
 """
 from __future__ import annotations
 
-from custom_components.vimar_intercom import const
-from custom_components.vimar_intercom import runtime
+from custom_components.vimar_intercom import const, runtime
 
 
 def _base_data(**overrides) -> dict:

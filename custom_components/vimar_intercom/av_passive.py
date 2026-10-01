@@ -19,7 +19,7 @@ import logging
 import os
 import socket
 import subprocess
-from typing import Callable
+from collections.abc import Callable
 
 from . import av_stream
 from . import media_handler as media
@@ -247,7 +247,7 @@ async def _decode(is_live, on_live) -> None:
                         dec.kill()
                         try:  # come frame_grabber._record: kill() non basta se ffmpeg è impuntato
                             await asyncio.wait_for(dec.wait(), 15)
-                        except asyncio.TimeoutError:
+                        except TimeoutError:
                             pass
             finally:
                 await av_stream.av_unsubscribe(q)

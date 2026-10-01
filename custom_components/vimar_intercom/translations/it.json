@@ -50,6 +50,10 @@
       "zeroconf_confirm": {
         "title": "Citofono Vimar trovato in rete",
         "description": "Home Assistant ha trovato un citofono Vimar all'indirizzo {host} (MAC {mac}, modello {model}, firmware {firmware}). Per collegarlo servono ancora il QR di abbinamento o le credenziali SIP: indirizzo e dominio locale sono già compilati."
+      },
+      "zeroconf_moved": {
+        "title": "Il citofono ha cambiato indirizzo?",
+        "description": "Il citofono Vimar configurato si è annunciato all'indirizzo {new} invece di {old}. Conferma solo se l'hai spostato o se il router gli ha dato un nuovo indirizzo: chiunque nella rete locale può annunciarsi con il suo MAC. Confermando, Home Assistant userà {new} e ricaricherà l'integrazione."
       }
     },
     "error": {
@@ -62,7 +66,8 @@
     "abort": {
       "already_configured": "Il dispositivo è già configurato.",
       "no_mac": "Il citofono si è annunciato senza MAC: aggiungilo a mano da Impostazioni → Dispositivi e servizi.",
-      "single_instance_allowed": "C'è già un'installazione di Vimar Intercom: ne è supportata una sola."
+      "single_instance_allowed": "C'è già un'installazione di Vimar Intercom: ne è supportata una sola.",
+      "address_updated": "Indirizzo del citofono aggiornato."
     },
     "create_entry": {
       "transport_fallback": "Home Assistant non è riuscito a registrarsi via {tried} e usa {used}: {detail}. Funziona, ma se ti aspettavi {tried} controlla le impostazioni di rete del citofono."
@@ -390,7 +395,7 @@
         },
         "sip_timeout": {
           "name": "Timeout SIP per sonda",
-          "description": "Quanto aspettare la risposta SIP (200/404) di ogni sonda prima di passare oltre."
+          "description": "Quanto aspettare la risposta SIP (200/202/404) di ogni sonda prima di passare oltre. Via cloud il relay può rispondere 202 (accettato, non consegnato) solo dopo ~15 s, quindi usare 20."
         }
       }
     }

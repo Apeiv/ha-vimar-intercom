@@ -249,6 +249,8 @@ const STYLE = `
   #fit ha-icon { --mdc-icon-size: 22px; }
   .live #fit { display: grid; }
   ha-card[data-fit="contain"] #video > canvas, ha-card[data-fit="contain"] .still { object-fit: contain; }
+  /* Video and box of the same shape: fill and fit draw the same picture (#42). */
+  ha-card[data-fit-same] #fit { display: none !important; }
 
   /* Impostazioni: ingranaggio accanto alla cronologia (sul video e nella card compatta). */
   #cfg { position: absolute; top: 8px; right: 152px; z-index: 3; width: 40px; height: 40px; border-radius: 50%; display: none;
@@ -613,6 +615,7 @@ class NalPlayer {
 
   constructor(hass, canvas, onFail) {
     this.canvas = canvas;
+    this.onsize = null;  // the video's size changed: the card checks whether Fill/Fit matters
     this.frames = 0;
     this.resets = 0;  // decoder rifatti e WebSocket riaperti (nei test)
     this._n = 0;
@@ -711,6 +714,7 @@ class NalPlayer {
     if (c.width !== frame.displayWidth || c.height !== frame.displayHeight) {
       c.width = frame.displayWidth;
       c.height = frame.displayHeight;
+      this.onsize?.();
     }
     (this._ctx ||= c.getContext("2d")).drawImage(frame, 0, 0);
     frame.close();
@@ -1001,6 +1005,8 @@ class VimarIntercomCard extends HTMLElement {
     this._open = $("#open");
     this._mute = $("#mute");
     this._videoBox = $("#video");
+    // The box changes shape with the layout, the popup and the phone's rotation.
+    if (window.ResizeObserver) new ResizeObserver(() => this._fitShape()).observe(this._videoBox);
     this._applyCfg();
     this._view.className = "fill";
     this._open.setAttribute("aria-label", "Apri portone, tocca due volte");
@@ -1047,6 +1053,9 @@ class VimarIntercomCard extends HTMLElement {
       this._cover = !this._cover;
       try { localStorage.setItem(FIT_KEY, this._cover ? "cover" : "contain"); } catch { /* storage bloccato: vale per questa sessione */ }
       this._applyFit();
+      // HA's picture-entity card (no WebCodecs, or the player failed) keeps its <video> in its
+      // own shadow DOM, out of reach of our object-fit: it takes fit_mode, so it is rebuilt (#42).
+      if (this._video && !this._player) this._setPicture(this._live);
     };
     this._applyFit();
     // Un avviso vive SAY_MS al posto della riga di stato, poi sparisce (NO_ANSWER resta finché si collega).
@@ -1150,6 +1159,16 @@ class VimarIntercomCard extends HTMLElement {
         small.textContent = modo === "Home Assistant" ? "Messaggio di Home Assistant" : modo === "Tab" ? "Segreteria del Tab" : "";
       }
     }
+  }
+
+  // Fill and fit differ only when the video and its box have different shapes: a 4:3 panel in the
+  // default 4:3 box looks the same either way, and the button would seem to do nothing (#42).
+  // Known only for our own canvas; with HA's card the button stays.
+  _fitShape() {
+    const c = this._player?.canvas, box = this._videoBox;
+    const w = c?.width, h = c?.height, bw = box?.clientWidth, bh = box?.clientHeight;
+    const same = !!(w && h && bw && bh) && Math.abs(w / h - bw / bh) < 0.02 * (w / h);
+    this._card?.toggleAttribute("data-fit-same", same);
   }
 
   _applyFit() {
@@ -1304,12 +1323,15 @@ class VimarIntercomCard extends HTMLElement {
     this._live = live;
     this._player?.close();
     this._player = null;
+    this._fitShape();
     if (!live || !NalPlayer.ok()) return this._setPicture(live);
     const canvas = document.createElement("canvas");
     this._player = new NalPlayer(this._hass, canvas, () => {
       this._player = null;
+      this._fitShape();
       if (this._live) this._setPicture(true);
     });
+    this._player.onsize = () => this._fitShape();
     this._videoBox.replaceChildren(canvas);
     this._video = null;
   }
@@ -1320,6 +1342,7 @@ class VimarIntercomCard extends HTMLElement {
     this._helpers ||= window.loadCardHelpers();
     const el = (await this._helpers).createCardElement({
       type: "picture-entity", entity: this._ent("camera"), camera_view: live ? "live" : "auto",
+      fit_mode: this._cover ? "cover" : "contain",
       show_name: false, show_state: false, tap_action: { action: "none" }, hold_action: { action: "none" },
     });
     if (this._live !== live) return;  // stato cambiato nel frattempo

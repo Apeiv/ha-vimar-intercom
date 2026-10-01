@@ -5,37 +5,29 @@ import ipaddress
 import json
 import logging
 import os
+import time
 from pathlib import Path
 
-from aiohttp import web
-
+import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
-
+from aiohttp import web
 from homeassistant.components.frontend import add_extra_js_url
 from homeassistant.components.http import HomeAssistantView, StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse, callback
-import homeassistant.helpers.config_validation as cv
 from homeassistant.exceptions import ConfigEntryNotReady, Unauthorized
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
-from homeassistant.requirements import async_process_requirements
 from homeassistant.helpers.service import async_register_admin_service
 from homeassistant.helpers.storage import Store
+from homeassistant.requirements import async_process_requirements
 
-from .const import CONF_HOMEKIT_ACCESSORY, DEFAULT_HOMEKIT_ACCESSORY, DOMAIN, HOMEKIT_REQUIREMENTS
-from . import away_config
-from . import away_tts
+from . import av_passive, av_stream, away_config, away_tts, ring_log, runtime, validate, webhook
 from . import log_buffer as _log_buffer
-from . import validate
-from .hub import VimarIntercomHub
-from . import av_passive
-from . import av_stream
 from . import media_handler as media
-from . import ring_log
 from . import sip_client as sip
-from . import runtime
-from . import webhook
+from .const import CONF_HOMEKIT_ACCESSORY, DEFAULT_HOMEKIT_ACCESSORY, DOMAIN, HOMEKIT_REQUIREMENTS
+from .hub import VimarIntercomHub
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -102,7 +94,7 @@ FIND_SGA_SCHEMA = vol.Schema({
     vol.Optional("delay", default=1.0): vol.All(vol.Coerce(float), vol.Range(min=0.2, max=10)),
     vol.Optional("reply_wait", default=3.0): vol.All(vol.Coerce(float), vol.Range(min=1, max=15)),
     vol.Optional("probe", default="get_nicks"): vol.In(["get_nicks", "get_init_status"]),
-    vol.Optional("sip_timeout", default=8.0): vol.All(vol.Coerce(float), vol.Range(min=2, max=15)),
+    vol.Optional("sip_timeout", default=8.0): vol.All(vol.Coerce(float), vol.Range(min=2, max=30)),
     vol.Optional("apply", default=False): cv.boolean,
     vol.Optional("apply_sga", default=False): cv.boolean,
 })
@@ -982,6 +974,7 @@ class VimarAVStreamView(HomeAssistantView):
             if not wait:
                 return web.Response(status=503, text="No call")
             waited = 0
+            asked_at = time.monotonic()
             # 25 s: col cloud Vimar la chiamata a volte parte dopo ~15 s (riconnessione TLS).
             # Ma una chiamata finita, annullata o rifiutata (486) non darà video: 503
             # subito, non 25 s di rotella sull'iPhone (contando come spettatore).
@@ -989,7 +982,10 @@ class VimarAVStreamView(HomeAssistantView):
                 await asyncio.sleep(0.1)  # ogni decimo conta: la targa chiude dopo ~10 s
                 waited += 0.1
             if not hub.video_active:
-                _LOGGER.warning("AV stream: call not established after 25s")
+                # waited counts 0.1 s steps; the loop also ends early when the
+                # call is given up, so the real time says what happened (#44).
+                _LOGGER.warning("AV stream: call not established (%.1f s)",
+                                time.monotonic() - asked_at)
                 return web.Response(status=503, text="Call not established")
 
             queue = await av_stream.av_subscribe()

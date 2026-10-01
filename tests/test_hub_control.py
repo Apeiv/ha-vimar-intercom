@@ -333,7 +333,8 @@ def test_find_picg_keeps_going_after_a_late_reply_without_picg(hub, monkeypatch)
 
 # ─── the automatic hang-up's edges ───────────────────────────────────────────
 
-def test_a_state_change_without_a_loop_drops_the_hang_up_guard_at_once(hub):
+def test_a_state_change_without_a_loop_drops_the_hang_up_guard_at_once(hub, monkeypatch):
+    monkeypatch.setattr(R, "USE_LOCAL_UDP", False)  # the local-end settle is the cloud's
     hub._hanging_up = True
     hub._on_sip_state_change()  # sip idle, no running loop
     assert hub._hanging_up is False
@@ -359,7 +360,7 @@ def test_a_fallback_panel_that_fails_too_is_not_learned(hub, monkeypatch):
     hub._last_ring_panel = "55009"
     answers = iter([(False, "404 Not Found"), (False, "486 Busy Here")])
 
-    async def do_call(target=None, silence_limit=None):
+    async def do_call(target=None, silence_limit=None, **_kw):
         return next(answers)
 
     monkeypatch.setattr(sip, "do_call", do_call)
@@ -376,7 +377,7 @@ def test_a_learned_panel_without_a_persist_callback_is_kept_in_memory(hub, monke
     hub._last_ring_panel = "55009"
     answers = iter([(False, "404 Not Found"), (True, "200 OK")])
 
-    async def do_call(target=None, silence_limit=None):
+    async def do_call(target=None, silence_limit=None, **_kw):
         return next(answers)
 
     monkeypatch.setattr(sip, "do_call", do_call)
@@ -409,7 +410,7 @@ def test_a_hang_up_that_times_out_is_logged_and_drops_its_guard(hub, caplog):
     async def run():
         done = hub._begin_hanging_up()
         fut = asyncio.get_running_loop().create_future()
-        fut.set_exception(asyncio.TimeoutError())
+        fut.set_exception(TimeoutError())
         hub._hangup_finished(done, fut)
         return done.is_set()
 
@@ -481,3 +482,14 @@ def test_a_keyframe_request_is_sent_for_a_lost_packet(hub, monkeypatch):
     asyncio.run(run())
     assert asked == [1]
 
+
+
+def test_call_coming_is_a_call_not_an_open_websocket(hub, monkeypatch):
+    """HomeKit's early re-encoder asks for this (#48): a call up or being placed,
+    or a ring. An open card or app WebSocket counts for call_pending, not here."""
+    monkeypatch.setattr(sip, "ringing", lambda cid=None: False)
+    hub._has_ws_clients = lambda: True
+    hub._auto_called = False
+    assert hub.call_pending and not hub.call_coming
+    hub._auto_called = True                     # a view's auto-call being placed
+    assert hub.call_coming

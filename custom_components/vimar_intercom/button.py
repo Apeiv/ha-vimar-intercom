@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-
 import re
 
 from homeassistant.components.button import ButtonEntity
@@ -12,9 +11,9 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from . import runtime as R
 from .const import DOMAIN
 from .device import device_info
-from . import runtime as R
 
 _LOGGER = logging.getLogger(__name__)
 

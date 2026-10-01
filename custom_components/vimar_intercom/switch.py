@@ -33,14 +33,17 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 
+from . import runtime as R
 from .const import (
+    DND_OFF,
+    DND_ON,
     DOMAIN,
-    SEGRETERIA_ON, SEGRETERIA_OFF,
-    SEGRETERIA_HEADER_NAME, SEGRETERIA_HEADER_VALUE,
-    DND_ON, DND_OFF,
+    SEGRETERIA_HEADER_NAME,
+    SEGRETERIA_HEADER_VALUE,
+    SEGRETERIA_OFF,
+    SEGRETERIA_ON,
 )
 from .device import device_info
-from . import runtime as R
 
 _LOGGER = logging.getLogger(__name__)
 

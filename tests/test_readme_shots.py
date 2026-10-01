@@ -118,14 +118,14 @@ def compress(png: Path, dest: Path, limit=150_000):
 
 
 @pytest.mark.parametrize("engine", ["chromium"], indirect=True)
-def test_readme_shots(monkeypatch, engine, tmp_path):
+def test_readme_shots(monkeypatch, engine, tmp_path):  # noqa: F811 (pytest fixture)
     OUT.mkdir(exist_ok=True)
     snap = tmp_path / "snap"
     snap.mkdir()
     times = ("090200", "124000", "181500")
     ring_log.update_ring_log(str(snap), lambda r: r.extend(
         {"time": f"2026-09-27T{t[:2]}:{t[2:4]}:00+02:00", "photo": f"squillo_20260927_{t}.jpg", "outcome": o}
-        for t, o in zip(times, ("missed", "answered", "away"))))
+        for t, o in zip(times, ("missed", "answered", "away"), strict=False)))
     for i, t in enumerate(times):
         (snap / f"squillo_20260927_{t}.jpg").write_bytes(synth_jpg(i))
 

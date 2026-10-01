@@ -4,14 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import sys
 import types
 
 import pytest
-
 from harness.web import Request, load_views
 
-from custom_components.vimar_intercom import media_handler as media, ring_log, runtime
+from custom_components.vimar_intercom import media_handler as media
+from custom_components.vimar_intercom import ring_log, runtime
 
 
 class ViewHub:
@@ -490,10 +491,14 @@ def test_av_that_starts_no_call_is_503(views):
     assert (r.status, r.text) == (503, "No call") and hub.opened == hub.closed == 1
 
 
-def test_av_whose_call_ends_without_video_is_503_at_once(views):
+def test_av_whose_call_ends_without_video_is_503_at_once(views, caplog):
     hub = ViewHub()
-    r, _ = _av(views, hub)
+    with caplog.at_level("WARNING"):
+        r, _ = _av(views, hub)
     assert (r.status, r.text) == (503, "Call not established") and hub.closed == 1
+    # It said "after 25s" whatever the wait was (#44): the real time now.
+    assert any(re.search(r"call not established \(\d+\.\d s\)", rec.getMessage())
+               for rec in caplog.records)
 
 
 def test_av_waits_for_the_video_of_a_pending_call(views, av_stream):

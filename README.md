@@ -94,8 +94,11 @@ Settings → Devices & services → Add integration → **Vimar Intercom**.
 the intercom's address and the local SIP domain come from the Tab itself. This matters on plants
 whose QR says `domain=127.0.0.1`, such as a 40515: the domain the Tab announces (its own address)
 is used for local registration instead of the cloud domain. An intercom that is already set up
-is recognised by its MAC, and if the DHCP gives it a new address the integration follows it
-(local mode only). Where mDNS is filtered, nothing changes: add it by hand as before.
+is recognised by its MAC, and if the DHCP gives it a new address Home Assistant offers the new
+one under Discovered, and switches to it once you confirm (local mode only). The confirmation is
+there because anyone on the local network can announce the Tab's MAC. If you press Ignore by
+mistake, later moves are ignored too: Settings → Devices & services → Ignored → Vimar Intercom →
+Stop ignoring. Where mDNS is filtered, nothing changes: add it by hand as before.
 
 ### Options (after adding the integration)
 
@@ -339,9 +342,11 @@ If a plant leaves `GET_NICKS` without any SIP answer (reported on a 40515 in clo
 `GET_INIT_STATUS` got `200`), use `probe: get_init_status`. It gives the three clean outcomes, and the
 address whose probe triggers the `GET_INIT_STATUS_REPLY` is the PICG, but sent to the real SGA it makes
 the VIEW app show "Configurazione appartamento modificata" every time. `sip_timeout` (default 8 s)
-bounds how long each probe waits for its SIP answer. The response lists every probe with its outcome:
-`absent` (404), `exists` (accepted, no reply), `replied`, `no_response`, `error`; plus `picg` and the
-nicknames the intercom declared.
+bounds how long each probe waits for its SIP answer; over the cloud relay use 20, because its `202` can
+take ~15 s. The response lists every probe with its outcome: `absent` (404), `exists` (accepted, no
+reply), `queued` (`202`: the cloud relay accepted the message but no device took it, so nothing at that
+address can answer over the cloud), `replied`, `no_response`, `error`; plus `picg` and the nicknames the
+intercom declared.
 
 ---
 
