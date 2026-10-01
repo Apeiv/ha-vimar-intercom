@@ -7,6 +7,7 @@ la connessione cloud cade, go2rtc riapre /av subito e lo stream worker di HA dop
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import socket
 import sys
@@ -223,6 +224,77 @@ def test_chiamata_timeout_manda_cancel(monkeypatch):
             # chiamata mezza aperta.
             await rig.peer.wait_for(is_("CANCEL"), timeout=2)
     run(s())
+
+
+def test_a_call_with_an_answer_timeout_gives_up_early_and_cancels(monkeypatch):
+    """#41: a view's call that the panel leaves unanswered returns NO_ANSWER
+    after answer_timeout instead of 45 s, and the INVITE is cancelled."""
+    async def s():
+        async with Rig(monkeypatch) as rig:
+            await rig.register()
+
+            async def silent(peer, inv):
+                peer.reply(inv, 180, "Ringing")
+            rig.peer.on_invite = silent
+            loop = asyncio.get_running_loop()
+            started = loop.time()
+            ok, msg = await sip.do_call(answer_timeout=0.5)
+            assert not ok and msg.startswith(sip.NO_ANSWER)
+            assert loop.time() - started < 0.5 + 1, "to the deadline, not up to 3 s past it"
+            assert not sip.calling
+            await rig.peer.wait_for(is_("CANCEL"), timeout=2)
+    run(s())
+
+
+def test_a_100_with_no_180_gives_up_after_the_ring_timeout(monkeypatch):
+    """#44 on a 40507: the Tab's proxy says 100 Trying and the panel never sends its
+    180 (in a good call it follows within ~50 ms). Given up after ring_timeout,
+    not after answer_timeout, and cancelled."""
+    async def s():
+        async with Rig(monkeypatch) as rig:
+            await rig.register()
+
+            async def swallowed(peer, inv):
+                peer.reply(inv, 100, "Trying")
+            rig.peer.on_invite = swallowed
+            loop = asyncio.get_running_loop()
+            started = loop.time()
+            ok, msg = await sip.do_call(answer_timeout=5, ring_timeout=0.5)
+            assert not ok and msg.startswith(sip.NO_ANSWER) and "180" in msg
+            assert loop.time() - started < 0.5 + 1
+            await rig.peer.wait_for(is_("CANCEL"), timeout=2)
+    run(s())
+
+
+def test_a_ringing_panel_is_not_cut_by_the_ring_timeout(monkeypatch):
+    """With a 180 the call waits for its answer: ring_timeout only catches a
+    panel that never rang."""
+    async def s():
+        async with Rig(monkeypatch) as rig:
+            await rig.register()
+
+            async def rings(peer, inv):
+                peer.reply(inv, 100, "Trying")
+                peer.reply(inv, 180, "Ringing")
+            rig.peer.on_invite = rings
+            loop = asyncio.get_running_loop()
+            started = loop.time()
+            ok, msg = await sip.do_call(answer_timeout=1.2, ring_timeout=0.3)
+            assert not ok and msg == f"{sip.NO_ANSWER} (1s)"
+            assert loop.time() - started >= 1.0
+    run(s())
+
+
+def test_the_487_after_our_own_cancel_is_not_a_warning(monkeypatch, caplog):
+    async def nothing(*_a):
+        pass
+    monkeypatch.setattr(sip, "_close_orphan_invite", nothing)
+    raw = ("SIP/2.0 487 Request Terminated\r\nCall-ID: gone-487\r\nCSeq: 7 INVITE\r\n"
+           "Content-Length: 0\r\n\r\n")
+    with caplog.at_level(logging.DEBUG, logger=sip._LOGGER.name):
+        run(sip._dispatch_message(raw))
+    recs = [r for r in caplog.records if "già chiuso" in r.getMessage()]
+    assert recs and all(r.levelno == logging.DEBUG for r in recs)
 
 
 @pytest.mark.parametrize("ritrasmesso", [False, True])
