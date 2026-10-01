@@ -8,6 +8,9 @@ Italian and are kept as they were written.
 
 ### Fixed
 
+- **Card live video on iPhone** no longer smears between keyframes: the WebCodecs decoder is fed
+  AVC (an `avcC` description built from SPS/PPS, length-prefixed NAL units) instead of Annex B, is
+  reconfigured only when SPS/PPS change, and runs with `optimizeForLatency` off on iOS (#53).
 - **Away message text and audio file** can be changed by administrators only. The two entities
   were writable by any user who could call the service; a call with no user (automations) still works.
 - **Card shortcut buttons** no longer inject markup: the `friendly_name` and `icon` of a `button.*`

@@ -622,6 +622,41 @@ def test_video_webcodecs_primo_fotogramma_subito(monkeypatch, engine):  # noqa: 
 
 
 @pytest.mark.parametrize("engine", ["chromium"], indirect=True)  # WebKit di Playwright: niente WebCodecs
+@pytest.mark.parametrize("ios", [False, True])
+def test_decoder_gets_avc_description_and_length_prefixed_nals(monkeypatch, engine, ios):  # noqa: F811
+    """#53: on iPhone the picture smeared between keyframes with Annex B input. The decoder
+    is configured with an avcC description built from SPS/PPS, chunks carry a 4-byte length
+    instead of a start code (the key chunk is the IDR alone), and low-latency mode is off
+    on iOS only. Frames still decode."""
+    if not hm.FFMPEG:
+        pytest.skip("serve ffmpeg per il video della targa finta")
+
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            await rig.register()
+            rig.answer(media_on=True)
+            async with Card(rig, engine, query="&ios" if ios else "") as c:
+                await c.until(IDLE)
+                await c.tap("view")
+                await c.until("info().player?.frames > 20", 8)  # past a second IDR
+                t = await c.T()
+                cfg = t["vdCfg"][0]
+                d = cfg["desc"]
+                assert len(t["vdCfg"]) == 1, t["vdCfg"]  # same SPS/PPS at every IDR: no reconfigure
+                assert d[:1] == [1] and d[4:6] == [0xFF, 0xE1], cfg
+                assert cfg["codec"] == "avc1." + "".join(f"{b:02X}" for b in d[1:4]), cfg
+                sps_len = d[6] << 8 | d[7]
+                assert d[8] & 0x1F == 7 and d[8 + sps_len] == 1 and d[11 + sps_len] & 0x1F == 8, cfg
+                assert cfg["latency"] is (not ios), cfg
+                kind, *head = t["chunk"]
+                assert kind == "key" and head[:4] != [0, 0, 0, 1] and head[4] & 0x1F == 5, t["chunk"]
+                assert t["av"] == [] and not t["errors"], t
+                await c.tap("hangup")
+                await c.until(IDLE)
+    run(s())
+
+
+@pytest.mark.parametrize("engine", ["chromium"], indirect=True)  # WebKit di Playwright: niente WebCodecs
 def test_pacchetto_perso_a_meta_gop_niente_video_smerigliato(monkeypatch, engine):  # noqa: F811
     """Dal campo (40515 via cloud, 2026-09-28): un pacchetto RTP perso per strada dava un NAL
     col buco e il video smerigliato (righe nere, sbavate) fino all'IDR dopo, ~3 s. La targa

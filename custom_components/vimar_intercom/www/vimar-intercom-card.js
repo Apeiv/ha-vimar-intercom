@@ -598,6 +598,8 @@ const TEMPLATE = `<ha-card>
   ${PHOTO_DLG}</ha-card><dialog class="pop" aria-label="Citofono"></dialog>
   <dialog class="set" aria-label="Impostazioni citofono"></dialog>`;
 
+const same = (a, b) => !!a && !!b && a.length === b.length && a.every((v, i) => v === b[i]);
+
 const concat = (...parts) => {
   const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
   parts.reduce((o, p) => (out.set(p, o), o + p.length), 0);
@@ -666,18 +668,20 @@ class NalPlayer {
     this._t = setTimeout(() => this._open(), this._wait * 1000);
   }
 
-  // Un NAL in Annex B (00 00 00 01 + NAL). SPS e PPS si tengono; l'IDR coi suoi SPS+PPS
-  // è il chunk chiave (configura il decoder la prima volta), i P seguono. Mai un P
-  // prima del primo IDR (_dec non c'è) o dopo un buco (_skip): il decoder darebbe errore.
+  // Un NAL in Annex B (00 00 00 01 + NAL). SPS e PPS si tengono (vanno nella description
+  // del decoder); l'IDR è il chunk chiave (configura il decoder la prima volta o a SPS/PPS
+  // nuovi), i P seguono. Mai un P prima del primo IDR (_dec non c'è) o dopo un buco
+  // (_skip): il decoder darebbe errore.
   _nal(nal) {
     const t = nal[4] & 0x1f;
     if (t === 7) this._sps = nal;
     else if (t === 8) this._pps = nal;
     else if (t === 5 && this._sps && this._pps) {
       try {
-        if (!this._dec) this._configure();
+        // A new SPS/PPS (another panel, another resolution) needs a new description.
+        if (!this._dec || !same(this._cfgSps, this._sps) || !same(this._cfgPps, this._pps)) this._configure();
         this._skip = false;
-        this._decode("key", concat(this._sps, this._pps, nal));
+        this._decode("key", nal);
       } catch (e) {
         this._broken(e);
       }
@@ -688,15 +692,31 @@ class NalPlayer {
     }
   }
 
+  // The decoder gets AVC (avcC description + length-prefixed NALs), not Annex B: on iPhone
+  // (iOS 27) the picture smeared between keyframes with Annex B input while a PC was clean
+  // and Home Assistant had every packet (#53). Chrome takes both.
   _configure() {
-    const s = this._sps;  // profile_idc, constraint_set, level_idc → "avc1.42C01E"
-    const codec = "avc1." + [s[5], s[6], s[7]].map((b) => b.toString(16).padStart(2, "0")).join("").toUpperCase();
+    const s = this._sps.subarray(4), p = this._pps.subarray(4);  // without the start code
+    // profile_idc, constraint_set, level_idc → "avc1.42C01E"
+    const codec = "avc1." + [s[1], s[2], s[3]].map((b) => b.toString(16).padStart(2, "0")).join("").toUpperCase();
+    const description = concat(
+      Uint8Array.of(1, s[1], s[2], s[3], 0xff, 0xe1, s.length >> 8, s.length & 0xff), s,
+      Uint8Array.of(1, p.length >> 8, p.length & 0xff), p);
+    try { this._dec?.close(); } catch { /* già chiuso */ }
     this._dec = new VideoDecoder({ output: (f) => this._paint(f), error: (e) => this._broken(e) });
-    // Senza `description` il formato è Annex B. Codec non supportato: arriva da `error`.
-    this._dec.configure({ codec, optimizeForLatency: true });
+    // iOS: VideoToolbox in real-time mode may drop frames under load, and with every P frame
+    // a reference the picture smears until the next keyframe. Elsewhere latency wins.
+    // Codec non supportato: arriva da `error`.
+    const ios = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+    this._dec.configure({ codec, description, optimizeForLatency: !ios });
+    this._cfgSps = this._sps;
+    this._cfgPps = this._pps;
   }
 
-  _decode(type, data) {
+  _decode(type, nal) {
+    const body = nal.subarray(4), data = new Uint8Array(body.length + 4);  // 4-byte length + NAL
+    new DataView(data.buffer).setUint32(0, body.length);
+    data.set(body, 4);
     try {
       this._dec.decode(new EncodedVideoChunk({ type, timestamp: this._n++ * 66667, data }));
     } catch (e) {

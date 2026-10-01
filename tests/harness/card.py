@@ -10,7 +10,7 @@ VideoDecoder (browser senza WebCodecs), `?badwc` ne mette uno che fallisce la
 configurazione (codec non supportato): in entrambi i casi la card deve tornare a /av.
 `?flakywc` ne mette uno che si rompe al 10° chunk (dati corrotti): la card resta sul
 canvas e riparte dal prossimo IDR.
-`?layout=sotto` (o popup) passa `layout` in setConfig. `ha-form` è un finto minimo (label +
+`?ios` dà alla pagina lo user agent di un iPhone. `?layout=sotto` (o popup) passa `layout` in setConfig. `ha-form` è un finto minimo (label +
 input/select nativi, `value-changed` come quello vero) per provare l'editor visuale.
 """
 from __future__ import annotations
@@ -30,10 +30,13 @@ window.T = { av: [], avBytes: 0, live: 0, created: [], rx: 0, ws: 0, sent: 0, fr
 window.onerror = (m) => T.errors.push(String(m));
 window.addEventListener("unhandledrejection", (e) => T.errors.push("REJ " + e.reason));
 if (location.search.includes("insecure")) Object.defineProperty(window, "isSecureContext", { value: false });
-if (window.VideoDecoder) {  // sonda di latenza: il primo fotogramma dipinto
+if (location.search.includes("ios")) Object.defineProperty(navigator, "userAgent", { value: "Mozilla/5.0 (iPhone; CPU iPhone OS 27_0 like Mac OS X)" });
+if (window.VideoDecoder) {  // sonda di latenza (il primo fotogramma dipinto), configurazioni e primo chunk
   const VD = window.VideoDecoder;
   window.VideoDecoder = class extends VD {
     constructor(init) { super({ ...init, output: (f) => { T.firstFrameAt ||= Date.now(); init.output(f); } }); }
+    configure(c) { (T.vdCfg ||= []).push({ codec: c.codec, desc: [...new Uint8Array(c.description || [])], latency: c.optimizeForLatency }); super.configure(c); }
+    decode(c) { if (!T.chunk) { const b = new Uint8Array(c.byteLength); c.copyTo(b); T.chunk = [c.type, ...b.slice(0, 5)]; } super.decode(c); }
   };
 }
 if (location.search.includes("nowc")) window.VideoDecoder = undefined;
