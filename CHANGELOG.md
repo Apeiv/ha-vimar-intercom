@@ -18,6 +18,12 @@ Italian and are kept as they were written.
 - **One slow card no longer delays the others**: each audio WebSocket client gets its own small
   queue and sender, so the voice and video loops never wait for a client's network. A client that
   falls too far behind drops its own backlog and gets video again from the next keyframe (#54).
+- `vimar_intercom.simulate_ring` now simulates a whole ring ([#33](../../issues/33) item 14): the
+  state goes to `ringing` (card popup, sensors, binary sensor), the doorbell event and the start
+  webhook fire, and after `duration` seconds (default 20) it ends like an unanswered ring, end
+  webhook included. Before, the end never came and a doorbell switch driven by the webhooks stayed
+  on. Still no SIP traffic: Answer just ends it, the away message never answers it, a real ring
+  replaces it, and it is not written to the ring log or counted in the stats.
 
 ## [1.0.17] - 2026-10-01
 
