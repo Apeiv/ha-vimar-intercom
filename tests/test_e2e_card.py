@@ -596,6 +596,34 @@ def test_history_photos_re_signed_after_expiry(monkeypatch, engine, tmp_path):  
     run(s())
 
 
+@pytest.mark.parametrize("idle", [None, "standby"])
+def test_idle_picture_standby_keeps_ring_photo_out_of_the_scene(monkeypatch, engine, tmp_path, idle):  # noqa: F811
+    """`idle_picture: standby`: at rest neither the scene's still nor the compact photo button
+    shows the last ring (the doorbell icon does); the photo stays in the history drawer.
+    Default (`last_ring`): both show it, as before."""
+    (tmp_path / "squillo_20260927_090000.jpg").write_bytes(PNG_1PX)
+    ring_log.update_ring_log(str(tmp_path), lambda r: r.append(
+        {"time": "2026-09-27T09:00:00+02:00", "photo": "squillo_20260927_090000.jpg", "outcome": "missed"}))
+    js = """(() => { const r = card.shadowRoot, src = (s) => r.querySelector(s).getAttribute('src');
+      return { hist: src('.hist img'), still: src('.still'), pic: src('#photo img'),
+               icon: getComputedStyle(r.querySelector('#photo ha-icon')).display }; })()"""
+
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            monkeypatch.setattr(R, "SNAPSHOT_DIR", str(tmp_path))
+            await rig.register()
+            async with Card(rig, engine, query=f"&idle_picture={idle}" if idle else "") as c:
+                await c.until("card.shadowRoot.querySelector('.hist img')?.getAttribute('src')")
+                st = await c.page.evaluate(js)
+                assert "squillo_20260927_090000.jpg" in st["hist"], st
+                if idle == "standby":
+                    assert st["still"] is None and st["pic"] is None and st["icon"] != "none", st
+                else:
+                    assert st["still"] == st["pic"] == st["hist"] and st["icon"] == "none", st
+                assert not rig.services and not rig.peer.got(is_("INVITE"))
+    run(s())
+
+
 @pytest.mark.parametrize("engine", ["chromium"], indirect=True)
 def test_video_webcodecs_primo_fotogramma_subito(monkeypatch, engine):  # noqa: F811
     """Dal campo (2026-09-27): INVITE, 200 OK a 1,1 s, primo IDR a ~2 s, ma il video in card

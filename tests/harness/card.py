@@ -158,6 +158,7 @@ await customElements.whenDefined("vimar-intercom-card");
 const c = document.createElement("vimar-intercom-card");
 const qs = new URLSearchParams(location.search), layout = qs.get("layout");
 c.setConfig({ type: "custom:vimar-intercom-card", ...(layout && { layout }), ...(qs.get("compact") && { compact_style: qs.get("compact") }),
+              ...(qs.get("idle_picture") && { idle_picture: qs.get("idle_picture") }),
               ...(qs.has("listen_on_ring") && { listen_on_ring: true }),
               ...(qs.get("shortcuts") && { shortcuts: qs.get("shortcuts").split(",") }) });
 document.body.appendChild(c);

@@ -6,6 +6,12 @@ Italian and are kept as they were written.
 
 ## [Unreleased]
 
+### Added
+
+- **Card `idle_picture`** option (also in the visual editor): `last_ring` (default) keeps the last
+  ring's photo in the scene and the compact photo button at rest; `standby` shows the doorbell icon
+  there instead. The photos stay in the history drawer.
+
 ### Fixed
 
 - **Card history photos and clips** no longer stay broken behind an expired signed path: a photo or

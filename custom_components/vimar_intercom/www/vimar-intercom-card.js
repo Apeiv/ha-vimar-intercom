@@ -25,6 +25,8 @@
 //                         solo ricezione, il microfono resta spento; anche dall'editor)
 //   layout: overlay       (o "sotto" o "popup"; anche dall'editor visuale)
 //   compact_style: pillola (solo layout popup: la card compatta in dashboard, "pillola" o "tile")
+//   idle_picture: last_ring (da fermo la scena e la foto della card compatta mostrano l'ultimo squillo;
+//                         "standby" = niente foto, l'icona del citofono; le foto restano in cronologia)
 //
 //   layout: overlay   (default) "Video a tutta card": da fermo riga da 72 px (foto dell'ultimo
 //                     squillo = tasto cronologia | nome · stato · ultimo / tre pill). In diretta
@@ -769,6 +771,7 @@ const DEFAULTS = {
   history: 8,
   layout: "overlay",  // o "sotto" o "popup"
   compact_style: "pillola",  // card compatta del layout popup: o "tile"
+  idle_picture: "last_ring",  // o "standby": da fermo niente foto dell'ultimo squillo
   confirm_open: true,
   listen_on_ring: false,
 };
@@ -1273,7 +1276,7 @@ class VimarIntercomCard extends HTMLElement {
       });
       this._hist.replaceChildren(...nodes);
       this._empty.textContent = "Nessuno squillo registrato";
-      const still = srcs.find(Boolean);
+      const still = this._cfg.idle_picture !== "standby" && srcs.find(Boolean);
       for (const img of [this._still, this._pic]) if (still) img.src = still; else img.removeAttribute("src");
       this._photo.disabled = this._histBtn.disabled = !rings.length;
     } catch {
@@ -1756,12 +1759,17 @@ const SCHEMA = [
     { value: "pillola", label: "Pillola" },
     { value: "tile", label: "Tile" },
   ] } } },
+  { name: "idle_picture", selector: { select: { mode: "dropdown", options: [
+    { value: "last_ring", label: "Foto dell'ultimo squillo" },
+    { value: "standby", label: "Icona del citofono" },
+  ] } } },
   { name: "shortcuts", selector: { entity: { multiple: true, domain: ["lock", "button"] } } },
   { name: "history", selector: { number: { min: 0, max: 50, mode: "box" } } },
   { name: "confirm_open", selector: { boolean: {} } },
   { name: "listen_on_ring", selector: { boolean: {} } },
 ];
-const FIELD = { camera: "Telecamera", name: "Nome", layout: "In diretta", compact_style: "Card compatta (layout popup)", shortcuts: "Scorciatoie Apri sulla card compatta (vuoto = serratura)", history: "Squilli in cronologia (0 = niente)",
+const FIELD = { camera: "Telecamera", name: "Nome", layout: "In diretta", compact_style: "Card compatta (layout popup)", idle_picture: "Da fermo",
+  shortcuts: "Scorciatoie Apri sulla card compatta (vuoto = serratura)", history: "Squilli in cronologia (0 = niente)",
   confirm_open: "Apri con doppio tocco", listen_on_ring: "Ascolta il visitatore durante lo squillo" };
 
 class VimarIntercomCardEditor extends HTMLElement {

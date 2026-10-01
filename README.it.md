@@ -211,6 +211,8 @@ anchor: citofono   # "" = disattivato
 history: 8         # 0 = disattivato
 layout: overlay    # oppure "sotto" o "popup"
 compact_style: pillola   # solo layout "popup": la card compatta è una "pillola" o un "tile"
+idle_picture: last_ring  # da fermo la scena e la foto della card compatta mostrano l'ultimo squillo;
+                         # "standby" = l'icona del citofono (le foto restano in cronologia)
 ```
 
 Aprire la card non chiama mai la targa. Il video dal vivo parte solo durante lo squillo o una

@@ -211,6 +211,8 @@ anchor: citofono   # "" = off
 history: 8         # 0 = off
 layout: overlay    # or "sotto" or "popup"
 compact_style: pillola   # "popup" layout only: the compact card is a "pillola" (pill) or a "tile"
+idle_picture: last_ring  # at rest the scene and the compact card's photo show the last ring;
+                         # "standby" = the doorbell icon instead (photos stay in the history)
 ```
 
 Opening the card never calls the panel. The live video starts only while the doorbell rings or
