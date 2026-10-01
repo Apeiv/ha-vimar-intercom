@@ -8,6 +8,10 @@ Italian and are kept as they were written.
 
 ### Fixed
 
+- **Card popup layout**: the popup now opens when the card first sees a call already in progress
+  (notification "Answer", app reopened after the ring), not only on `ringing` or with the anchor in
+  the URL. A period that starts with `calling` (a tap on the card, HomeKit, Alexa) still needs the
+  anchor (#35).
 - "View outside" opened right after hanging up no longer fails after 25 s on local UDP (#41). The
   view waits for the panel to answer our BYE (at most 6 s) before calling it again. A call to the
   video panel (a view's, the card's "view outside", the call buttons) that the panel leaves

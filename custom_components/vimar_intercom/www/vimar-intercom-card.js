@@ -926,11 +926,17 @@ class VimarIntercomCard extends HTMLElement {
     if (!live || this._ws || this._starting) this._stopListen();
     else if (this._cfg.listen_on_ring && (!this._popup || this._pop.open) && !this._listenWs && !this._listenStarting) this._startListen(true);
 
-    // Popup: si apre da solo allo squillo (o dall'ancora), una volta per squillo.
+    // Popup: opens by itself when a live period begins that did not start from us: at the ring, or
+    // with an already answered call (notification "Answer", app reopened after missing the ring: the
+    // card sees idle -> in_call), once per period. It does not rely on the `#citofono` anchor, which
+    // may never reach the card. A period beginning with "calling" is an outgoing call (a tap on the
+    // card, HomeKit, Alexa): the popup only opens if the anchor is present.
+    if (!live) this._liveFrom = null;
+    else if (!this._liveFrom) this._liveFrom = state;
     if (!live) this._popTried = false;
     else if (this._pop.open) this._popTried = true;
     else if (this._popup && !this._popTried && this.isConnected && !this._preview
-        && (state === "ringing" || (this._cfg.anchor && location.hash === `#${this._cfg.anchor}`))) {
+        && (this._liveFrom !== "calling" || (this._cfg.anchor && location.hash === `#${this._cfg.anchor}`))) {
       this._popTried = true;
       this._openPop();
     }

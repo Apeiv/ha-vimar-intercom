@@ -1121,6 +1121,26 @@ def test_layout_popup_si_apre_allo_squillo_una_volta(monkeypatch, engine):  # no
 
 
 @pytest.mark.parametrize("engine", ["chromium"], indirect=True)
+def test_layout_popup_opens_when_card_starts_in_call(monkeypatch, engine):  # noqa: F811
+    """Notification "Answer": the app wakes up and the card goes from idle to in_call without
+    having seen the ring, and the #citofono anchor may not arrive. The popup opens anyway, once;
+    closed by hand it does not reopen and does not hang up a call that is not the card's."""
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            await rig.register()
+            async with Card(rig, engine, layout="popup", webcodecs=False) as c:
+                await c.until(IDLE)
+                rig.state_override = "in_call"  # as if the automation had answered
+                await c.until("info().pop")
+                await c.tap("x")
+                await c.until("!info().pop")
+                await asyncio.sleep(1)
+                assert not (await c.info())["pop"] and not rig.services
+                assert not (await c.T())["errors"]
+    run(s())
+
+
+@pytest.mark.parametrize("engine", ["chromium"], indirect=True)
 def test_editor_visuale(monkeypatch, engine):  # noqa: F811
     """L'editor (getConfigElement, ha-form finto) manda `config-changed` con le sole chiavi
     diverse dai default; la card viva riceve setConfig e cambia layout e nome subito."""
