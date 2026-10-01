@@ -1,6 +1,6 @@
 # Vimar Intercom — Home Assistant integration
 
-[![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
+[![Release](https://img.shields.io/github/v/release/lollox80/ha-vimar-intercom?style=for-the-badge)](https://github.com/lollox80/ha-vimar-intercom/releases) [![HACS](https://img.shields.io/badge/HACS-Custom-orange?style=for-the-badge)](https://hacs.xyz/docs/faq/custom_repositories/) [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.7%2B-41BDF5?style=for-the-badge&logo=home-assistant&logoColor=white)](https://www.home-assistant.io/) [![Tests](https://img.shields.io/github/actions/workflow/status/lollox80/ha-vimar-intercom/validate.yml?branch=main&label=tests&style=for-the-badge)](https://github.com/lollox80/ha-vimar-intercom/actions/workflows/validate.yml) [![License](https://img.shields.io/github/license/lollox80/ha-vimar-intercom?style=for-the-badge)](https://github.com/lollox80/ha-vimar-intercom/blob/main/LICENSE) [![Stars](https://img.shields.io/github/stars/lollox80/ha-vimar-intercom?style=for-the-badge)](https://github.com/lollox80/ha-vimar-intercom/stargazers)
 
 🇮🇹 *[Leggi questa pagina in italiano](https://github.com/lollox80/ha-vimar-intercom/blob/main/README.it.md)*
 
