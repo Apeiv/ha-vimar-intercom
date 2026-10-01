@@ -4,6 +4,35 @@ The integration can publish the intercom to Apple Home by itself, as a video doo
 category 18). It uses HAP-python, the library Home Assistant's HomeKit bridge is built on, and it
 changes nothing in Home Assistant. It is off by default.
 
+
+🇮🇹 *[Italiano](HOMEKIT.it.md)* · [← README](../README.md)
+
+## Quick start
+
+The integration can publish the intercom to the Apple Home app as its own video doorbell: ring
+notification, live video, two-way audio, and the gate as a lock in the same view. It is off by
+default. Home Assistant's HomeKit bridge cannot do this: its doorbell shows Talk, but never listens on
+the port it gives the phone, so the visitor never hears you. The rest of this page has the details.
+
+1. Settings → Devices & services → Vimar Intercom → **Configure** → **HomeKit** → turn on **Publish
+   to HomeKit**.
+2. The same HomeKit page (administrators only) now shows a QR code and an 8-digit code; a notification
+   reminds you that pairing is waiting. In the Home app choose **Add Accessory** and scan it; iOS
+   warns that the accessory is not certified, choose **Add Anyway**.
+3. In the accessory settings, **Show as Separate Tiles** puts the gate in the live view.
+
+| Option | Description |
+|---|---|
+| **Smoother video (re-encode)** | On (default): a keyframe every second, so a packet lost on the cloud relay is a brief smear instead of a freeze of up to 3 s; opening takes about 0.5 s longer. Off: the panel's own stream, faster to open |
+| **During a ring** | *Answer when you talk* (default): opening the notification previews the street without answering, and your first word answers. *Answer when the view opens*: opening answers at once and the Tab stops ringing |
+
+Closing the last HomeKit view ends a call that HomeKit placed or answered. Everyone who can use the
+doorbell in the Home app (whoever paired it, and those the home is shared with) sees the video, talks
+and opens the gate: `allowed_users` does not apply to HomeKit. Do not also pair the same
+intercom through a Scrypted HomeKit bridge: the Home app would show two doorbells and every ring would
+notify twice.
+
+
 ## Why not Home Assistant's HomeKit bridge
 
 The bridge cannot carry the talk direction. Its doorbell camera advertises a speaker, and the Home
