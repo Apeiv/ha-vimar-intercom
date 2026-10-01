@@ -390,7 +390,7 @@
         },
         "sip_timeout": {
           "name": "Timeout SIP per sonda",
-          "description": "Quanto aspettare la risposta SIP (200/404) di ogni sonda prima di passare oltre."
+          "description": "Quanto aspettare la risposta SIP (200/202/404) di ogni sonda prima di passare oltre. Via cloud il relay può rispondere 202 (accettato, non consegnato) solo dopo ~15 s, quindi usare 20."
         }
       }
     }

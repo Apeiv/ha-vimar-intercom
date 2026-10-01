@@ -102,7 +102,7 @@ FIND_SGA_SCHEMA = vol.Schema({
     vol.Optional("delay", default=1.0): vol.All(vol.Coerce(float), vol.Range(min=0.2, max=10)),
     vol.Optional("reply_wait", default=3.0): vol.All(vol.Coerce(float), vol.Range(min=1, max=15)),
     vol.Optional("probe", default="get_nicks"): vol.In(["get_nicks", "get_init_status"]),
-    vol.Optional("sip_timeout", default=8.0): vol.All(vol.Coerce(float), vol.Range(min=2, max=15)),
+    vol.Optional("sip_timeout", default=8.0): vol.All(vol.Coerce(float), vol.Range(min=2, max=30)),
     vol.Optional("apply", default=False): cv.boolean,
     vol.Optional("apply_sga", default=False): cv.boolean,
 })

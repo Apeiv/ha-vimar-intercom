@@ -339,9 +339,11 @@ If a plant leaves `GET_NICKS` without any SIP answer (reported on a 40515 in clo
 `GET_INIT_STATUS` got `200`), use `probe: get_init_status`. It gives the three clean outcomes, and the
 address whose probe triggers the `GET_INIT_STATUS_REPLY` is the PICG, but sent to the real SGA it makes
 the VIEW app show "Configurazione appartamento modificata" every time. `sip_timeout` (default 8 s)
-bounds how long each probe waits for its SIP answer. The response lists every probe with its outcome:
-`absent` (404), `exists` (accepted, no reply), `replied`, `no_response`, `error`; plus `picg` and the
-nicknames the intercom declared.
+bounds how long each probe waits for its SIP answer; over the cloud relay use 20, because its `202` can
+take ~15 s. The response lists every probe with its outcome: `absent` (404), `exists` (accepted, no
+reply), `queued` (`202`: the cloud relay accepted the message but no device took it, so nothing at that
+address can answer over the cloud), `replied`, `no_response`, `error`; plus `picg` and the nicknames the
+intercom declared.
 
 ---
 

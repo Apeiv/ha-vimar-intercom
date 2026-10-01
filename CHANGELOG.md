@@ -4,6 +4,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [semver](ht
 Newest entries on top. **Entries are written in English from 1.0.1 onwards**; earlier ones are in
 Italian and are kept as they were written.
 
+## [Unreleased]
+
+### Fixed
+
+- `find_sga` reports a `202 Accepted` as `queued` instead of `exists`: the cloud relay accepted the
+  probe but no device took it, so nothing at that address can answer over the cloud (#14). The
+  service's `sip_timeout` now goes up to 30 s, because over the relay that `202` can take ~15 s.
+
 ## [1.0.16] - 2026-09-30
 
 ### Added

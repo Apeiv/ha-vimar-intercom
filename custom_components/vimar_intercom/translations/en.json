@@ -390,7 +390,7 @@
         },
         "sip_timeout": {
           "name": "SIP timeout per probe",
-          "description": "How long to wait for each probe's SIP answer (200/404) before moving on."
+          "description": "How long to wait for each probe's SIP answer (200/202/404) before moving on. Over the cloud the relay may answer 202 (accepted, not delivered) only after ~15 s, so use 20."
         }
       }
     }
