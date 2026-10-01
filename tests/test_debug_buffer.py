@@ -6,9 +6,9 @@ import logging
 import types
 
 import pytest
+from harness.web import WEB, Request, load_views
 
 from custom_components.vimar_intercom import log_buffer
-from harness.web import WEB, Request, load_views
 
 
 class _Response:

@@ -17,7 +17,9 @@ import pytest
 
 from custom_components.vimar_intercom import media_handler as mh
 from custom_components.vimar_intercom.media_handler import (
-    RTPVideoProtocol, ulaw_decode, ulaw_encode,
+    RTPVideoProtocol,
+    ulaw_decode,
+    ulaw_encode,
 )
 
 START_CODE = b"\x00\x00\x00\x01"
@@ -110,7 +112,7 @@ def test_ulaw_roundtrip_is_close():
     encoded = ulaw_encode(pcm)
     decoded = ulaw_decode(encoded)
     out = [struct.unpack_from("<h", decoded, i * 2)[0] for i in range(len(samples))]
-    for orig, rt in zip(samples, out):
+    for orig, rt in zip(samples, out, strict=False):
         # Tolleranza μ-law: errore relativo entro ~la banda del segmento.
         assert abs(orig - rt) <= max(256, abs(orig) * 0.10)
 
@@ -182,7 +184,7 @@ def test_rtp_h264_vero_di_ffmpeg_con_pacchetti_scambiati_e_ripetuti(tmp_path):
     try:
         while True:
             pkts.append(sock.recv(2000))
-    except socket.timeout:
+    except TimeoutError:
         pass
     assert len(pkts) > 30  # STAP-A (SPS+PPS), FU-A e NAL singoli
     pkts[10], pkts[11] = pkts[11], pkts[10]

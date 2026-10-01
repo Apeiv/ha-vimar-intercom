@@ -38,7 +38,7 @@ def _kdf(master_key: bytes, master_salt: bytes, label: int, length: int) -> byte
     key_id = (label << 48).to_bytes(7, "big")
     salt = master_salt[:14]
     key_id_padded = b"\x00" * 7 + key_id
-    x = bytes(a ^ b for a, b in zip(key_id_padded, salt))
+    x = bytes(a ^ b for a, b in zip(key_id_padded, salt, strict=False))
     iv = x + b"\x00\x00"
     return _aes_cm_keystream(master_key, iv, length)
 

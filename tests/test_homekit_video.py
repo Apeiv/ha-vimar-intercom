@@ -116,7 +116,7 @@ class TestTheOpeningGroup:
         run(dv.begin, BACKLOG, [])
         rtp, _ = received()
         s = [seq(p) for p in rtp]
-        assert all((b - a) & 0xFFFF == 1 for a, b in zip(s, s[1:]))
+        assert all((b - a) & 0xFFFF == 1 for a, b in zip(s, s[1:], strict=False))
 
     def test_the_backlog_is_squeezed_so_it_is_not_late(self, rig):
         """Three frames, 133 ms of panel video: three ticks on our side."""
@@ -143,7 +143,7 @@ class TestTheOpeningGroup:
         run(dv.begin, backlog, [stap])
         rtp, _ = received()
         s = [seq(p) for p in rtp]
-        assert all((b - a) & 0xFFFF == 1 for a, b in zip(s, s[1:])), s
+        assert all((b - a) & 0xFFFF == 1 for a, b in zip(s, s[1:], strict=False)), s
         assert rtp[0][12] & 0x1F == 24 and ts(rtp[0]) == ts(rtp[1])
 
 
@@ -195,9 +195,9 @@ class TestTheLiveFlow:
         assert dv.stats["late_dropped"] == 0
         assert len(rtp) == 10
         s = [seq(p) for p in rtp]
-        assert all((b - a) & 0xFFFF == 1 for a, b in zip(s, s[1:])), s
+        assert all((b - a) & 0xFFFF == 1 for a, b in zip(s, s[1:], strict=False)), s
         t = [ts(p) for p in rtp[6:]]
-        assert [(b - a) & 0xFFFFFFFF for a, b in zip(t, t[1:])] == [6000, 6000, 6000]
+        assert [(b - a) & 0xFFFFFFFF for a, b in zip(t, t[1:], strict=False)] == [6000, 6000, 6000]
 
     def test_a_new_stream_does_not_count_as_upstream_loss(self, rig):
         dv, received, run, *_ = rig

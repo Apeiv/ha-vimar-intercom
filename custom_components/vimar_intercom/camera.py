@@ -10,8 +10,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from . import frame_grabber
-from . import ring_log
+from . import frame_grabber, ring_log
 from . import runtime as R
 from .const import DOMAIN
 from .device import device_info

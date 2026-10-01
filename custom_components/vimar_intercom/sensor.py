@@ -18,10 +18,10 @@ from homeassistant.const import UnitOfTime
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from . import runtime as R
 from .const import DOMAIN
 from .device import device_info
 from .hub import sip_id_name
-from . import runtime as R
 
 _LOGGER = logging.getLogger(__name__)
 

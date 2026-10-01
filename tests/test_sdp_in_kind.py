@@ -153,7 +153,7 @@ def test_a_parsed_offer_logged_through_redact_shows_no_key():
         f"a=crypto:3 F8_128_HMAC_SHA1_80 inline:{KEY_B}\r\n"
         f"a=crypto:5 AES_CM_128_HMAC_SHA1_32 inline:{KEY_A}\r\n"
     )
-    out = lr.redact("SDP: audio=%s" % (sip.parse_sdp(offer),))
+    out = lr.redact(f"SDP: audio={sip.parse_sdp(offer)}")
     assert KEY_A not in out and KEY_B not in out
     assert "AES_CM_128_HMAC_SHA1_32" in out, "the rest stays readable"
 
@@ -170,6 +170,7 @@ def test_a_rebuilt_answer_in_a_dialog_keeps_the_running_srtp_key(monkeypatch):
     audio-only answer, so our old SDP no longer fits and a new answer is built.
     The media keeps running with the old key: the new answer must carry it."""
     import asyncio
+
     from custom_components.vimar_intercom import media_handler as mh
 
     monkeypatch.setattr(sip.R, "MEDIA_ENC", True)
@@ -205,6 +206,7 @@ def test_an_srtp_line_we_refuse_gets_no_media(monkeypatch):
     """Answered with port 0, the line must not be set up either: we would
     send plain RTP into an encrypted session."""
     import asyncio
+
     from custom_components.vimar_intercom import media_handler as mh
     offer = sip.parse_sdp(
         "v=0\r\nc=IN IP4 192.0.2.20\r\n"

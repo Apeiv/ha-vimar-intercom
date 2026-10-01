@@ -7,19 +7,13 @@ import os
 import re
 import time
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from . import sip_client as sip
-from . import away_tts
-from . import frame_grabber
-from . import media_handler as media
-from . import ring_log
+from . import away_tts, frame_grabber, log_redact, rest_client, ring_log, validate, webhook
 from . import const as C
+from . import media_handler as media
 from . import runtime as R
-from . import validate
-from . import log_redact
-from . import rest_client
-from . import webhook
+from . import sip_client as sip
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -215,7 +209,7 @@ class VimarIntercomHub:
             # Foto e clip dell'ultimo squillo (snapshot_dir): nome file, percorso, versione foto
             "last_photo": None, "last_photo_path": None, "last_photo_v": None,
             "last_clip": None, "last_clip_path": None,
-            "started_at": datetime.now(timezone.utc),
+            "started_at": datetime.now(UTC),
         }
         self._call_started_mono: float | None = None
         self._ring_answered = False
@@ -242,7 +236,7 @@ class VimarIntercomHub:
     # ─── helpers stato esteso ────────────────────────────────────────────
     @staticmethod
     def _now():
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
 
     def notify(self) -> None:
         """Rinfresca le entità (es. dopo una modifica delle opzioni fuori dall'hub)."""
@@ -547,7 +541,7 @@ class VimarIntercomHub:
             started = time.monotonic()
             try:
                 await asyncio.wait_for(self._hangup_done.wait(), HANGUP_SETTLE)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
             _LOGGER.info("Hang-up in progress: waited %.1fs before calling again",
                          time.monotonic() - started)
@@ -1033,7 +1027,7 @@ class VimarIntercomHub:
         try:
             await asyncio.wait_for(sip.do_hangup(on_local_end=on_local_end),
                                    HANGUP_BYE_TIMEOUT)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             _LOGGER.warning("Hang-up: no end after %.0fs", HANGUP_BYE_TIMEOUT)
 
     async def async_door(self, target: str | None = None, command: str | None = None) -> tuple[bool, str]:
@@ -1834,7 +1828,7 @@ class VimarIntercomHub:
                         try:
                             got = await asyncio.wait_for(
                                 asyncio.shield(self._probe_waiter), reply_wait)
-                        except asyncio.TimeoutError:
+                        except TimeoutError:
                             got = None
                         if got:
                             entry["outcome"] = "replied"

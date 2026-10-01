@@ -15,15 +15,14 @@ import asyncio
 import collections
 import re
 import shutil
-import socket
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
-from custom_components.vimar_intercom import const as C
 from custom_components.vimar_intercom import av_stream
+from custom_components.vimar_intercom import const as C
 
 COMPONENT = Path(__file__).resolve().parents[1] / "custom_components" / "vimar_intercom"
 

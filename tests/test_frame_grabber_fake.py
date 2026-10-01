@@ -75,7 +75,7 @@ class _Proc:
 
     async def wait(self):
         if self.stuck and not self.killed:
-            raise asyncio.TimeoutError
+            raise TimeoutError
         if self.returncode is None:
             if self.on_wait:
                 self.on_wait(self)
@@ -84,7 +84,7 @@ class _Proc:
 
     async def communicate(self, data=None):
         if self.stuck:
-            raise asyncio.TimeoutError
+            raise TimeoutError
         self.communicated = data
         if self.on_wait:
             self.on_wait(self)

@@ -23,18 +23,11 @@ from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import selector
 
+from . import cloud_phonebook, discovery, profiles, qr_decoder, rest_client, rubrica_import, runtime, validate
 from .const import (
     AWAY_TEXT_MAX,
     CA_PATH,
-    MY_NAME,
-    SIP_PORT as CLOUD_SIP_PORT,
-    USER_AGENT,
     CAMERA_TARGET,
-    DEFAULT_SNAPSHOT_DELAY,
-    DOMAIN,
-    INTERNAL_PANEL_TARGET,
-    PICG_TARGET,
-    SGA_TARGET,
     CONF_HOMEKIT_ACCESSORY,
     CONF_HOMEKIT_ANSWER,
     CONF_HOMEKIT_RING_BUTTON,
@@ -43,23 +36,29 @@ from .const import (
     DEFAULT_HOMEKIT_ANSWER,
     DEFAULT_HOMEKIT_RING_BUTTON,
     DEFAULT_HOMEKIT_SMOOTH,
+    DEFAULT_SNAPSHOT_DELAY,
+    DOMAIN,
     HOMEKIT_ANSWER_OPEN,
     HOMEKIT_ANSWER_TALK,
     HOMEKIT_DATA,
     HOMEKIT_QR_URL,
+    INTERNAL_PANEL_TARGET,
+    MY_NAME,
+    PICG_TARGET,
+    SGA_TARGET,
+    USER_AGENT,
 )
-from . import cloud_phonebook
-from . import discovery
-from . import profiles
-from . import qr_decoder
-from . import rest_client
-from . import rubrica_import
-from . import runtime
-from .sip_client import _challenge_params, _resolve_sip_targets
-from . import validate
+from .const import (
+    SIP_PORT as CLOUD_SIP_PORT,
+)
 from .runtime import (
-    MEDIA_ENC_MODES, VOICE_ANSWER_MODES, media_enc_mode, view_keepalive_default, voice_answer_mode,
+    MEDIA_ENC_MODES,
+    VOICE_ANSWER_MODES,
+    media_enc_mode,
+    view_keepalive_default,
+    voice_answer_mode,
 )
+from .sip_client import _challenge_params, _resolve_sip_targets
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -255,7 +254,7 @@ async def _test_sip_registration(
                     parts = message.split("\r\n", 1)[0].split(" ")
                     if len(parts) > 1 and parts[1].isdigit() and int(parts[1]) >= 200:
                         return message
-                raise socket.timeout
+                raise TimeoutError
 
             def refused(first: str) -> str:
                 if " 503" in first:
@@ -289,7 +288,7 @@ async def _test_sip_registration(
                 return True, "Registration succeeded"
             return False, refused(first2) if " 503" in first2 else f"Authentication refused: {first2}"
 
-        except socket.timeout:
+        except TimeoutError:
             return False, (
                 f"Timeout ({timeout:.0f}s): the intercom does not answer on "
                 f"{local_proxy}:{DEFAULT_LOCAL_SIP_PORT}. Check that Home "
@@ -376,12 +375,13 @@ async def _test_cloud_registration(
                     my_ip, my_port = sock.getsockname()[:2]
 
                     def make_register(auth_hdr=None, seq=1):
-                        contact = f"<sip:{sip_user}@{my_ip}:{my_port};transport=tls>"
+                        # Called only in this iteration: my_ip/my_port are the current socket's.
+                        contact = f"<sip:{sip_user}@{my_ip}:{my_port};transport=tls>"  # noqa: B023
                         if device_uuid:
                             contact += f';+sip.instance="<urn:uuid:{device_uuid}>"'
                         lines = [
                             f"REGISTER {uri} SIP/2.0",
-                            f"Via: SIP/2.0/TLS {my_ip}:{my_port};alias;"
+                            f"Via: SIP/2.0/TLS {my_ip}:{my_port};alias;"  # noqa: B023
                             f"branch=z9hG4bK{secrets.token_hex(4)};rport",
                             f"Route: <sip:{cloud_proxy};transport=tls;lr>",
                             "Max-Forwards: 70",
@@ -416,7 +416,7 @@ async def _test_cloud_registration(
                                 parts = message.split("\r\n", 1)[0].split(" ")
                                 if len(parts) > 1 and parts[1].isdigit() and int(parts[1]) >= 200:
                                     return message
-                        raise socket.timeout
+                        raise TimeoutError
 
                     sock.sendall(make_register())
                     response = read_final()
