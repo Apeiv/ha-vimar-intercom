@@ -23,12 +23,12 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import bisect
 import logging
 import os
 import socket
 import struct
 import time
-import bisect
 from collections import OrderedDict
 
 from .homekit_audio import (
@@ -167,6 +167,9 @@ class Transcoder:
         # at its keyframe). The encoder rounds its timestamps to its own
         # 15 fps clock while the panel's are slightly irregular, so a later
         # output frame matches the nearest input frame within half a frame.
+        # A diagnostic for the log only: if ffmpeg drops that first frame (a
+        # keyframe damaged on the relay), every later sample shifts by a frame
+        # or stops matching, so compare views with that in mind.
         self._in_first_ts: int | None = None
         self._in_at: OrderedDict[int, float] = OrderedDict()
         self._out_first_ts: int | None = None
