@@ -8,6 +8,8 @@ Italian and are kept as they were written.
 
 ### Fixed
 
+- `/av`'s input SDP is written to a private temporary file (mode 0600, an unpredictable name) instead
+  of a fixed, guessable path in the temp directory, and removed when ffmpeg is stopped.
 - "View outside" opened right after hanging up no longer fails after 25 s on local UDP (#41). The
   view waits for the panel to answer our BYE (at most 6 s) before calling it again. A call to the
   video panel (a view's, the card's "view outside", the call buttons) that the panel leaves
