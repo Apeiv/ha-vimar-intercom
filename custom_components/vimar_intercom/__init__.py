@@ -235,13 +235,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Closures locali: catturano audio_ws_clients (nessun global di modulo).
     async def _ws_send_bytes(data: bytes):
-        dead = set()
-        for ws in list(audio_ws_clients):  # copia: il set cambia durante gli await
-            try:
-                await ws.send_bytes(data)
-            except Exception:
-                dead.add(ws)
-        audio_ws_clients.difference_update(dead)
+        # To every client at once (#53): one slow client (a phone on mobile data,
+        # a keyframe still draining) used to hold the voice of all the others.
+        clients = list(audio_ws_clients)  # copia: il set cambia durante gli await
+        results = await asyncio.gather(*(ws.send_bytes(data) for ws in clients),
+                                       return_exceptions=True)
+        audio_ws_clients.difference_update(
+            ws for ws, res in zip(clients, results, strict=True) if isinstance(res, Exception))
 
     async def _broadcast(data: dict):
         text = json.dumps(data)
