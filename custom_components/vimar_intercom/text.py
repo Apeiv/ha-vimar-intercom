@@ -5,7 +5,7 @@ from homeassistant.components.text import TextEntity
 from homeassistant.const import EntityCategory
 
 from . import runtime as R
-from .away_config import set_away
+from .away_config import require_admin, set_away
 from .const import AWAY_TEXT_MAX
 from .device import device_info
 
@@ -32,5 +32,6 @@ class VimarAwayText(TextEntity):
         return R.AWAY_MESSAGE_TEXT[:AWAY_TEXT_MAX]
 
     async def async_set_value(self, value: str) -> None:
+        await require_admin(self.hass, self._context)
         set_away(self.hass, self._entry, "away_message_text", value.strip())
         self.async_write_ha_state()

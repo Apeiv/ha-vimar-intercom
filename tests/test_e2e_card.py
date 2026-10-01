@@ -10,6 +10,7 @@ card con webcodecs=False; il bench e la prova di ripiego stanno in fondo.
 from __future__ import annotations
 
 import asyncio
+import base64
 import re
 import struct
 import time
@@ -546,6 +547,83 @@ def test_clip_nella_cronologia_play_e_video(monkeypatch, engine, tmp_path):  # n
     run(s())
 
 
+PNG_1PX = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=")
+
+
+def test_history_photos_re_signed_after_expiry(monkeypatch, engine, tmp_path):  # noqa: F811
+    """Signed paths expire ~30 s after auth/sign_path; a photo the phone fetched again later
+    got a 401 ("invalid authentication" in HA's log) and stayed broken. Here the first fetch
+    of every photo after the history reloads is refused as expired: thumbnails, the last
+    ring's still and the photo opened from the list all end up loaded, each with a new
+    signature."""
+    for n in ("squillo_20260927_090000.jpg", "squillo_20260927_100000.jpg"):
+        (tmp_path / n).write_bytes(PNG_1PX)
+    ring_log.update_ring_log(str(tmp_path), lambda r: r.append(
+        {"time": "2026-09-27T09:00:00+02:00", "photo": "squillo_20260927_090000.jpg", "outcome": "missed"}))
+    loaded = """[...card.shadowRoot.querySelectorAll('.hist img, .still, #photo img')]
+      .every((i) => i.complete && i.naturalWidth > 0)"""
+
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            monkeypatch.setattr(R, "SNAPSHOT_DIR", str(tmp_path))
+            await rig.register()
+            async with Card(rig, engine, query="&signs") as c:
+                await c.until("card.shadowRoot.querySelectorAll('.hist img').length === 1 && " + loaded)
+                refused, seen = [], set()
+
+                async def expire_first(route):
+                    path = route.request.url.split("?")[0]
+                    if path in seen:
+                        await route.continue_()
+                    else:
+                        seen.add(path)
+                        refused.append(route.request.url)
+                        await route.fulfill(status=401)
+                await c.page.route(re.compile(r"/api/vimar_intercom/rings/[^?]+\.jpg\?"), expire_first)
+                ring_log.update_ring_log(str(tmp_path), lambda r: r.append(
+                    {"time": "2026-09-27T10:00:00+02:00", "photo": "squillo_20260927_100000.jpg", "outcome": "missed"}))
+                rig.hub.stats.update(last_photo="squillo_20260927_100000.jpg", last_photo_v=2)
+                await c.until("card.shadowRoot.querySelectorAll('.hist img').length === 2 && " + loaded)
+                assert len(refused) == 2, refused
+                srcs = await c.page.evaluate(
+                    "[...card.shadowRoot.querySelectorAll('.hist img, .still, #photo img')].map((i) => i.src)")
+                assert not set(srcs) & set(refused), (srcs, refused)
+                await c.page.evaluate("card.shadowRoot.querySelectorAll('.hist button')[0].click()")
+                await c.until("((i) => i.complete && i.naturalWidth > 0)(card.shadowRoot.querySelector('dialog.photo img'))")
+                opened = await c.page.evaluate("card.shadowRoot.querySelector('dialog.photo img').src")
+                assert "squillo_20260927_100000.jpg" in opened and opened not in srcs + refused, (opened, srcs)
+                assert not (await c.T())["errors"]
+    run(s())
+
+
+@pytest.mark.parametrize("idle", [None, "standby"])
+def test_idle_picture_standby_keeps_ring_photo_out_of_the_scene(monkeypatch, engine, tmp_path, idle):  # noqa: F811
+    """`idle_picture: standby`: at rest neither the scene's still nor the compact photo button
+    shows the last ring (the doorbell icon does); the photo stays in the history drawer.
+    Default (`last_ring`): both show it, as before."""
+    (tmp_path / "squillo_20260927_090000.jpg").write_bytes(PNG_1PX)
+    ring_log.update_ring_log(str(tmp_path), lambda r: r.append(
+        {"time": "2026-09-27T09:00:00+02:00", "photo": "squillo_20260927_090000.jpg", "outcome": "missed"}))
+    js = """(() => { const r = card.shadowRoot, src = (s) => r.querySelector(s).getAttribute('src');
+      return { hist: src('.hist img'), still: src('.still'), pic: src('#photo img'),
+               icon: getComputedStyle(r.querySelector('#photo ha-icon')).display }; })()"""
+
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            monkeypatch.setattr(R, "SNAPSHOT_DIR", str(tmp_path))
+            await rig.register()
+            async with Card(rig, engine, query=f"&idle_picture={idle}" if idle else "") as c:
+                await c.until("card.shadowRoot.querySelector('.hist img')?.getAttribute('src')")
+                st = await c.page.evaluate(js)
+                assert "squillo_20260927_090000.jpg" in st["hist"], st
+                if idle == "standby":
+                    assert st["still"] is None and st["pic"] is None and st["icon"] != "none", st
+                else:
+                    assert st["still"] == st["pic"] == st["hist"] and st["icon"] == "none", st
+                assert not rig.services and not rig.peer.got(is_("INVITE"))
+    run(s())
+
+
 @pytest.mark.parametrize("engine", ["chromium"], indirect=True)
 def test_video_webcodecs_primo_fotogramma_subito(monkeypatch, engine):  # noqa: F811
     """Dal campo (2026-09-27): INVITE, 200 OK a 1,1 s, primo IDR a ~2 s, ma il video in card
@@ -618,6 +696,84 @@ def test_video_webcodecs_primo_fotogramma_subito(monkeypatch, engine):  # noqa: 
                 t = await c.T()
                 assert t["av"] == [] and t["ws"] == 2 and not t["errors"], t
                 assert len(rig.peer.got(is_("INVITE"))) == 1  # solo la nostra "Vedi esterno"
+    run(s())
+
+
+# The card's _pcmSink on a fake AudioContext at 48 kHz (WebKit of Playwright has no Web Audio): one second of a 440 Hz sine in 20 ms
+# packets, then two packets after the playout clock ran dry.
+PCM_SINK = """(() => {
+  const starts = [], srcs = [], lp = {};
+  let now = 0;
+  const ctx = { sampleRate: 48000, get currentTime() { return now; },
+    createBiquadFilter: () => Object.assign(lp, { frequency: {}, connect: (g) => (lp.to = g) }),
+    createBuffer: (c, n, r) => { const d = new Float32Array(n); return { sampleRate: r, duration: n / r, getChannelData: () => d }; },
+    createBufferSource: () => { const s = { connect: (d) => (s.to = d), start: (t) => starts.push(t) }; srcs.push(s); return s; } };
+  const sink = card._pcmSink(ctx, "GAIN");
+  const pkt = (k) => { const b = new ArrayBuffer(321), v = new DataView(b); v.setUint8(0, 1);
+    for (let i = 0; i < 160; i++) v.setInt16(1 + 2 * i, Math.round(16000 * Math.sin(2 * Math.PI * 440 * (k * 160 + i) / 8000)), true);
+    return b; };
+  for (let k = 0; k < 50; k++) sink({ data: pkt(k) });
+  const out = srcs.flatMap((s) => [...s.buffer.getChannelData(0)]);
+  let jump = 0;
+  for (let i = 1; i < out.length; i++) jump = Math.max(jump, Math.abs(out[i] - out[i - 1]));
+  const gapless = starts.slice(1).every((t, i) => Math.abs(t - starts[i] - srcs[i].buffer.duration) < 1e-9);
+  now = 10; sink({ data: pkt(50) }); const ahead1 = starts.at(-1) - now;
+  now = 20; sink({ data: pkt(51) }); const ahead2 = starts.at(-1) - now;
+  return { n: out.length, rates: [...new Set(srcs.map((s) => s.buffer.sampleRate))], jump, gapless,
+           first: starts[0], ahead1, ahead2, lp: [lp.type, lp.frequency?.value],
+           chain: srcs.every((s) => s.to === lp) && lp.to === "GAIN" };
+})()"""
+
+
+def test_voice_resampled_continuously_low_passed_growing_buffer(monkeypatch, engine):  # noqa: F811
+    """#53: each 20 ms packet was an 8 kHz AudioBuffer resampled by the browser on its own,
+    a click at every edge. The sink now resamples to the context's rate across packets (no
+    jump bigger than the sine's own slope, exactly 6 samples per input sample), plays through
+    a 3.6 kHz low-pass, starts 120 ms ahead and adds 40 ms at every underrun."""
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            async with Card(rig, engine) as c:
+                r = await c.page.evaluate(PCM_SINK)
+                assert r["rates"] == [48000] and abs(r["n"] - 48000) <= 1, r
+                assert r["jump"] < 0.035, r  # 440 Hz at 0.49 full scale: max slope 0.028 per 48 kHz sample
+                assert r["gapless"] and r["chain"] and r["lp"] == ["lowpass", 3600], r
+                assert r["first"] == pytest.approx(0.12) and r["ahead1"] == pytest.approx(0.16), r
+                assert r["ahead2"] == pytest.approx(0.2), r
+    run(s())
+
+
+@pytest.mark.parametrize("engine", ["chromium"], indirect=True)  # WebKit di Playwright: niente WebCodecs
+@pytest.mark.parametrize("ios", [False, True])
+def test_decoder_gets_avc_description_and_length_prefixed_nals(monkeypatch, engine, ios):  # noqa: F811
+    """#53: on iPhone the picture smeared between keyframes with Annex B input. The decoder
+    is configured with an avcC description built from SPS/PPS, chunks carry a 4-byte length
+    instead of a start code (the key chunk is the IDR alone), and low-latency mode is off
+    on iOS only. Frames still decode."""
+    if not hm.FFMPEG:
+        pytest.skip("serve ffmpeg per il video della targa finta")
+
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            await rig.register()
+            rig.answer(media_on=True)
+            async with Card(rig, engine, query="&ios" if ios else "") as c:
+                await c.until(IDLE)
+                await c.tap("view")
+                await c.until("info().player?.frames > 20", 8)  # past a second IDR
+                t = await c.T()
+                cfg = t["vdCfg"][0]
+                d = cfg["desc"]
+                assert len(t["vdCfg"]) == 1, t["vdCfg"]  # same SPS/PPS at every IDR: no reconfigure
+                assert d[:1] == [1] and d[4:6] == [0xFF, 0xE1], cfg
+                assert cfg["codec"] == "avc1." + "".join(f"{b:02X}" for b in d[1:4]), cfg
+                sps_len = d[6] << 8 | d[7]
+                assert d[8] & 0x1F == 7 and d[8 + sps_len] == 1 and d[11 + sps_len] & 0x1F == 8, cfg
+                assert cfg["latency"] is (not ios), cfg
+                kind, *head = t["chunk"]
+                assert kind == "key" and head[:4] != [0, 0, 0, 1] and head[4] & 0x1F == 5, t["chunk"]
+                assert t["av"] == [] and not t["errors"], t
+                await c.tap("hangup")
+                await c.until(IDLE)
     run(s())
 
 
@@ -1117,6 +1273,63 @@ def test_layout_popup_si_apre_allo_squillo_una_volta(monkeypatch, engine):  # no
                 rig.ring("ring-2")
                 await c.until("info().pop")
                 assert not (await c.T())["errors"]
+    run(s())
+
+
+@pytest.mark.parametrize("engine", ["chromium"], indirect=True)
+def test_layout_popup_opens_when_card_starts_in_call(monkeypatch, engine):  # noqa: F811
+    """Notification "Answer": the app wakes up and the card goes from idle to in_call without
+    having seen the ring, and the #citofono anchor may not arrive. The popup opens anyway, once;
+    closed by hand it does not reopen and does not hang up a call that is not the card's."""
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            await rig.register()
+            async with Card(rig, engine, layout="popup", webcodecs=False) as c:
+                await c.until(IDLE)
+                rig.state_override = "in_call"  # as if the automation had answered
+                await c.until("info().pop")
+                await c.tap("x")
+                await c.until("!info().pop")
+                await asyncio.sleep(1)
+                assert not (await c.info())["pop"] and not rig.services
+                assert not (await c.T())["errors"]
+    run(s())
+
+
+@pytest.mark.parametrize("engine", ["chromium"], indirect=True)
+def test_shortcut_names_and_icons_cannot_inject_markup(monkeypatch, engine):  # noqa: F811
+    """A button entity's friendly_name and icon go into the shortcut tile: a name with markup or
+    a quote-breaking one must stay text, and a malformed icon falls back to the default."""
+    hostile = [
+        ("button.garage", '<img src=x onerror=window.__xss=1>', "mdi:evil\" onmouseover=\"window.__xss=2"),
+        ("button.garage2", 'x" data-pwn="1" y="', "mdi:ok-icon"),
+    ]
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            await rig.register()
+            async with Card(rig, engine, layout="popup", shortcuts="button.garage,button.garage2") as c:
+                await c.until(IDLE)
+                await c.page.evaluate("""(h) => {
+                  const st = {...card._hass.states};
+                  for (const [id, name, icon] of h) st[id] = { state: "unknown", attributes: { friendly_name: name, icon } };
+                  card.hass = {...card._hass, states: st};
+                }""", hostile)
+                await c.until("card.shadowRoot.querySelectorAll('.sc button').length === 2 && "
+                              "card.shadowRoot.querySelectorAll('.sc button .lbl')[0].textContent.startsWith('<img')")
+                r = await c.page.evaluate("""() => {
+                  const bs = [...card.shadowRoot.querySelectorAll('.sc button')];
+                  return { xss: window.__xss ?? null,
+                    imgs: card.shadowRoot.querySelectorAll('.sc img').length,
+                    labels: bs.map((b) => b.querySelector('.lbl').textContent),
+                    attrs: bs.map((b) => [...b.attributes].map((a) => a.name).sort().join()),
+                    icons: bs.map((b) => b.querySelector('ha-icon').getAttribute('icon')),
+                    iconAttrs: bs.map((b) => [...b.querySelector('ha-icon').attributes].map((a) => a.name).sort().join()) };
+                }""")
+                assert r["xss"] is None and r["imgs"] == 0, r
+                assert r["labels"] == [hostile[0][1], hostile[1][1]], r
+                assert r["attrs"] == ["data-icon,data-label"] * 2, r
+                assert r["icons"] == ["mdi:gesture-tap-button", "mdi:ok-icon"], r
+                assert r["iconAttrs"] == ["aria-hidden,icon"] * 2, r
     run(s())
 
 

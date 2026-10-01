@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import os
 
+from homeassistant.exceptions import Unauthorized
+
 from . import runtime as R
 from .const import DOMAIN
 
@@ -53,3 +55,14 @@ def set_away(hass, entry, key: str, value) -> None:
     R.set_away_option(key, value)
     hass.config_entries.async_update_entry(entry, options={**entry.options, key: value})
     hass.data[DOMAIN][entry.entry_id]["hub"].notify()  # rinfresca la disponibilità dello switch
+
+
+async def require_admin(hass, context) -> None:
+    """Away message entities change what visitors hear: administrators only. A call with no
+    user (automations, system) stays allowed, like the admin-only services."""
+    user_id = getattr(context, "user_id", None)
+    if user_id is None:
+        return
+    user = await hass.auth.async_get_user(user_id)
+    if user is None or not user.is_admin:
+        raise Unauthorized()

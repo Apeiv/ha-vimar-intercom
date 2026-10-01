@@ -25,6 +25,8 @@
 //                         solo ricezione, il microfono resta spento; anche dall'editor)
 //   layout: overlay       (o "sotto" o "popup"; anche dall'editor visuale)
 //   compact_style: pillola (solo layout popup: la card compatta in dashboard, "pillola" o "tile")
+//   idle_picture: last_ring (da fermo la scena e la foto della card compatta mostrano l'ultimo squillo;
+//                         "standby" = niente foto, l'icona del citofono; le foto restano in cronologia)
 //
 //   layout: overlay   (default) "Video a tutta card": da fermo riga da 72 px (foto dell'ultimo
 //                     squillo = tasto cronologia | nome · stato · ultimo / tre pill). In diretta
@@ -551,9 +553,15 @@ const STYLE = `
   }
 `;
 
-const btn = (id, icon, label) =>
-  `<button${id ? ` id="${id}"` : ""} data-icon="${icon}" data-label="${label}"><span class="ic"><ha-icon icon="${icon}" aria-hidden="true"></ha-icon></span>` +
-  `<span class="lbl">${label}</span></button>`;
+// Entity names and icons come from the states of other entities (friendly_name, icon): escape them
+// before they reach innerHTML, and accept only a "prefix:name" icon.
+const esc = (v) => String(v).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+const btn = (id, icon, label) => {
+  icon = /^[a-z0-9_-]+:[a-z0-9_-]+$/.test(icon) ? icon : "mdi:gesture-tap-button";
+  label = esc(label);
+  return `<button${id ? ` id="${id}"` : ""} data-icon="${icon}" data-label="${label}"><span class="ic"><ha-icon icon="${icon}" aria-hidden="true"></ha-icon></span>` +
+    `<span class="lbl">${label}</span></button>`;
+};
 const DRAWER = `<aside class="drawer" id="drawer" aria-label="Ultimi squilli"><div class="hist"></div>
   <div class="empty"><ha-icon icon="mdi:bell-off-outline" aria-hidden="true"></ha-icon><span></span></div></aside>`;
 const SCENE = `<div id="video"></div><img class="still" alt="">
@@ -591,6 +599,8 @@ const TEMPLATE = `<ha-card>
   <div class="head">${BELL}${PHOTO}<div class="ttl"><span class="name"></span>${SUB}</div>${ROW}<div class="sc"></div>${HIST}${CFGC}</div>
   ${PHOTO_DLG}</ha-card><dialog class="pop" aria-label="Citofono"></dialog>
   <dialog class="set" aria-label="Impostazioni citofono"></dialog>`;
+
+const same = (a, b) => !!a && !!b && a.length === b.length && a.every((v, i) => v === b[i]);
 
 const concat = (...parts) => {
   const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
@@ -660,18 +670,20 @@ class NalPlayer {
     this._t = setTimeout(() => this._open(), this._wait * 1000);
   }
 
-  // Un NAL in Annex B (00 00 00 01 + NAL). SPS e PPS si tengono; l'IDR coi suoi SPS+PPS
-  // è il chunk chiave (configura il decoder la prima volta), i P seguono. Mai un P
-  // prima del primo IDR (_dec non c'è) o dopo un buco (_skip): il decoder darebbe errore.
+  // Un NAL in Annex B (00 00 00 01 + NAL). SPS e PPS si tengono (vanno nella description
+  // del decoder); l'IDR è il chunk chiave (configura il decoder la prima volta o a SPS/PPS
+  // nuovi), i P seguono. Mai un P prima del primo IDR (_dec non c'è) o dopo un buco
+  // (_skip): il decoder darebbe errore.
   _nal(nal) {
     const t = nal[4] & 0x1f;
     if (t === 7) this._sps = nal;
     else if (t === 8) this._pps = nal;
     else if (t === 5 && this._sps && this._pps) {
       try {
-        if (!this._dec) this._configure();
+        // A new SPS/PPS (another panel, another resolution) needs a new description.
+        if (!this._dec || !same(this._cfgSps, this._sps) || !same(this._cfgPps, this._pps)) this._configure();
         this._skip = false;
-        this._decode("key", concat(this._sps, this._pps, nal));
+        this._decode("key", nal);
       } catch (e) {
         this._broken(e);
       }
@@ -682,15 +694,31 @@ class NalPlayer {
     }
   }
 
+  // The decoder gets AVC (avcC description + length-prefixed NALs), not Annex B: on iPhone
+  // (iOS 27) the picture smeared between keyframes with Annex B input while a PC was clean
+  // and Home Assistant had every packet (#53). Chrome takes both.
   _configure() {
-    const s = this._sps;  // profile_idc, constraint_set, level_idc → "avc1.42C01E"
-    const codec = "avc1." + [s[5], s[6], s[7]].map((b) => b.toString(16).padStart(2, "0")).join("").toUpperCase();
+    const s = this._sps.subarray(4), p = this._pps.subarray(4);  // without the start code
+    // profile_idc, constraint_set, level_idc → "avc1.42C01E"
+    const codec = "avc1." + [s[1], s[2], s[3]].map((b) => b.toString(16).padStart(2, "0")).join("").toUpperCase();
+    const description = concat(
+      Uint8Array.of(1, s[1], s[2], s[3], 0xff, 0xe1, s.length >> 8, s.length & 0xff), s,
+      Uint8Array.of(1, p.length >> 8, p.length & 0xff), p);
+    try { this._dec?.close(); } catch { /* già chiuso */ }
     this._dec = new VideoDecoder({ output: (f) => this._paint(f), error: (e) => this._broken(e) });
-    // Senza `description` il formato è Annex B. Codec non supportato: arriva da `error`.
-    this._dec.configure({ codec, optimizeForLatency: true });
+    // iOS: VideoToolbox in real-time mode may drop frames under load, and with every P frame
+    // a reference the picture smears until the next keyframe. Elsewhere latency wins.
+    // Codec non supportato: arriva da `error`.
+    const ios = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+    this._dec.configure({ codec, description, optimizeForLatency: !ios });
+    this._cfgSps = this._sps;
+    this._cfgPps = this._pps;
   }
 
-  _decode(type, data) {
+  _decode(type, nal) {
+    const body = nal.subarray(4), data = new Uint8Array(body.length + 4);  // 4-byte length + NAL
+    new DataView(data.buffer).setUint32(0, body.length);
+    data.set(body, 4);
     try {
       this._dec.decode(new EncodedVideoChunk({ type, timestamp: this._n++ * 66667, data }));
     } catch (e) {
@@ -743,6 +771,7 @@ const DEFAULTS = {
   history: 8,
   layout: "overlay",  // o "sotto" o "popup"
   compact_style: "pillola",  // card compatta del layout popup: o "tile"
+  idle_picture: "last_ring",  // o "standby": da fermo niente foto dell'ultimo squillo
   confirm_open: true,
   listen_on_ring: false,
 };
@@ -926,11 +955,17 @@ class VimarIntercomCard extends HTMLElement {
     if (!live || this._ws || this._starting) this._stopListen();
     else if (this._cfg.listen_on_ring && (!this._popup || this._pop.open) && !this._listenWs && !this._listenStarting) this._startListen(true);
 
-    // Popup: si apre da solo allo squillo (o dall'ancora), una volta per squillo.
+    // Popup: opens by itself when a live period begins that did not start from us: at the ring, or
+    // with an already answered call (notification "Answer", app reopened after missing the ring: the
+    // card sees idle -> in_call), once per period. It does not rely on the `#citofono` anchor, which
+    // may never reach the card. A period beginning with "calling" is an outgoing call (a tap on the
+    // card, HomeKit, Alexa): the popup only opens if the anchor is present.
+    if (!live) this._liveFrom = null;
+    else if (!this._liveFrom) this._liveFrom = state;
     if (!live) this._popTried = false;
     else if (this._pop.open) this._popTried = true;
     else if (this._popup && !this._popTried && this.isConnected && !this._preview
-        && (state === "ringing" || (this._cfg.anchor && location.hash === `#${this._cfg.anchor}`))) {
+        && (this._liveFrom !== "calling" || (this._cfg.anchor && location.hash === `#${this._cfg.anchor}`))) {
       this._popTried = true;
       this._openPop();
     }
@@ -982,6 +1017,18 @@ class VimarIntercomCard extends HTMLElement {
     // Tocco ovunque (o Esc) chiude, tranne sui controlli del video.
     this._dlg.onclick = (e) => e.target !== this._clipEl && this._dlg.close();
     this._dlg.onclose = () => { this._clipEl.pause(); this._clipEl.removeAttribute("src"); this._clipEl.load(); };
+    // A signed path expires ~30 s after auth/sign_path. A photo or clip the browser fetches
+    // again later (a purged image shown again on the phone, a clip resumed) gets a 401, which
+    // HA logs as a failed login: the element is signed again, once until it loads.
+    this._root.addEventListener("error", async (e) => {
+      const el = e.target, m = el.src?.match(/\/api\/vimar_intercom\/rings\/(.+?)[?&]authSig=/);
+      if (!m || el._resigned) return;
+      el._resigned = true;
+      const t = el.currentTime;
+      try { el.src = await this._sign(m[1]); } catch { return; }  // HA scollegato: resta com'è
+      if (t) el.currentTime = t;
+    }, true);
+    for (const ev of ["load", "loadeddata"]) this._root.addEventListener(ev, (e) => (e.target._resigned = false), true);
     // Popup chiuso (X, Esc, fuori): la card torna al suo posto, audio chiuso, riaggancio solo se la chiamata è della card.
     this._pop.onclick = (e) => e.target === this._pop && this._pop.close();
     this._pop.onclose = () => {
@@ -1229,7 +1276,7 @@ class VimarIntercomCard extends HTMLElement {
       });
       this._hist.replaceChildren(...nodes);
       this._empty.textContent = "Nessuno squillo registrato";
-      const still = srcs.find(Boolean);
+      const still = this._cfg.idle_picture !== "standby" && srcs.find(Boolean);
       for (const img of [this._still, this._pic]) if (still) img.src = still; else img.removeAttribute("src");
       this._photo.disabled = this._histBtn.disabled = !rings.length;
     } catch {
@@ -1513,18 +1560,43 @@ class VimarIntercomCard extends HTMLElement {
   // (_startListen, senza microfono). Un chiusura sola per chiamata: `playAt` vive qui.
   // Passa da un GainNode (_gain) così il tasto "Audio" può azzerare solo questa
   // riproduzione: niente riaggancio, niente microfono, WebSocket sempre aperto.
+  // The 8 kHz voice is resampled here to the context's rate, continuously across packets
+  // (the last sample and the fractional position carry over): an 8 kHz AudioBuffer per
+  // 20 ms packet was resampled by the browser one packet at a time, with a click at every
+  // edge, 50 times a second (#53). 120 ms ahead of the clock absorbs the relay's jitter
+  // (up to ~150 ms measured); each underrun adds 40 ms, up to 300 ms. A 3.6 kHz low-pass (the
+  // G.711 band ends at 3.4 kHz) removes the images that linear interpolation leaves above
+  // the voice, heard as a metallic hiss.
   _pcmSink(ctx, gain) {
-    let playAt = 0;
+    const step = RATE / ctx.sampleRate;
+    const lp = ctx.createBiquadFilter();
+    lp.type = "lowpass";
+    lp.frequency.value = 3600;
+    lp.connect(gain);
+    let playAt = 0, last = 0, pos = 0, ahead = 0.12, started = false;
     return (ev) => {
       if (typeof ev.data === "string" || new Uint8Array(ev.data, 0, 1)[0] !== 0x01) return;
-      const pcm = new Int16Array(ev.data.slice(1));
-      const buf = ctx.createBuffer(1, pcm.length, RATE);
+      const pcm = new Int16Array(ev.data.slice(1)), n = pcm.length;
+      if (!n) return;
+      const at = (i) => (i < 0 ? last : pcm[i] / 32768);  // index -1 is the previous packet's last sample
+      const count = Math.ceil((n - pos) / step);
+      const buf = ctx.createBuffer(1, count, ctx.sampleRate);
       const ch = buf.getChannelData(0);
-      for (let i = 0; i < pcm.length; i++) ch[i] = pcm[i] / 32768;
+      let p = pos;
+      for (let k = 0; k < count; k++, p += step) {
+        const i = Math.floor(p), f = p - i;
+        ch[k] = at(i - 1) + (at(i) - at(i - 1)) * f;
+      }
+      pos = p - n;
+      last = pcm[n - 1] / 32768;
       const src = ctx.createBufferSource();
       src.buffer = buf;
-      src.connect(gain);
-      playAt = Math.max(playAt, ctx.currentTime + 0.05);  // piccolo buffer contro gli scatti
+      src.connect(lp);
+      if (playAt < ctx.currentTime + 0.01) {
+        if (started) ahead = Math.min(ahead + 0.04, 0.3);  // ran dry: keep more in hand
+        started = true;
+        playAt = ctx.currentTime + ahead;
+      }
       src.start(playAt);
       playAt += buf.duration;
     };
@@ -1687,12 +1759,17 @@ const SCHEMA = [
     { value: "pillola", label: "Pillola" },
     { value: "tile", label: "Tile" },
   ] } } },
+  { name: "idle_picture", selector: { select: { mode: "dropdown", options: [
+    { value: "last_ring", label: "Foto dell'ultimo squillo" },
+    { value: "standby", label: "Icona del citofono" },
+  ] } } },
   { name: "shortcuts", selector: { entity: { multiple: true, domain: ["lock", "button"] } } },
   { name: "history", selector: { number: { min: 0, max: 50, mode: "box" } } },
   { name: "confirm_open", selector: { boolean: {} } },
   { name: "listen_on_ring", selector: { boolean: {} } },
 ];
-const FIELD = { camera: "Telecamera", name: "Nome", layout: "In diretta", compact_style: "Card compatta (layout popup)", shortcuts: "Scorciatoie Apri sulla card compatta (vuoto = serratura)", history: "Squilli in cronologia (0 = niente)",
+const FIELD = { camera: "Telecamera", name: "Nome", layout: "In diretta", compact_style: "Card compatta (layout popup)", idle_picture: "Da fermo",
+  shortcuts: "Scorciatoie Apri sulla card compatta (vuoto = serratura)", history: "Squilli in cronologia (0 = niente)",
   confirm_open: "Apri con doppio tocco", listen_on_ring: "Ascolta il visitatore durante lo squillo" };
 
 class VimarIntercomCardEditor extends HTMLElement {

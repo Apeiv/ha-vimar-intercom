@@ -13,6 +13,13 @@ from custom_components.vimar_intercom.select import VimarAwayFileSelect  # noqa:
 from custom_components.vimar_intercom.text import VimarAwayText  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _no_calling_user(monkeypatch):
+    """Real entities have `_context = None` until a service call sets it; the HA stub does not."""
+    for cls in (VimarAwayText, VimarAwayFileSelect):
+        monkeypatch.setattr(cls, "_context", None, raising=False)
+
+
 class _Hub:
     touched = 0
 
@@ -118,3 +125,42 @@ def test_without_a_media_folder_nothing_is_created_or_listed(tmp_path):
     ac.ensure_dir(None)  # no folder configured: nothing to create, no error
     assert ac.list_files(None) == []
     assert list(tmp_path.iterdir()) == []
+
+
+def _admin_env(tmp_path, monkeypatch, is_admin):
+    hass, entry, calls = _env(tmp_path, monkeypatch)
+    users = {"u1": types.SimpleNamespace(is_admin=is_admin)}
+
+    async def get_user(uid):
+        return users.get(uid)
+
+    hass.auth = types.SimpleNamespace(async_get_user=get_user)
+    return hass, entry, calls
+
+
+def _entities(hass, entry, user_id):
+    ctx = types.SimpleNamespace(user_id=user_id)
+    t, s = VimarAwayText(entry), VimarAwayFileSelect(entry)
+    for e in (t, s):
+        e.hass, e._context = hass, ctx
+        e.async_write_ha_state = lambda: None
+    return t, s
+
+
+@pytest.mark.parametrize("user_id, is_admin, allowed", [
+    ("u1", True, True),       # administrator
+    ("u1", False, False),     # regular user
+    ("ghost", True, False),   # id that no longer resolves to a user
+    (None, False, True),      # no user: automation or system call
+])
+def test_away_entities_are_admin_only(tmp_path, monkeypatch, user_id, is_admin, allowed):
+    from homeassistant.exceptions import Unauthorized
+    hass, entry, calls = _admin_env(tmp_path, monkeypatch, is_admin)
+    t, s = _entities(hass, entry, user_id)
+    for coro in (t.async_set_value("Back soon"), s.async_select_option("a.wav")):
+        if allowed:
+            asyncio.run(coro)
+        else:
+            with pytest.raises(Unauthorized):
+                asyncio.run(coro)
+    assert len(calls) == (2 if allowed else 0)  # a refused call writes nothing

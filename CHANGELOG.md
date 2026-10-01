@@ -6,10 +6,34 @@ Italian and are kept as they were written.
 
 ## [Unreleased]
 
+### Added
+
+- **Card `idle_picture`** option (also in the visual editor): `last_ring` (default) keeps the last
+  ring's photo in the scene and the compact photo button at rest; `standby` shows the doorbell icon
+  there instead. The photos stay in the history drawer.
+
 ### Fixed
 
 - `/av`'s input SDP is written to a private temporary file (mode 0600, an unpredictable name) instead
   of a fixed, guessable path in the temp directory, and removed when ffmpeg is stopped.
+- **Card history photos and clips** no longer stay broken behind an expired signed path: a photo or
+  clip the browser fetches again after the ~30 s signature has expired (HA logged "Login attempt or
+  request with invalid authentication" for `/api/vimar_intercom/rings/*.jpg`) is signed again once
+  and reloaded.
+- **Card voice playback** no longer clicks 50 times a second: the 8 kHz voice is resampled to the
+  audio context's rate continuously across packets and low-passed at 3.6 kHz, and the playout
+  buffer starts 120 ms ahead and grows by 40 ms at every underrun, up to 300 ms (#53).
+- **Card live video on iPhone** no longer smears between keyframes: the WebCodecs decoder is fed
+  AVC (an `avcC` description built from SPS/PPS, length-prefixed NAL units) instead of Annex B, is
+  reconfigured only when SPS/PPS change, and runs with `optimizeForLatency` off on iOS (#53).
+- **Away message text and audio file** can be changed by administrators only. The two entities
+  were writable by any user who could call the service; a call with no user (automations) still works.
+- **Card shortcut buttons** no longer inject markup: the `friendly_name` and `icon` of a `button.*`
+  entity are escaped, and an icon not shaped like `prefix:name` falls back to the default.
+- **Card popup layout**: the popup now opens when the card first sees a call already in progress
+  (notification "Answer", app reopened after the ring), not only on `ringing` or with the anchor in
+  the URL. A period that starts with `calling` (a tap on the card, HomeKit, Alexa) still needs the
+  anchor (#35).
 - "View outside" opened right after hanging up no longer fails after 25 s on local UDP (#41). The
   view waits for the panel to answer our BYE (at most 6 s) before calling it again. A call to the
   video panel (a view's, the card's "view outside", the call buttons) that the panel leaves

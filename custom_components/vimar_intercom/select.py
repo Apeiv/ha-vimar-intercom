@@ -24,7 +24,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import runtime as R
-from .away_config import NONE_OPTION, ensure_dir, list_files, messages_dir, set_away
+from .away_config import NONE_OPTION, ensure_dir, list_files, messages_dir, require_admin, set_away
 from .const import DOMAIN
 from .device import device_info
 
@@ -148,6 +148,7 @@ class VimarAwayFileSelect(SelectEntity):
         return self._outside() or os.path.basename(R.AWAY_MESSAGE_FILE) or NONE_OPTION
 
     async def async_select_option(self, option: str) -> None:
+        await require_admin(self.hass, self._context)
         if option == self._outside():
             return  # è già il file in uso, da fuori cartella
         path = "" if option == NONE_OPTION else os.path.join(messages_dir(self.hass), option)
