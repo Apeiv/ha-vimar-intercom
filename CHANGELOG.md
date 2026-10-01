@@ -14,6 +14,9 @@ Italian and are kept as they were written.
 
 ### Changed
 
+- The voice to the panel (the card's microphone, HomeKit's Talk, the away message) is μ-law encoded
+  through a lookup table: 13 µs instead of 113 µs per 20 ms packet on a Raspberry Pi 5, the same
+  bytes, on the event loop that also carries the call's video.
 - HomeKit views open faster. The view's audio no longer waits for the video path (re-encoder and
   keyframe included), and with Smoother video on, the re-encoder starts while the view's call is
   still connecting instead of after its video arrives.
