@@ -44,6 +44,7 @@ only so the tests can check our crypto against a second implementation.)
 
 ```bash
 python -m pytest tests/ -q          # must be green
+ruff check .                        # must be clean (CI job "ruff")
 python -m py_compile custom_components/vimar_intercom/*.py
 ```
 
@@ -78,6 +79,7 @@ add a test — those are the parts that break silently on other plants.
 - [ ] No credentials, MAC addresses or raw QR payloads anywhere in the diff
 - [ ] Says which hardware you tested on: model, article number, firmware, and whether local UDP or cloud TLS
 - [ ] Line and branch coverage stays at or above 95% (`python -m pytest tests --cov`)
+- [ ] `ruff check .` is clean
 - [ ] Non-obvious design decisions explained in the PR description, or in `docs/` when they concern hardware behaviour
 
 Small, focused PRs get merged faster than big ones. If you're planning something

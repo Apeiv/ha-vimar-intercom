@@ -6,6 +6,7 @@ import asyncio
 import os
 
 import pytest
+
 # FFMPEG in testa al PATH: lo shim di Chocolatey non si lascia uccidere (CONTRIBUTING.md)
 from harness.media import FFMPEG
 

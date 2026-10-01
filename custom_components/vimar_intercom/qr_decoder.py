@@ -180,8 +180,8 @@ def _aes_decrypt(key: bytes, ciphertext: bytes, iv: bytes) -> str:
         plaintext = cipher.decrypt(ciphertext)
     except ImportError:
         try:
-            from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
             from cryptography.hazmat.backends import default_backend
+            from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
             cipher_obj = Cipher(
                 algorithms.AES(key), modes.CBC(iv), backend=default_backend()
             )

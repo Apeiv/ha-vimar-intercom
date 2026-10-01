@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import stat
 import struct
 import types
 
@@ -278,3 +280,53 @@ def test_malformed_proc_net_udp_lines_are_skipped(monkeypatch, tmp_path):
         "   4: 0100007F:1C20 00000000:0000\n")
     monkeypatch.setattr(av, "_PROC_NET_UDP", (str(udp),))
     assert av._bound_udp_ports() == {7200}
+
+
+# ─── the SDP file is private and does not outlive ffmpeg ─────────────────────
+
+def test_the_sdp_is_a_private_file_with_an_unpredictable_name(monkeypatch):
+    monkeypatch.setattr(media, "video_proto", None)
+    paths = [av._write_av_sdp() for _ in range(2)]
+    try:
+        assert paths[0] != paths[1]
+        for p in paths:
+            assert "m=video" in open(p).read()
+            assert os.path.basename(p) != "vimar_intercom_av.sdp"
+            if os.name != "nt":
+                assert stat.S_IMODE(os.stat(p).st_mode) == 0o600
+    finally:
+        for p in paths:
+            os.unlink(p)
+
+
+def test_restarting_the_av_ffmpeg_removes_the_old_sdp(monkeypatch):
+    monkeypatch.setattr(av, "av_ffmpeg_proc", None)
+    monkeypatch.setattr(av, "_av_stopping", False)
+    monkeypatch.setattr(av, "_av_clients", set())
+    monkeypatch.setattr(av, "_stderr_task", None)
+    monkeypatch.setattr(av, "_av_pump", None)
+    monkeypatch.setattr(av, "_idle_stop", None)
+    monkeypatch.setattr(av, "_av_lock", asyncio.Lock())
+    monkeypatch.setattr(av, "_av_sdp_file", None)
+    monkeypatch.setattr(media, "audio_proto", None)
+    monkeypatch.setattr(media, "video_proto", None)
+    _popen(monkeypatch, _Proc(), _Proc())
+
+    async def listening(proc, timeout=0.5):
+        return True
+
+    monkeypatch.setattr(av, "_wait_until_ffmpeg_listens", listening)
+
+    async def run():
+        await av._start_av_ffmpeg_locked()
+        first = av._av_sdp_file
+        assert os.path.exists(first)
+        await av._start_av_ffmpeg_locked()
+        second = av._av_sdp_file
+        assert second != first and os.path.exists(second)
+        await av._stop_av_ffmpeg_locked()
+        return first, second
+
+    first, second = asyncio.run(run())
+    assert not os.path.exists(first) and not os.path.exists(second)
+    assert av._av_sdp_file is None

@@ -15,15 +15,14 @@ import asyncio
 import collections
 import re
 import shutil
-import socket
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
-from custom_components.vimar_intercom import const as C
 from custom_components.vimar_intercom import av_stream
+from custom_components.vimar_intercom import const as C
 
 COMPONENT = Path(__file__).resolve().parents[1] / "custom_components" / "vimar_intercom"
 
@@ -49,7 +48,6 @@ def test_porte_av_non_toccano_quelle_della_chiamata():
 
 
 def test_l_sdp_di_ffmpeg_usa_le_costanti(tmp_path, monkeypatch):
-    monkeypatch.setattr(av_stream, "_AV_SDP_PATH", str(tmp_path / "av.sdp"))
     sdp = Path(av_stream._write_av_sdp()).read_text()
     porte = {int(p) for p in re.findall(r"^m=\w+ (\d+) ", sdp, flags=re.M)}
     assert porte == {C.FFMPEG_AV_VIDEO_PORT, C.FFMPEG_AV_AUDIO_PORT}
@@ -59,7 +57,6 @@ def test_l_sdp_di_ffmpeg_porta_sps_e_pps(tmp_path, monkeypatch):
     """SPS/PPS già visti vanno nell'SDP: ffmpeg decodifica dal primo IDR, non da quello
     che li porta in banda (~8 s sulla 40515, oltre la chiamata)."""
     from custom_components.vimar_intercom import media_handler as media
-    monkeypatch.setattr(av_stream, "_AV_SDP_PATH", str(tmp_path / "av.sdp"))
     monkeypatch.setattr(media, "video_proto", type("V", (), {"sps_pps": lambda self: (bytes([0x67, 0x42]), bytes([0x68, 0xCE]))})())
     assert "sprop-parameter-sets=Z0I=,aM4=" in Path(av_stream._write_av_sdp()).read_text()
 
@@ -68,7 +65,6 @@ def test_l_sdp_di_ffmpeg_porta_sps_e_pps(tmp_path, monkeypatch):
 def test_ffmpeg_riesce_a_fare_il_bind(tmp_path, monkeypatch):
     """Prova vera: ffmpeg apre l'SDP e resta in ascolto (con le porte vecchie
     usciva subito con «bind failed»)."""
-    monkeypatch.setattr(av_stream, "_AV_SDP_PATH", str(tmp_path / "av.sdp"))
     sdp = av_stream._write_av_sdp()
     proc = subprocess.Popen(
         ["ffmpeg", "-loglevel", "error", "-protocol_whitelist", "file,udp,rtp",

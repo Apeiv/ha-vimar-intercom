@@ -13,8 +13,8 @@ import types
 import pytest
 
 from custom_components.vimar_intercom import hub as hub_mod
-from custom_components.vimar_intercom import sip_client as sip
 from custom_components.vimar_intercom import runtime as R
+from custom_components.vimar_intercom import sip_client as sip
 
 
 @pytest.fixture

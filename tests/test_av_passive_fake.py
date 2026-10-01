@@ -80,7 +80,7 @@ class _Proc:
 
     async def wait(self):
         if self._stuck:
-            raise asyncio.TimeoutError
+            raise TimeoutError
         return self.returncode
 
 

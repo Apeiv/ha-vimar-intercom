@@ -8,35 +8,26 @@ import os
 import time
 from pathlib import Path
 
-from aiohttp import web
-
+import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
-
+from aiohttp import web
 from homeassistant.components.frontend import add_extra_js_url
 from homeassistant.components.http import HomeAssistantView, StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse, callback
-import homeassistant.helpers.config_validation as cv
 from homeassistant.exceptions import ConfigEntryNotReady, Unauthorized
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
-from homeassistant.requirements import async_process_requirements
 from homeassistant.helpers.service import async_register_admin_service
 from homeassistant.helpers.storage import Store
+from homeassistant.requirements import async_process_requirements
 
-from .const import CONF_HOMEKIT_ACCESSORY, DEFAULT_HOMEKIT_ACCESSORY, DOMAIN, HOMEKIT_REQUIREMENTS
-from . import away_config
-from . import away_tts
+from . import av_passive, av_stream, away_config, away_tts, ring_log, runtime, validate, webhook
 from . import log_buffer as _log_buffer
-from . import validate
-from .hub import VimarIntercomHub
-from . import av_passive
-from . import av_stream
 from . import media_handler as media
-from . import ring_log
 from . import sip_client as sip
-from . import runtime
-from . import webhook
+from .const import CONF_HOMEKIT_ACCESSORY, DEFAULT_HOMEKIT_ACCESSORY, DOMAIN, HOMEKIT_REQUIREMENTS
+from .hub import VimarIntercomHub
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -103,7 +94,7 @@ FIND_SGA_SCHEMA = vol.Schema({
     vol.Optional("delay", default=1.0): vol.All(vol.Coerce(float), vol.Range(min=0.2, max=10)),
     vol.Optional("reply_wait", default=3.0): vol.All(vol.Coerce(float), vol.Range(min=1, max=15)),
     vol.Optional("probe", default="get_nicks"): vol.In(["get_nicks", "get_init_status"]),
-    vol.Optional("sip_timeout", default=8.0): vol.All(vol.Coerce(float), vol.Range(min=2, max=15)),
+    vol.Optional("sip_timeout", default=8.0): vol.All(vol.Coerce(float), vol.Range(min=2, max=30)),
     vol.Optional("apply", default=False): cv.boolean,
     vol.Optional("apply_sga", default=False): cv.boolean,
 })
@@ -236,13 +227,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Closures locali: catturano audio_ws_clients (nessun global di modulo).
     async def _ws_send_bytes(data: bytes):
-        dead = set()
-        for ws in list(audio_ws_clients):  # copia: il set cambia durante gli await
-            try:
-                await ws.send_bytes(data)
-            except Exception:
-                dead.add(ws)
-        audio_ws_clients.difference_update(dead)
+        # To every client at once (#53): one slow client (a phone on mobile data,
+        # a keyframe still draining) used to hold the voice of all the others.
+        clients = list(audio_ws_clients)  # copia: il set cambia durante gli await
+        results = await asyncio.gather(*(ws.send_bytes(data) for ws in clients),
+                                       return_exceptions=True)
+        audio_ws_clients.difference_update(
+            ws for ws, res in zip(clients, results, strict=True) if isinstance(res, Exception))
 
     async def _broadcast(data: dict):
         text = json.dumps(data)
