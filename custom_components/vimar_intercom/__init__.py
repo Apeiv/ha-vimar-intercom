@@ -1,6 +1,7 @@
 """Vimar Intercom integration for Home Assistant."""
 
 import asyncio
+import functools
 import ipaddress
 import json
 import logging
@@ -30,6 +31,9 @@ from .const import CONF_HOMEKIT_ACCESSORY, DEFAULT_HOMEKIT_ACCESSORY, DOMAIN, HO
 from .hub import VimarIntercomHub
 
 _LOGGER = logging.getLogger(__name__)
+
+# Per-client WebSocket queue: ~2.5 s of voice and video (50 audio + ~50 NAL a second).
+WS_CLIENT_QUEUE = 256
 
 # Buffer interno dei log e inoltro al log di HA: vedi log_buffer.py.
 _log_buffer.install()
@@ -231,14 +235,43 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         raise ConfigEntryNotReady(f"Proxy SIP non raggiungibile: {e}") from e
 
     # Closures locali: catturano audio_ws_clients (nessun global di modulo).
-    async def _ws_send_bytes(data: bytes):
-        # To every client at once (#53): one slow client (a phone on mobile data,
-        # a keyframe still draining) used to hold the voice of all the others.
-        clients = list(audio_ws_clients)  # copia: il set cambia durante gli await
-        results = await asyncio.gather(*(ws.send_bytes(data) for ws in clients),
-                                       return_exceptions=True)
-        audio_ws_clients.difference_update(
-            ws for ws, res in zip(clients, results, strict=True) if isinstance(res, Exception))
+    # One small queue and one sender task per client: the audio and video loops only
+    # enqueue, so a slow phone loses its own frames and nobody else waits for it.
+    senders: dict[web.WebSocketResponse, tuple[asyncio.Queue, asyncio.Task]] = {}
+    resync: set[web.WebSocketResponse] = set()  # backlog dropped: no video until a keyframe
+    hass.data[DOMAIN][entry.entry_id]["ws_senders"] = senders
+
+    async def _drain(ws, queue: asyncio.Queue):
+        try:
+            while True:
+                await ws.send_bytes(await queue.get())
+        except Exception:  # noqa: BLE001 - a failing send drops the client, as before
+            audio_ws_clients.discard(ws)
+
+    async def _ws_send_bytes(data: bytes, only=None):
+        # Clients gone since the last packet: stop their sender.
+        for ws in [ws for ws in senders if ws not in audio_ws_clients]:
+            senders.pop(ws)[1].cancel()
+            resync.discard(ws)
+        for ws in audio_ws_clients:
+            if only is not None and ws is not only:
+                continue
+            if ws not in senders:
+                queue = asyncio.Queue(maxsize=WS_CLIENT_QUEUE)
+                senders[ws] = (queue, asyncio.create_task(_drain(ws, queue)))
+            queue = senders[ws][0]
+            if queue.full():
+                # Too slow: drop its whole backlog. Half a GOP would only smear until
+                # the next IDR, so its video restarts at the next SPS (sent before
+                # every IDR) and the voice catches up instead of lagging.
+                while not queue.empty():
+                    queue.get_nowait()
+                resync.add(ws)
+            if ws in resync and data[:1] == b"\x03":
+                if data[5] & 0x1F != 7:
+                    continue
+                resync.discard(ws)
+            queue.put_nowait(data)
 
     async def _broadcast(data: dict):
         text = json.dumps(data)
@@ -347,6 +380,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Chiudi tutti i WS audio attivi prima di fermare l'hub:
         # evita che le views (ancora registrate in HA) usino il vecchio hub
         # e che i client rimangano connessi a un hub non più valido.
+        for _queue, task in data.get("ws_senders", {}).values():
+            task.cancel()
         for ws in list(data.get("audio_ws_clients", set())):
             await ws.close()
         await data["hub"].async_stop()
@@ -648,7 +683,8 @@ class VimarAudioWSView(HomeAssistantView):
         # Video già in corso (squillo, chiamata): il GOP corrente subito, senza
         # aspettare il prossimo IDR. Anche per chi non è admin: è la vista della card.
         if media.video_proto:
-            media.video_proto.replay_gop_ws(ws.send_bytes)
+            # Through this client's own queue, in order with the live NALs.
+            media.video_proto.replay_gop_ws(functools.partial(media.ws_send_bytes, only=ws))
 
         # Send initial state
         await ws.send_str(json.dumps({
