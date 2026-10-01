@@ -133,3 +133,50 @@ def test_a_bare_srtp_sized_base64_after_key_is_hidden():
 
 def test_words_that_merely_contain_key_stay_readable():
     assert lr.redact("'keyframe': 12, 'monkey': 'x'") == "'keyframe': 12, 'monkey': 'x'"
+
+
+# ─── crafted input cannot stall the event loop (#46) ─────────────────────
+
+def _elapsed(text: str) -> float:
+    import time
+    start = time.perf_counter()
+    lr.redact(text)
+    return time.perf_counter() - start
+
+
+def test_bare_line_feeds_take_linear_time():
+    """When the Authorization prefix could cross newlines, 8000 bare LF after
+    a status line took about 0.7 s, 64 KB of them tens of seconds."""
+    assert _elapsed("SIP/2.0 200 OK\r\n" + "\n" * 8000) < 0.1
+
+
+def test_a_long_text_is_cut_after_the_patterns_ran():
+    out = lr.redact("password=hidden " + "x" * 100_000)
+    assert "hidden" not in out
+    assert len(out) < lr.MAX_LEN + 100 and out.endswith("characters cut]")
+    assert _elapsed("\n" * 100_000) < 0.1
+
+
+@pytest.mark.parametrize("shape", ['password="{}"', "{{'token': '{}'}}", '{{"PARAM":"token","VALUE":"{}"}}',
+                                   "{{'srtp_key': '{}'}}"])
+@pytest.mark.parametrize("shift", [-20, -8, -1, 0, 1])
+def test_a_quoted_secret_across_the_cut_is_still_hidden(shape, shift):
+    """The text is cut after the patterns ran: cut first, a quoted value lost its
+    closing quote and its first characters came out in clear."""
+    line = shape.format("TOPSECRET1234")
+    pad = lr.MAX_LEN + shift - line.index("TOPSECRET")
+    out = lr.redact(" " * pad + line + " " * 50)
+    assert "TOPSECR" not in out
+
+
+def test_long_hostile_text_stays_fast_without_an_input_cap():
+    for text in ("\n" * 65_000, "\r\n " * 20_000, 'password="' * 6_000,
+                 "authorization" + " " * 65_000):
+        assert _elapsed(text) < 0.2
+
+
+def test_the_header_is_still_hidden_with_spaces_or_tabs_before_it():
+    out = lr.redact("INVITE sip:x SIP/2.0\r\n \tAuthorization: Digest response=\"abcdef0123\"\r\n"
+                    "Proxy-Authorization:\tDigest nonce=\"n\"\r\n")
+    assert "abcdef0123" not in out and "nonce" not in out
+    assert "Authorization: ***" in out and "Proxy-Authorization:\t***" in out

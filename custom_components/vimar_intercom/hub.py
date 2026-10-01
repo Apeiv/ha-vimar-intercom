@@ -1758,6 +1758,10 @@ class VimarIntercomHub:
 
         m = re.search(r"\b([1-6]\d\d)\b", msg or "")
         code = int(m.group(1)) if m else None
+        if ok and code == 202:
+            # 202 Accepted to a MESSAGE: the cloud relay took it but no device
+            # did, so it holds it for later delivery (#14). Not an `exists`.
+            return "queued"
         if ok:
             return "exists"            # 2xx: l'indirizzo esiste
         if code == 404:

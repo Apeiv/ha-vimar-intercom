@@ -39,6 +39,19 @@ Italian and are kept as they were written.
 - HomeKit views open faster. The view's audio no longer waits for the video path (re-encoder and
   keyframe included), and with Smoother video on, the re-encoder starts while the view's call is
   still connecting instead of after its video arrives.
+### Security
+
+- One crafted SIP datagram could stall Home Assistant for seconds: the `Authorization` pattern in
+  `log_redact` was quadratic on a run of bare line feeds, and every received message goes through it
+  on the event loop. The pattern now matches only spaces and tabs around the header name, and a log
+  line longer than 16 KB is cut once it has been redacted (#46).
+- A device on the local network could change the intercom's address in Home Assistant by announcing
+  the Tab's MAC (which the Tab publishes) over mDNS with another address: REGISTER, door commands
+  and calls then went there. A new address is now offered only when it is a private IPv4 address that
+  the record announces as its own, and applied only after you confirm it under Discovered (#46).
+- `find_sga` reports a `202 Accepted` as `queued` instead of `exists`: the cloud relay accepted the
+  probe but no device took it, so nothing at that address can answer over the cloud (#14). The
+  service's `sip_timeout` now goes up to 30 s, because over the relay that `202` can take ~15 s.
 
 ## [1.0.16] - 2026-09-30
 

@@ -526,6 +526,8 @@ class VimarIntercomConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # Dati del record mDNS quando il flusso parte dal discovery (issue #6).
         # Vuoto se l'utente ha avviato il flusso a mano.
         self._discovered: dict[str, str] = {}
+        # (entry, new address) when a configured Tab announced another address.
+        self._moved: tuple | None = None
 
     # ─── Discovery mDNS (_eipvdes._tcp) ─────────────────────────────────────
     # Nessun import di ZeroconfServiceInfo: sta in helpers.service_info.zeroconf
@@ -553,8 +555,14 @@ class VimarIntercomConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             conf = {**entry.data, **entry.options}
             same_mac = discovery.normalize_mac(conf.get(KEY_MAC)) == mac
             if same_mac or conf.get(KEY_LOCAL_PROXY) == info["local_proxy"]:
-                if same_mac:
-                    self._update_proxy(entry, info["local_proxy"])
+                moved = self._moved_proxy(conf, info["local_proxy"], str(discovery_info.host))
+                if same_mac and moved:
+                    # One flow per Tab: a second announcement joins this one.
+                    await self.async_set_unique_id(mac)
+                    self._abort_if_unique_id_configured()   # the user's "Ignore" holds
+                    self._moved = (entry, moved)
+                    self.context["title_placeholders"] = {"name": "Vimar Intercom", "host": moved}
+                    return await self.async_step_zeroconf_moved()
                 return self.async_abort(reason="already_configured")
         # Un altro Tab con un'installazione già presente: una sola entry.
         if self._has_entry():
@@ -578,6 +586,46 @@ class VimarIntercomConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         discovery mDNS, e il Tab che cambia IP in UDP locale non veniva più seguito
         (`_update_proxy`, issue #6)."""
         return bool(self._async_current_entries(include_ignore=False))
+
+    @staticmethod
+    def _moved_proxy(conf: dict, proxy: str, host: str) -> str | None:
+        """The new address of a configured Tab, if this announcement may propose one.
+
+        Nothing in an mDNS record is authenticated: the MAC it is matched by is
+        public (the Tab announces it), and the host is the address record the
+        announcer wrote, not the packet's source. The checks below only keep the
+        record consistent with itself (the `proxy` it carries is its own address)
+        and the address a private IPv4 one, like a Tab's; what protects the entry is
+        that the address is applied only after the user confirms it (#46). An
+        authenticated probe of the new address would have kept this automatic, but
+        HTTP Digest and SIP both hand the unconfirmed host a response it can attack
+        offline for the SIP password. Only in local mode, where the address is used.
+        """
+        if not conf.get(KEY_USE_LOCAL_UDP, True) or not proxy or proxy == conf.get(KEY_LOCAL_PROXY):
+            return None
+        try:
+            ip = ipaddress.ip_address(proxy)
+        except ValueError:
+            ip = None
+        if proxy != host or ip is None or ip.version != 4 or not ip.is_private or ip.is_link_local:
+            _LOGGER.warning("Ignored an mDNS announcement for the configured intercom: address %s, "
+                            "host %s. Only a private IPv4 address, matching the record's host, "
+                            "is offered.", proxy, host)
+            return None
+        return proxy
+
+    async def async_step_zeroconf_moved(self, user_input: dict | None = None) -> FlowResult:
+        """The configured Tab announced itself at another address: apply it on confirmation."""
+        entry, proxy = self._moved
+        if user_input is not None:
+            self._update_proxy(entry, proxy)
+            return self.async_abort(reason="address_updated")
+        conf = {**entry.data, **entry.options}
+        return self.async_show_form(
+            step_id="zeroconf_moved",
+            data_schema=vol.Schema({}),
+            description_placeholders={"old": conf.get(KEY_LOCAL_PROXY) or "n/d", "new": proxy},
+        )
 
     @callback
     def _update_proxy(self, entry, proxy: str) -> None:
