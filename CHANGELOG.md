@@ -8,6 +8,19 @@ Italian and are kept as they were written.
 
 ### Fixed
 
+- "View outside" opened right after hanging up no longer fails after 25 s on local UDP (#41). The
+  view waits for the panel to answer our BYE (at most 6 s) before calling it again. A call to the
+  video panel (a view's, the card's "view outside", the call buttons) that the panel leaves
+  unanswered is cancelled and tried again, within 21 s of the first try and 24 s of the tap
+  (inside `/av`'s 25 s): after 3 s when the panel's proxy said 100
+  Trying and the panel never rang, else after 6 s. Every try waits until 5 s after the last call
+  on the line (or our own cancelled try) ended: a 2-wire panel ignores an INVITE that comes
+  sooner. Calls to a flat or the switchboard, and cloud plants, are unchanged. The 487 that ends our own cancelled INVITE is
+  logged at DEBUG, and `/av`'s "call not established" says how long it really waited.
+- The card's Fill/Fit button (#42). It is hidden while the video and its box have the same shape
+  (a 4:3 panel in the default 4:3 box), where filling and fitting draw the same picture and the
+  button seemed to do nothing. When the card falls back to Home Assistant's picture card (no
+  WebCodecs, or the card's player failed), the choice now reaches it as `fit_mode`.
 - In cloud mode, finding the local IP resolved the proxy's name on the event loop, at setup and at
   every reconnect: with the network down (Home Assistant starting before the router) that DNS
   lookup froze every integration for seconds. It runs in the executor now.
@@ -273,9 +286,12 @@ Documentation:
 
 ### Added
 
-- Do Not Disturb and Voicemail switches are unavailable while not registered, without an apartment
-  intercom address, or until the Tab has reported their state (they used to show a guess). Protocol
-  ported from noiseheroes-lab/ha-vimar-intercom by Luca Lo Tito (MIT).
+- Do Not Disturb and Voicemail switches are available as soon as the link is registered. Until the
+  Tab reports their state they show it as unknown (or the state it confirmed before a restart)
+  instead of a guess, so they stay usable on plants that never announce it (#9). Protocol ported
+  from noiseheroes-lab/ha-vimar-intercom by Luca Lo Tito (MIT). *Corrected on 2026-10-01: this
+  entry first said the switches stay unavailable until the Tab has reported their state; the
+  released code never behaved that way.*
 - **Decline** button (only while it rings) and `vimar_intercom.decline` service: answers `603 Decline`, so the
   whole house stops ringing, as in the official app. Protocol ported from
   noiseheroes-lab/ha-vimar-intercom by Luca Lo Tito (MIT).
