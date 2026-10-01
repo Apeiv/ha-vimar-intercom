@@ -28,6 +28,7 @@ import os
 import socket
 import struct
 import time
+import bisect
 from collections import OrderedDict
 
 from .homekit_audio import (
@@ -63,6 +64,7 @@ SNAPSHOT_FPS = 2
 # The frame-delay statistic: input frames remembered, output frames measured.
 FRAME_DELAY_KEEP = 300               # 20 s at 15 fps
 FRAME_DELAY_SAMPLES = 9000           # 10 minutes at 15 fps
+FRAME_TICKS = 90000 // PANEL_FPS     # one frame in the 90 kHz RTP clock
 # A JPEG of the panel's 320x240 is 10 to 30 KB; anything past this without
 # an end marker is not one.
 JPEG_MAX = 1024 * 1024
@@ -161,7 +163,10 @@ class Transcoder:
         # How far behind the panel the re-encoded video runs: for each input
         # frame (RTP timestamp, relative to the first one fed) the time its
         # last packet went to ffmpeg; for each output frame, the time it came
-        # back. With -fps_mode passthrough the relative timestamps match.
+        # back. The first output frame is the first one fed (the group starts
+        # at its keyframe). The encoder rounds its timestamps to its own
+        # 15 fps clock while the panel's are slightly irregular, so a later
+        # output frame matches the nearest input frame within half a frame.
         self._in_first_ts: int | None = None
         self._in_at: OrderedDict[int, float] = OrderedDict()
         self._out_first_ts: int | None = None
@@ -348,7 +353,7 @@ class Transcoder:
             ts = struct.unpack_from("!I", data, 4)[0]
             if self._out_first_ts is None:
                 self._out_first_ts = ts
-            fed = self._in_at.get((ts - self._out_first_ts) & 0xFFFFFFFF)
+            fed = self._fed_at((ts - self._out_first_ts) & 0xFFFFFFFF)
             if fed is not None and len(self.frame_delays) < FRAME_DELAY_SAMPLES:
                 self.frame_delays.append(time.monotonic() - fed)
         self.gop.add(data)
@@ -381,6 +386,15 @@ class Transcoder:
             self._sdp = ""
         _LOGGER.info("Transcoding stopped: %d panel packets in, %d transcoded packets out%s",
                      self.stats["in"], self.stats["out"], self.delay_summary())
+
+    def _fed_at(self, rel: int) -> float | None:
+        """When the input frame nearest to `rel` was fed, within half a frame."""
+        rels = sorted(self._in_at)
+        i = bisect.bisect_left(rels, rel)
+        near = [r for r in rels[max(0, i - 1):i + 1] if abs(r - rel) <= FRAME_TICKS // 2]
+        if not near:
+            return None
+        return self._in_at[min(near, key=lambda r: abs(r - rel))]
 
     def delay_summary(self) -> str:
         """", frame delay median 68 ms (p90 75 ms, 120 frames)", or "" with none."""

@@ -218,3 +218,30 @@ def test_the_frame_delay_is_measured_from_feed_to_encoder_output(monkeypatch):
     assert [round(d * 1000) for d in t.frame_delays] == [300, 334]
     assert t.delay_summary() == ", frame delay median 334 ms (p90 334 ms, 2 frames)"
     assert tc.Transcoder(None, None).delay_summary() == ""
+
+
+def test_the_frame_delay_matches_the_panels_irregular_timestamps(monkeypatch):
+    """Field test (#56): the encoder rounds its timestamps to its 15 fps clock
+    (exact 6000-tick steps), the panel's are a little irregular. Exact matching
+    measured one frame per view; the nearest input frame within half a frame
+    is the one."""
+    import struct as st
+
+    def pkt(ts, marker=False):
+        return st.pack("!BBHII", 0x80, (0x80 if marker else 0) | 96, 1, ts, 0x1234) + b"\x41\x00"
+
+    clock = {"t": 0.0}
+    monkeypatch.setattr(tc.time, "monotonic", lambda: clock["t"])
+    t = tc.Transcoder(None, None)
+    t._feed.close()
+    t._feed = type("F", (), {"sendto": lambda *_a: None})()
+    panel = [0, 5940, 12090, 17950, 24060]           # irregular, about 6000 apart
+    for i, ts in enumerate(panel):
+        clock["t"] = i * 0.066
+        t._send(pkt(50000 + ts))
+    for i in range(len(panel)):
+        clock["t"] = i * 0.066 + 0.3                  # each frame out 300 ms later
+        t._from_encoder(pkt(9 + i * 6000, marker=True), ("127.0.0.1", 1))
+    assert [round(d * 1000) for d in t.frame_delays] == [300] * 5
+    t._from_encoder(pkt(9 + 40 * 6000, marker=True), ("127.0.0.1", 1))   # nothing near: no sample
+    assert len(t.frame_delays) == 5
