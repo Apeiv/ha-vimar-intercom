@@ -346,8 +346,11 @@ Se un impianto lascia `GET_NICKS` senza risposta SIP (segnalato su un 40515 in c
 `GET_INIT_STATUS` riceveva `200`), usa `probe: get_init_status`: dà i tre esiti puliti, e l'indirizzo la
 cui sonda provoca la `GET_INIT_STATUS_REPLY` è il PICG; ma all'SGA vero fa comparire «Configurazione
 appartamento modificata» sull'app a ogni invio. `sip_timeout` (default 8 s) limita l'attesa della
-risposta SIP di ogni sonda. La risposta elenca ogni sonda con il suo esito: `absent` (404), `exists`
-(accettata, nessuna reply), `replied`, `no_response`, `error`; più `picg` e i nickname dichiarati.
+risposta SIP di ogni sonda; via relay cloud usa 20, perché il suo `202` può arrivare dopo ~15 s. La
+risposta elenca ogni sonda con il suo esito: `absent` (404), `exists` (accettata, nessuna reply),
+`queued` (`202`: il relay cloud ha accettato il messaggio ma nessun dispositivo l'ha preso, quindi via
+cloud a quell'indirizzo non risponde nessuno), `replied`, `no_response`, `error`; più `picg` e i
+nickname dichiarati.
 
 ---
 
