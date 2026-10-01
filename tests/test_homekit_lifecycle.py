@@ -8,13 +8,14 @@ sink for good, or left ffmpeg running. And three parties can close a session
 """
 import asyncio
 import os
-from types import SimpleNamespace
 import socket
+from types import SimpleNamespace
 
 import pytest
 
 hk = pytest.importorskip("custom_components.vimar_intercom.homekit_accessory")
 from custom_components.vimar_intercom import homekit_files as hkf  # noqa: E402
+
 media = hk.media
 
 
@@ -294,9 +295,9 @@ def test_a_phone_request_goes_through_pyhap_into_our_stream(acc):
     """End to end on pyhap's own path: SetupEndpoints, then the selected
     stream configuration handed to pyhap's Camera._start_stream."""
     import uuid
+
     from pyhap import tlv
-    from pyhap.camera import (
-        SELECTED_STREAM_CONFIGURATION_TYPES, SETUP_TYPES, STREAMING_STATUS)
+    from pyhap.camera import SELECTED_STREAM_CONFIGURATION_TYPES, SETUP_TYPES, STREAMING_STATUS
     from test_homekit_endpoints import _Mgmt, phone_request
 
     a, procs, gate = acc

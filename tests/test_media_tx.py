@@ -56,8 +56,8 @@ def test_blocchi_del_browser_diventano_pacchetti_da_20ms(audio, monkeypatch):
     assert pkts and all(len(p) == 12 + 160 for p in pkts)
     ts = [struct.unpack_from("!I", p, 4)[0] for p in pkts]
     seq = [struct.unpack_from("!H", p, 2)[0] for p in pkts]
-    assert all((b - a) & 0xFFFFFFFF == 160 for a, b in zip(ts, ts[1:]))
-    assert all((b - a) & 0xFFFF == 1 for a, b in zip(seq, seq[1:]))
+    assert all((b - a) & 0xFFFFFFFF == 160 for a, b in zip(ts, ts[1:], strict=False))
+    assert all((b - a) & 0xFFFF == 1 for a, b in zip(seq, seq[1:], strict=False))
     assert all(p[1] == 0 for p in pkts)  # PT 0, PCMU
     # 1023 campioni: 6 pacchetti pieni di voce vera, poi silenzio di keepalive.
     assert pkts[5][12:] != mh.SILENCE_ULAW

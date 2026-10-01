@@ -37,6 +37,11 @@ import re
 
 MASK = "***"
 
+# Longest text redact() returns. A SIP message with its SDP is a few KB; a longer
+# log line is cut, after the patterns have run (cutting first could leave the start
+# of a quoted secret without the closing quote its pattern needs).
+MAX_LEN = 16384
+
 # Nomi di campo che nel protocollo Vimar portano un segreto.
 _SECRET_KEYS = ("pwd", "passwd", "password", "secret", "ha1", "token", "pn-tok", "apikey", "api_key",
                 "crypto_key", "srtp_key", "a_srtp_key", "v_srtp_key", "key_b64")
@@ -65,7 +70,10 @@ def _mask_assign(m: re.Match) -> str:
 
 
 # Authorization / Proxy-Authorization: tutto il valore, fino a fine riga.
-_AUTH_HEADER = re.compile(r"(?im)^(\s*(?:proxy-)?authorization\s*:\s*).*$")
+# Only horizontal whitespace around the name: with `\s*` the prefix crossed newlines,
+# so a text of n bare line feeds cost O(n^2) (seconds for one crafted SIP datagram,
+# on the event loop, #46).
+_AUTH_HEADER = re.compile(r"(?im)^([ \t]*(?:proxy-)?authorization[ \t]*:[ \t]*).*$")
 
 # Lo stesso header dentro una riga sola, tipicamente un messaggio SIP loggato
 # con %r (i CRLF diventano `\\r\\n` letterali): fino al primo CRLF, reale o
@@ -119,6 +127,8 @@ def redact(text: str) -> str:
         out = _SRTP_INLINE.sub(lambda m: f"{m.group(1)}{MASK}", out)
         out = _DICT_KEY.sub(lambda m: f"{m.group(1)}{m.group(3)}{MASK}{m.group(3)}", out)
         out = _KEY_B64.sub(lambda m: f"{m.group(1)}{MASK}", out)
+        if len(out) > MAX_LEN:
+            out = f"{out[:MAX_LEN]}... [{len(out) - MAX_LEN} characters cut]"
         return out
     except Exception:  # noqa: BLE001 - mai far fallire il logging
         return MASK

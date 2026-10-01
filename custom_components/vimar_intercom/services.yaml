@@ -175,12 +175,12 @@ find_sga:
             - get_init_status
     sip_timeout:
       name: Timeout SIP per sonda (s)
-      description: Quanto aspettare la risposta SIP (200/404) di ogni sonda prima di passare oltre.
+      description: Quanto aspettare la risposta SIP (200/202/404) di ogni sonda prima di passare oltre. Via cloud il relay può rispondere 202 solo dopo ~15 s, quindi usare 20.
       default: 8
       selector:
         number:
           min: 2
-          max: 15
+          max: 30
           step: 1
           unit_of_measurement: s
     apply:

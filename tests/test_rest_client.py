@@ -179,8 +179,8 @@ def test_il_401_dice_anche_che_la_risorsa_potrebbe_non_esistere():
 # la voce di menu o i segnaposto spariscano senza che nessuno se ne accorga
 # (una descrizione con un segnaposto non dichiarato manda in errore il form).
 
-import json as _json
-from pathlib import Path as _Path
+import json as _json  # noqa: E402
+from pathlib import Path as _Path  # noqa: E402
 
 _COMPONENT = _Path(__file__).resolve().parents[1] / "custom_components" / "vimar_intercom"
 _FILES = ["strings.json", "translations/it.json", "translations/en.json"]

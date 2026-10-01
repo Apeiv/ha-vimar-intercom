@@ -5,8 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 
-from custom_components.vimar_intercom import av_stream
-from custom_components.vimar_intercom import frame_grabber
+from custom_components.vimar_intercom import av_stream, frame_grabber
 from custom_components.vimar_intercom import media_handler as media
 
 SPS = bytes([0x67, 0x42, 0x80, 0x1F, 0xDA, 0x01, 0x40, 0x16, 0xE8, 0x40])

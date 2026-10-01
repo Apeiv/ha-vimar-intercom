@@ -285,7 +285,8 @@ def test_rifiuta_chiama_l_hub_e_segnala_l_errore():
 
 def test_hub_decline_risponde_603_solo_se_squilla(monkeypatch):
     """Stesso 603 dell'app (Via/To;tag/From/Call-ID/CSeq, senza corpo), inviato una volta."""
-    from custom_components.vimar_intercom import hub as hub_mod, sip_client as sip
+    from custom_components.vimar_intercom import hub as hub_mod
+    from custom_components.vimar_intercom import sip_client as sip
     inviati = []
 
     async def send(m):

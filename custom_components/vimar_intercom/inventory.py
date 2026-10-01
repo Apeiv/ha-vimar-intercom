@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import re
 import time
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 
 # "<sip:60901@127.0.0.1:5060;transport=tls>;tag=abc" → "60901"
 _SIP_ID = re.compile(r"sips?:([^@;>\s]+)@")

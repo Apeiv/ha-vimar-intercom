@@ -9,10 +9,10 @@ import types
 
 import pytest
 import requests
-
 from harness.web import load_views
 
-from custom_components.vimar_intercom import away_tts, media_handler as media, runtime, webhook
+from custom_components.vimar_intercom import away_tts, runtime, webhook
+from custom_components.vimar_intercom import media_handler as media
 
 
 class FakeHub:
@@ -352,6 +352,31 @@ def test_audio_and_json_go_to_every_client_and_dead_ones_are_dropped(init, tmp_p
     clients.add(dead)
     asyncio.run(hub.broadcast({"type": "ring"}))
     assert good.sent[-1] == '{"type": "ring"}' and clients == {good}
+
+
+def test_one_slow_client_does_not_hold_the_others(init, tmp_path):
+    """#53: the sends ran one after the other, so a client slow to drain held the
+    voice of every other client behind it. Two clients that never finish: both
+    must have been handed the packet."""
+    hass = _hass(tmp_path)
+    _setup(init, hass, _entry())
+    clients = hass.data[init.DOMAIN]["e1"]["audio_ws_clients"]
+    started = []
+
+    class _Slow:
+        async def send_bytes(self, b):
+            started.append(self)
+            await asyncio.Event().wait()
+
+    clients.update({_Slow(), _Slow()})
+
+    async def run():
+        task = asyncio.ensure_future(media.ws_send_bytes(b"pcm"))
+        await asyncio.sleep(0.05)
+        task.cancel()
+
+    asyncio.run(run())
+    assert len(started) == 2
 
 
 # ─── async_unload_entry and the update listener ────────────────────────────
