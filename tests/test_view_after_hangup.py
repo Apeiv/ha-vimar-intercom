@@ -96,7 +96,7 @@ def test_on_local_udp_a_bye_never_answered_still_frees_the_view(hub, monkeypatch
 def _auto_call(hub, monkeypatch, results, *, during_pause=None):
     """A view's auto-call; do_call answers with `results` in turn.
     `during_pause` runs 5 ms into the 50 ms pause between the two tries."""
-    monkeypatch.setattr(hub_mod, "LOCAL_UDP_RETRY_PAUSE", 0.05)
+    monkeypatch.setattr(hub_mod, "LOCAL_UDP_SETTLE", 0.05)
     calls = []
 
     async def do_call(target=None, silence_limit=None, answer_timeout=None, ring_timeout=None):
@@ -143,10 +143,10 @@ def test_the_other_face_of_the_stuck_panel_gets_another_try(hub, monkeypatch):
 
 
 def test_the_tries_fit_in_the_budget(hub, monkeypatch):
-    """Each try's answer timeout is capped by what is left: 8 + 8 + 5 = 21 s, and
-    no try is started without room for its ring timeout and an answer."""
+    """Each try's answer timeout is capped by what is left, and no try is started
+    without room for an answer: 6 + 6 + 6 s within the 21 s."""
     monkeypatch.setattr(R, "USE_LOCAL_UDP", True)
-    monkeypatch.setattr(hub_mod, "LOCAL_UDP_RETRY_PAUSE", 0.01)
+    monkeypatch.setattr(hub_mod, "LOCAL_UDP_SETTLE", 0.01)
     clock = {"t": 0.0}
     monkeypatch.setattr(hub_mod, "time", types.SimpleNamespace(monotonic=lambda: clock["t"]))
     calls = []
@@ -160,7 +160,7 @@ def test_the_tries_fit_in_the_budget(hub, monkeypatch):
     hub._stream_viewers, hub._auto_called = 1, True
     hub._auto_gen += 1
     asyncio.run(hub._do_auto_call(hub._auto_gen))
-    assert calls == [8.0, 8.0, 5.0]
+    assert calls == [6.0, 6.0, 6.0]
     assert sum(calls) <= hub_mod.LOCAL_UDP_CALL_BUDGET
 
 
@@ -213,7 +213,7 @@ def test_on_the_cloud_the_view_call_keeps_its_45_s(hub, monkeypatch):
 # ─── the card's "view outside" and the call buttons: explicit calls (#44) ────
 
 def _explicit(hub, monkeypatch, results, target=None, *, during_pause=None):
-    monkeypatch.setattr(hub_mod, "LOCAL_UDP_RETRY_PAUSE", 0.05)
+    monkeypatch.setattr(hub_mod, "LOCAL_UDP_SETTLE", 0.05)
     calls, pending = [], []
 
     async def do_call(target=None, silence_limit=None, answer_timeout=None, ring_timeout=None):
@@ -285,3 +285,73 @@ def test_async_hangup_stops_a_pending_retry(hub, monkeypatch):
     monkeypatch.setattr(sip, "do_hangup", do_hangup)
     asyncio.run(hub.async_hangup())
     assert hub._explicit_gen == before + 1
+
+
+# ─── letting the panel settle after a dialog (#44, 35 openings on a 40507) ────
+
+def _first_try_delay(hub, monkeypatch, ended_ago, *, local=True):
+    """How long the first INVITE waits when the last dialog ended `ended_ago`
+    seconds before the call, and what /av saw meanwhile."""
+    monkeypatch.setattr(R, "USE_LOCAL_UDP", local)
+    monkeypatch.setattr(hub_mod, "LOCAL_UDP_SETTLE", 0.3)
+    seen = {}
+
+    async def do_call(target=None, silence_limit=None, answer_timeout=None, ring_timeout=None):
+        seen["at"] = asyncio.get_running_loop().time()
+        return True, "Connesso!"
+
+    monkeypatch.setattr(sip, "do_call", do_call)
+
+    async def main():
+        loop = asyncio.get_running_loop()
+        hub._dialog_ended_at = hub_mod.time.monotonic() - ended_ago
+        started = loop.time()
+        call = asyncio.create_task(hub.async_call())
+        await asyncio.sleep(0.05)
+        seen["coming"] = hub._call_in_view
+        assert (await call)[0]
+        return seen["at"] - started
+
+    return asyncio.run(main()), seen
+
+
+def test_a_call_right_after_a_dialog_waits_for_the_panel_to_settle(hub, monkeypatch):
+    """An INVITE less than 1 s after the previous dialog ended was rung and never
+    answered, 8 times out of 8; from 5 s on, almost always answered."""
+    waited, seen = _first_try_delay(hub, monkeypatch, ended_ago=0.1)
+    assert 0.15 <= waited < 1.0, "until LOCAL_UDP_SETTLE after the end, not at once"
+    assert seen["coming"], "meanwhile /av keeps waiting and no view places its own call"
+
+
+def test_a_call_long_after_the_last_dialog_goes_at_once(hub, monkeypatch):
+    waited, _ = _first_try_delay(hub, monkeypatch, ended_ago=10)
+    assert waited < 0.1
+
+
+def test_on_the_cloud_a_call_never_waits_to_settle(hub, monkeypatch):
+    waited, _ = _first_try_delay(hub, monkeypatch, ended_ago=0.1, local=False)
+    assert waited < 0.1
+
+
+def test_the_next_try_settles_after_our_own_cancelled_try(hub, monkeypatch):
+    monkeypatch.setattr(R, "USE_LOCAL_UDP", True)
+    monkeypatch.setattr(hub_mod, "LOCAL_UDP_SETTLE", 0.2)
+    at = []
+
+    async def do_call(target=None, silence_limit=None, answer_timeout=None, ring_timeout=None):
+        at.append(asyncio.get_running_loop().time())
+        return NO if len(at) == 1 else (True, "Connesso!")
+
+    monkeypatch.setattr(sip, "do_call", do_call)
+    ok, _ = asyncio.run(hub.async_call())
+    assert ok and len(at) == 2
+    assert at[1] - at[0] >= 0.18, "the panel settles after our CANCEL too"
+
+
+def test_a_call_that_ends_on_the_line_starts_the_settle_clock(hub, monkeypatch):
+    monkeypatch.setattr(sip, "in_call", True)
+    hub._on_sip_state_change()
+    monkeypatch.setattr(sip, "in_call", False)
+    before = hub_mod.time.monotonic()
+    hub._on_sip_state_change()
+    assert hub._dialog_ended_at >= before
