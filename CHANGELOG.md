@@ -13,6 +13,11 @@ Italian and are kept as they were written.
   `CONFIGURATION`, `ENTITIES`, `CARD`, `TROUBLESHOOTING`, plus an Italian `HOMEKIT` page. Three statements
   were corrected on the way: the away message entities are admin-only since 1.0.17, the 40515's port 80
   refuses the connection, and how long "Vedi esterno" lasts depends on the plant.
+### Fixed
+
+- **One slow card no longer delays the others**: each audio WebSocket client gets its own small
+  queue and sender, so the voice and video loops never wait for a client's network. A client that
+  falls too far behind drops its own backlog and gets video again from the next keyframe (#54).
 
 ## [1.0.17] - 2026-10-01
 
