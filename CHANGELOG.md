@@ -4,6 +4,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [semver](ht
 Newest entries on top. **Entries are written in English from 1.0.1 onwards**; earlier ones are in
 Italian and are kept as they were written.
 
+## [Unreleased]
+
+### Fixed
+
+- "View outside" opened right after hanging up no longer fails after 25 s on local UDP (#41). The
+  view waits for the panel to answer our BYE (at most 6 s) before calling it again. A call to the
+  video panel (a view's, the card's "view outside", the call buttons) that the panel leaves
+  unanswered is cancelled and tried again, within 21 s of the first try and 24 s of the tap
+  (inside `/av`'s 25 s): after 3 s when the panel's proxy said 100
+  Trying and the panel never rang, else after 6 s. Every try waits until 5 s after the last call
+  on the line (or our own cancelled try) ended: a 2-wire panel ignores an INVITE that comes
+  sooner. Calls to a flat or the switchboard, and cloud plants, are unchanged. The 487 that ends our own cancelled INVITE is
+  logged at DEBUG, and `/av`'s "call not established" says how long it really waited.
+- The card's Fill/Fit button (#42). It is hidden while the video and its box have the same shape
+  (a 4:3 panel in the default 4:3 box), where filling and fitting draw the same picture and the
+  button seemed to do nothing. When the card falls back to Home Assistant's picture card (no
+  WebCodecs, or the card's player failed), the choice now reaches it as `fit_mode`.
+
 ## [1.0.16] - 2026-09-30
 
 ### Added

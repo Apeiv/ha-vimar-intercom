@@ -216,7 +216,7 @@ def hub(monkeypatch):
     monkeypatch.setitem(sip.pending_incoming, "active", False)
     h.chiamate = []
 
-    async def _fake_do_call(target=None, silence_limit=None):
+    async def _fake_do_call(target=None, silence_limit=None, **_kw):
         h.chiamate.append(target)
         return True, "200"
 
