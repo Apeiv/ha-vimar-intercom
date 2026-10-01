@@ -6,6 +6,12 @@ Italian and are kept as they were written.
 
 ## [Unreleased]
 
+### Fixed
+
+- **One slow card no longer delays the others**: each audio WebSocket client gets its own small
+  queue and sender, so the voice and video loops never wait for a client's network. A client that
+  falls too far behind drops its own backlog and gets video again from the next keyframe (#54).
+
 ## [1.0.17] - 2026-10-01
 
 ### Added

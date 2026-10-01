@@ -120,8 +120,8 @@ def make_hass(rig) -> types.SimpleNamespace:
     clients: set = set()
     rig.audio_ws_clients = clients
 
-    async def ws_send_bytes(data):
-        for ws in list(clients):
+    async def ws_send_bytes(data, only=None):
+        for ws in list(clients) if only is None else [only]:
             try:
                 await ws.send_bytes(data)
             except Exception:  # noqa: BLE001

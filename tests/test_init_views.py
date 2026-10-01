@@ -117,10 +117,12 @@ def test_audio_ws_sends_the_state_and_replays_the_current_video(views, monkeypat
     replayed = []
     monkeypatch.setattr(media, "video_proto",
                         types.SimpleNamespace(replay_gop_ws=lambda send: replayed.append(send)))
+    monkeypatch.setattr(media, "ws_send_bytes", lambda data, only=None: None)
     clients: set = set()
     ws, got = _talk(views, monkeypatch, ViewHub(), [], clients=clients)
     assert got == [{"type": "state", "registered": True, "in_call": False}]
-    assert replayed == [ws.send_bytes]
+    # Through the client's own queue, not straight to its socket.
+    assert replayed[0].func is media.ws_send_bytes and replayed[0].keywords == {"only": ws}
     assert clients == set()  # removed when it left
 
 

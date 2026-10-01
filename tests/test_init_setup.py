@@ -338,6 +338,15 @@ class _Client:
         self.sent.append(s)
 
 
+def _send_all(*packets, only=None):
+    """ws_send_bytes for each packet, then let the per-client senders drain."""
+    async def run():
+        for p in packets:
+            await media.ws_send_bytes(p, only=only)
+        await asyncio.sleep(0.01)
+    asyncio.run(run())
+
+
 def test_audio_and_json_go_to_every_client_and_dead_ones_are_dropped(init, tmp_path):
     hass = _hass(tmp_path)
     hub = _setup(init, hass, _entry())
@@ -347,36 +356,74 @@ def test_audio_and_json_go_to_every_client_and_dead_ones_are_dropped(init, tmp_p
     clients.update({good, dead})
     assert hub._has_ws_clients() is True
 
-    asyncio.run(media.ws_send_bytes(b"\x01pcm"))
-    assert good.sent == [b"\x01pcm"] and clients == {good}
+    async def run():
+        await media.ws_send_bytes(b"\x01pcm")
+        await asyncio.sleep(0.01)
+        assert good.sent == [b"\x01pcm"] and clients == {good}
+        await media.ws_send_bytes(b"\x01pcm2")  # the dead client's sender goes with it
+        assert list(hass.data[init.DOMAIN]["e1"]["ws_senders"]) == [good]
+        await asyncio.sleep(0.01)
+    asyncio.run(run())
     clients.add(dead)
     asyncio.run(hub.broadcast({"type": "ring"}))
     assert good.sent[-1] == '{"type": "ring"}' and clients == {good}
 
 
 def test_one_slow_client_does_not_hold_the_others(init, tmp_path):
-    """#53: the sends ran one after the other, so a client slow to drain held the
-    voice of every other client behind it. Two clients that never finish: both
-    must have been handed the packet."""
+    """#53, then #54's review: a client that never finishes sending must not delay
+    the next packet of anyone. ws_send_bytes only enqueues, so it returns at once and
+    the fast client gets every packet, in order."""
     hass = _hass(tmp_path)
     _setup(init, hass, _entry())
     clients = hass.data[init.DOMAIN]["e1"]["audio_ws_clients"]
-    started = []
+    fast = _Client()
 
-    class _Slow:
+    class _Stuck:
         async def send_bytes(self, b):
-            started.append(self)
             await asyncio.Event().wait()
 
-    clients.update({_Slow(), _Slow()})
+    clients.update({_Stuck(), fast})
+    packets = [b"\x01" + bytes([i]) for i in range(20)]
 
     async def run():
-        task = asyncio.ensure_future(media.ws_send_bytes(b"pcm"))
-        await asyncio.sleep(0.05)
-        task.cancel()
+        for p in packets:
+            await asyncio.wait_for(media.ws_send_bytes(p), 0.05)
+        await asyncio.sleep(0.01)
 
     asyncio.run(run())
-    assert len(started) == 2
+    assert fast.sent == packets
+
+
+def test_only_one_client_gets_the_replay(init, tmp_path):
+    hass = _hass(tmp_path)
+    _setup(init, hass, _entry())
+    clients = hass.data[init.DOMAIN]["e1"]["audio_ws_clients"]
+    new, old, gone = _Client(), _Client(), _Client()
+    clients.update({new, old})
+    _send_all(b"\x03gop", only=new)
+    _send_all(b"\x03gop", only=gone)  # left before its replay: nothing to send
+    assert new.sent == [b"\x03gop"] and old.sent == [] and gone.sent == []
+
+
+def test_a_full_client_queue_drops_its_backlog_and_waits_for_a_keyframe(init, tmp_path, monkeypatch):
+    """A half GOP only smears: a client that fell behind loses its backlog and gets
+    video again from the next SPS (sent before each IDR); its audio goes on."""
+    monkeypatch.setattr(init, "WS_CLIENT_QUEUE", 3)
+    hass = _hass(tmp_path)
+    _setup(init, hass, _entry())
+    clients = hass.data[init.DOMAIN]["e1"]["audio_ws_clients"]
+    slow = _Client()
+    clients.add(slow)
+    nal = b"\x03\x00\x00\x00\x01"
+    p1, p2, p3, sps, idr = nal + b"\x41a", nal + b"\x41b", nal + b"\x41c", nal + b"\x67s", nal + b"\x65i"
+
+    async def run():
+        for p in (p1, p2, p3, b"\x01pcm", nal + b"\x41d", sps, idr):
+            await media.ws_send_bytes(p)  # nothing drains in between: the queue fills
+        await asyncio.sleep(0.01)
+
+    asyncio.run(run())
+    assert slow.sent == [b"\x01pcm", sps, idr]
 
 
 # ─── async_unload_entry and the update listener ────────────────────────────
@@ -398,8 +445,10 @@ def test_unloading_the_last_entry_closes_clients_and_removes_services(init, tmp_
     async def passive_stop():
         stopped.append(True)
     monkeypatch.setattr(init.av_passive, "stop", passive_stop)
+    sender = types.SimpleNamespace(cancel=lambda: stopped.append("sender"))
+    hass.data[init.DOMAIN]["e1"]["ws_senders"][ws] = (None, sender)
     assert asyncio.run(init.async_unload_entry(hass, FakeEntry())) is True
-    assert ws.closed and hub.stopped and stopped == [True]
+    assert ws.closed and hub.stopped and stopped == ["sender", True]
     assert hass.data[init.DOMAIN] == {} and hass.services.handlers == {}
     assert len(hass.services.removed) == 9
 
