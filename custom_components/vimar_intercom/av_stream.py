@@ -8,8 +8,8 @@ import logging
 import os
 import struct
 import subprocess
-import tempfile
 
+from . import homekit_audio
 from . import media_handler as media
 from .const import FFMPEG_AV_AUDIO_PORT, FFMPEG_AV_VIDEO_PORT
 
@@ -73,7 +73,9 @@ class AvRtp:
                 + struct.pack('!HII', seq, ts, self.out_ssrc) + rtp[12:])
 
 
-_AV_SDP_PATH = os.path.join(tempfile.gettempdir(), "vimar_intercom_av.sdp")
+# The private temp file holding ffmpeg's input SDP (homekit_audio.write_sdp:
+# 0600, unpredictable name). Removed when ffmpeg is stopped.
+_av_sdp_file: str | None = None
 
 # How long ffmpeg stays up after the last /av client left, while the call's
 # video is still coming: HA's stream worker and go2rtc reconnect within seconds,
@@ -119,9 +121,7 @@ def _write_av_sdp():
         "a=rtpmap:96 H264/90000\r\n"
         f"a=fmtp:96 profile-level-id=42801F;packetization-mode=1{sprop}\r\n"
     )
-    with open(_AV_SDP_PATH, "w") as f:
-        f.write(sdp)
-    return _AV_SDP_PATH
+    return homekit_audio.write_sdp("vimar_intercom_av_", sdp)
 
 
 def _seed_silence(audio_proto) -> None:
@@ -196,13 +196,13 @@ async def _start_av_ffmpeg_locked():
     nuovo bind), scrive l'SDP in executor, poi abilita il forward RTP verso
     ffmpeg SOLO dopo lo start.
     """
-    global av_ffmpeg_proc, _stderr_task, _av_stopping
+    global av_ffmpeg_proc, _stderr_task, _av_stopping, _av_sdp_file
     await _stop_av_ffmpeg_locked()
     _av_stopping = False
 
     loop = asyncio.get_running_loop()
     try:
-        sdp_path = await loop.run_in_executor(None, _write_av_sdp)
+        sdp_path = _av_sdp_file = await loop.run_in_executor(None, _write_av_sdp)
     except Exception as e:
         _LOGGER.error("AV SDP write error: %s", e)
         return
@@ -407,7 +407,7 @@ def _close_av_pipes(proc) -> None:
 
 async def _stop_av_ffmpeg_locked():
     """Actual stop — caller must hold _av_lock."""
-    global av_ffmpeg_proc, _av_stopping
+    global av_ffmpeg_proc, _av_stopping, _av_sdp_file
     _cancel_idle_stop()
     _av_stopping = True
     # Stop forwarding first so no more packets hit the (closing) ffmpeg.
@@ -415,6 +415,11 @@ async def _stop_av_ffmpeg_locked():
         media.video_proto.forward_av = False
     if media.audio_proto:
         media.audio_proto.forward_av = False
+    if _av_sdp_file:
+        # ffmpeg has read it by now; a failed start leaves it behind too.
+        with contextlib.suppress(OSError):
+            os.unlink(_av_sdp_file)
+        _av_sdp_file = None
     if av_ffmpeg_proc:
         proc = av_ffmpeg_proc
         av_ffmpeg_proc = None

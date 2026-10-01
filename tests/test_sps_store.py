@@ -65,7 +65,6 @@ def test_round_trip_per_targa_e_sprop_alla_prima_av(monkeypatch, tmp_path):
         await media.restore_sps_pps(store2)
         vp2.set_panel("55001")
         assert vp2.sps_pps() == (SPS, PPS)
-        monkeypatch.setattr(av_stream, "_AV_SDP_PATH", str(tmp_path / "av.sdp"))
         with open(av_stream._write_av_sdp()) as f:
             assert f"sprop-parameter-sets={b64(SPS)},{b64(PPS)}" in f.read()
         vp2.set_panel("55002")

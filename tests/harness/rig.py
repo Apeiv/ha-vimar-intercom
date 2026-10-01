@@ -125,7 +125,6 @@ class Rig:
                 ap = free_even_port_pair()
             mp.setattr(av_stream, "FFMPEG_AV_VIDEO_PORT", vp)
             mp.setattr(av_stream, "FFMPEG_AV_AUDIO_PORT", ap)
-            mp.setattr(av_stream, "_AV_SDP_PATH", os.path.join(tempfile.mkdtemp(), "av.sdp"))
         else:
             mp.setattr(frame_grabber, "start", lambda vp: None)
             mp.setattr(frame_grabber, "stop", lambda vp, clip=True: None)
