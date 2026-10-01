@@ -6,6 +6,8 @@ Italian and are kept as they were written.
 
 ## [Unreleased]
 
+## [1.0.18] - 2026-10-02
+
 ### Changed
 
 - **HACS installs from a release zip**: every release gets `vimar_intercom.zip` attached by a workflow, and
@@ -17,6 +19,7 @@ Italian and are kept as they were written.
   `CONFIGURATION`, `ENTITIES`, `CARD`, `TROUBLESHOOTING`, plus an Italian `HOMEKIT` page. Three statements
   were corrected on the way: the away message entities are admin-only since 1.0.17, the 40515's port 80
   refuses the connection, and how long "Vedi esterno" lasts depends on the plant.
+
 ### Fixed
 
 - **One slow card no longer delays the others**: each audio WebSocket client gets its own small
