@@ -407,7 +407,11 @@ def _resolve_sip_targets(proxy: str, default_port: int) -> list[tuple[str, int]]
 
 async def connect():
     global reader, writer, lock, _udp_sock, _udp_target, MY_IP
-    MY_IP = get_local_ip()
+    # In the executor: in cloud mode the UDP connect() resolves the proxy's
+    # name first, a blocking DNS lookup that takes seconds when the network is
+    # down (Home Assistant starting before the router), and this runs at every
+    # reconnect.
+    MY_IP = await asyncio.get_running_loop().run_in_executor(None, get_local_ip)
 
     if R.USE_LOCAL_UDP:
         # ── UDP locale: apre un socket UDP verso il citofono ───────

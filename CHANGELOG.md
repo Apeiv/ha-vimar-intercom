@@ -8,6 +8,9 @@ Italian and are kept as they were written.
 
 ### Fixed
 
+- In cloud mode, finding the local IP resolved the proxy's name on the event loop, at setup and at
+  every reconnect: with the network down (Home Assistant starting before the router) that DNS
+  lookup froze every integration for seconds. It runs in the executor now.
 - HomeKit: two ffmpegs starting together (the re-encoder and a view) could be handed overlapping
   loopback ports, and one logged "bind failed: Address in use". Every ffmpeg RTP input now gets an
   even port with the next one free (RTCP), and a pair handed out is not handed out again for 10 s.
