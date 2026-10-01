@@ -21,12 +21,21 @@ Italian and are kept as they were written.
   (a 4:3 panel in the default 4:3 box), where filling and fitting draw the same picture and the
   button seemed to do nothing. When the card falls back to Home Assistant's picture card (no
   WebCodecs, or the card's player failed), the choice now reaches it as `fit_mode`.
+- In cloud mode, finding the local IP resolved the proxy's name on the event loop, at setup and at
+  every reconnect: with the network down (Home Assistant starting before the router) that DNS
+  lookup froze every integration for seconds. It runs in the executor now.
 - HomeKit: two ffmpegs starting together (the re-encoder and a view) could be handed overlapping
   loopback ports, and one logged "bind failed: Address in use". Every ffmpeg RTP input now gets an
   even port with the next one free (RTCP), and a pair handed out is not handed out again for 10 s.
 
 ### Changed
 
+- SRTP costs a quarter less per packet (28 µs instead of 38 µs for a video packet on a Raspberry
+  Pi 5): the IV is one integer XOR, the AES-CTR cipher is set up without a Counter object, and the
+  HMAC is copied from one keyed once. The bytes on the wire are the same (known-answer tests).
+- The voice to the panel (the card's microphone, HomeKit's Talk, the away message) is μ-law encoded
+  through a lookup table: 13 µs instead of 113 µs per 20 ms packet on a Raspberry Pi 5, the same
+  bytes, on the event loop that also carries the call's video.
 - HomeKit views open faster. The view's audio no longer waits for the video path (re-encoder and
   keyframe included), and with Smoother video on, the re-encoder starts while the view's call is
   still connecting instead of after its video arrives.

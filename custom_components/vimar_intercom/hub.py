@@ -873,7 +873,8 @@ class VimarIntercomHub:
         sip.set_model_callback(self._on_model_detected)
         media.init(self._handle_broadcast)
 
-        sip.MY_IP = sip.get_local_ip()
+        # Blocking DNS lookup in cloud mode (see sip.connect): off the loop.
+        sip.MY_IP = await asyncio.get_running_loop().run_in_executor(None, sip.get_local_ip)
         sip.incoming_requests = asyncio.Queue()
         _LOGGER.info("Local IP: %s", sip.MY_IP)
 
