@@ -561,7 +561,6 @@ def reset_state() -> None:
 
 async def _reconnect():
     """Reconnect / re-register with exponential backoff."""
-    global reader, writer
     _set_registered(False)
     delays = [2, 4, 8, 16, 32]
     for attempt, delay in enumerate(delays, 1):
