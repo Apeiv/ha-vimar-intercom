@@ -6,6 +6,8 @@ Italian and are kept as they were written.
 
 ## [Unreleased]
 
+## [1.0.17] - 2026-10-01
+
 ### Added
 
 - **Card `idle_picture`** option (also in the visual editor): `last_ring` (default) keeps the last
@@ -23,6 +25,11 @@ Italian and are kept as they were written.
 - **Card voice playback** no longer clicks 50 times a second: the 8 kHz voice is resampled to the
   audio context's rate continuously across packets and low-passed at 3.6 kHz, and the playout
   buffer starts 120 ms ahead and grows by 40 ms at every underrun, up to 300 ms (#53).
+- The visitor's voice clicked on the cloud relay: audio never looked at the RTP sequence number, so a
+  packet lost or reordered on the way was skipped or played out of place. Audio is now put back in
+  order like the video, duplicates are dropped, and a lost packet is filled with the previous 20 ms at
+  half volume, and a source that restarts its sequence numbers is followed. The server keeps at most
+  1 s of voice waiting instead of 4 s (#53).
 - **Card live video on iPhone** no longer smears between keyframes: the WebCodecs decoder is fed
   AVC (an `avcC` description built from SPS/PPS, length-prefixed NAL units) instead of Annex B, is
   reconfigured only when SPS/PPS change, and runs with `optimizeForLatency` off on iOS (#53).
@@ -65,6 +72,10 @@ Italian and are kept as they were written.
 - HomeKit views open faster. The view's audio no longer waits for the video path (re-encoder and
   keyframe included), and with Smoother video on, the re-encoder starts while the view's call is
   still connecting instead of after its video arrives.
+- `find_sga` reports a `202 Accepted` as `queued` instead of `exists`: the cloud relay accepted the
+  probe but no device took it, so nothing at that address can answer over the cloud (#14). The
+  service's `sip_timeout` now goes up to 30 s, because over the relay that `202` can take ~15 s.
+
 ### Security
 
 - One crafted SIP datagram could stall Home Assistant for seconds: the `Authorization` pattern in
@@ -75,14 +86,6 @@ Italian and are kept as they were written.
   the Tab's MAC (which the Tab publishes) over mDNS with another address: REGISTER, door commands
   and calls then went there. A new address is now offered only when it is a private IPv4 address that
   the record announces as its own, and applied only after you confirm it under Discovered (#46).
-- `find_sga` reports a `202 Accepted` as `queued` instead of `exists`: the cloud relay accepted the
-  probe but no device took it, so nothing at that address can answer over the cloud (#14). The
-  service's `sip_timeout` now goes up to 30 s, because over the relay that `202` can take ~15 s.
-- The visitor's voice clicked on the cloud relay: audio never looked at the RTP sequence number, so a
-  packet lost or reordered on the way was skipped or played out of place. Audio is now put back in
-  order like the video, duplicates are dropped, and a lost packet is filled with the previous 20 ms at
-  half volume, and a source that restarts its sequence numbers is followed. The server keeps at most
-  1 s of voice waiting instead of 4 s (#53).
 
 ## [1.0.16] - 2026-09-30
 
