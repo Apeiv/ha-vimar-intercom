@@ -26,6 +26,9 @@ import base64
 import logging
 import os
 import socket
+import struct
+import time
+from collections import OrderedDict
 
 from .homekit_audio import (
     LOOPBACK_INPUT,
@@ -57,6 +60,9 @@ GOP_MAX_PACKETS = 1500
 # on a panel that ignores keyframe requests, when the relay lost part of the
 # first one).
 SNAPSHOT_FPS = 2
+# The frame-delay statistic: input frames remembered, output frames measured.
+FRAME_DELAY_KEEP = 300               # 20 s at 15 fps
+FRAME_DELAY_SAMPLES = 9000           # 10 minutes at 15 fps
 # A JPEG of the panel's 320x240 is 10 to 30 KB; anything past this without
 # an end marker is not one.
 JPEG_MAX = 1024 * 1024
@@ -152,6 +158,14 @@ class Transcoder:
         self.generation: int | None = None
         self.gop = EncodedGop()
         self.stats = {"in": 0, "out": 0}
+        # How far behind the panel the re-encoded video runs: for each input
+        # frame (RTP timestamp, relative to the first one fed) the time its
+        # last packet went to ffmpeg; for each output frame, the time it came
+        # back. With -fps_mode passthrough the relative timestamps match.
+        self._in_first_ts: int | None = None
+        self._in_at: OrderedDict[int, float] = OrderedDict()
+        self._out_first_ts: int | None = None
+        self.frame_delays: list[float] = []
         # The latest decoded picture, as JPEG (SNAPSHOT_FPS).
         self.last_jpeg: bytes | None = None
 
@@ -310,7 +324,16 @@ class Transcoder:
             self._feed.sendto(packet, ("127.0.0.1", self._in_port))
             self.stats["in"] += 1
         except OSError:
-            pass
+            return
+        if len(packet) >= 12:
+            ts = struct.unpack_from("!I", packet, 4)[0]
+            if self._in_first_ts is None:
+                self._in_first_ts = ts
+            rel = (ts - self._in_first_ts) & 0xFFFFFFFF
+            self._in_at[rel] = time.monotonic()   # the frame's last packet so far
+            self._in_at.move_to_end(rel)
+            while len(self._in_at) > FRAME_DELAY_KEEP:
+                self._in_at.popitem(last=False)
 
     def _from_encoder(self, data: bytes, addr) -> None:
         if len(data) < 12 or is_rtcp(data):
@@ -321,6 +344,13 @@ class Transcoder:
         elif addr != self._enc_sender:
             return
         self.stats["out"] += 1
+        if data[1] & 0x80:                        # the last packet of an output frame
+            ts = struct.unpack_from("!I", data, 4)[0]
+            if self._out_first_ts is None:
+                self._out_first_ts = ts
+            fed = self._in_at.get((ts - self._out_first_ts) & 0xFFFFFFFF)
+            if fed is not None and len(self.frame_delays) < FRAME_DELAY_SAMPLES:
+                self.frame_delays.append(time.monotonic() - fed)
         self.gop.add(data)
         for sink in tuple(self._sinks):
             try:
@@ -349,8 +379,16 @@ class Transcoder:
         if self._sdp:
             await asyncio.get_running_loop().run_in_executor(None, _unlink, self._sdp)
             self._sdp = ""
-        _LOGGER.info("Transcoding stopped: %d panel packets in, %d transcoded packets out",
-                     self.stats["in"], self.stats["out"])
+        _LOGGER.info("Transcoding stopped: %d panel packets in, %d transcoded packets out%s",
+                     self.stats["in"], self.stats["out"], self.delay_summary())
+
+    def delay_summary(self) -> str:
+        """", frame delay median 68 ms (p90 75 ms, 120 frames)", or "" with none."""
+        d = sorted(self.frame_delays)
+        if not d:
+            return ""
+        return (f", frame delay median {d[len(d) // 2] * 1000:.0f} ms"
+                f" (p90 {d[int(len(d) * 0.9)] * 1000:.0f} ms, {len(d)} frames)")
 
 
 def _unlink(path: str) -> None:

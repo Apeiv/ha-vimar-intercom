@@ -191,3 +191,30 @@ def test_a_deferred_start_feeds_nothing_until_begin(monkeypatch):
     assert early_sent == [] and not early_begun and early_attached == []
     assert sent == group + [live], "the group in order first, then the live stream"
     assert attached == [1]
+
+
+def test_the_frame_delay_is_measured_from_feed_to_encoder_output(monkeypatch):
+    """How far behind the panel the re-encoded video runs (#56): input frames by
+    their RTP timestamp relative to the first one fed, output frames likewise
+    (-fps_mode passthrough keeps them), matched on the output frame's last packet."""
+    import struct as st
+
+    def pkt(ts, marker=False):
+        return st.pack("!BBHII", 0x80, (0x80 if marker else 0) | 96, 1, ts, 0x1234) + b"\x41\x00"
+
+    clock = {"t": 100.0}
+    monkeypatch.setattr(tc.time, "monotonic", lambda: clock["t"])
+    t = tc.Transcoder(None, None)
+    t._feed.close()
+    t._feed = type("F", (), {"sendto": lambda *_a: None})()
+    t._send(pkt(9000))                 # frame 0 fed at 100.00
+    clock["t"] = 100.066
+    t._send(pkt(15000))                # frame 1 fed at 100.066
+    clock["t"] = 100.30
+    t._from_encoder(pkt(777, marker=True), ("127.0.0.1", 1))    # frame 0 out: 300 ms
+    clock["t"] = 100.40
+    t._from_encoder(pkt(777 + 6000), ("127.0.0.1", 1))          # not its last packet
+    t._from_encoder(pkt(777 + 6000, marker=True), ("127.0.0.1", 1))  # frame 1 out: 334 ms
+    assert [round(d * 1000) for d in t.frame_delays] == [300, 334]
+    assert t.delay_summary() == ", frame delay median 334 ms (p90 334 ms, 2 frames)"
+    assert tc.Transcoder(None, None).delay_summary() == ""
