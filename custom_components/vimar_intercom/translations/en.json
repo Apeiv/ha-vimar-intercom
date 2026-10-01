@@ -50,6 +50,10 @@
       "zeroconf_confirm": {
         "title": "Vimar intercom found on the network",
         "description": "Home Assistant found a Vimar intercom at {host} (MAC {mac}, model {model}, firmware {firmware}). To connect it you still need the pairing QR code or the SIP credentials: the address and the local domain are already filled in."
+      },
+      "zeroconf_moved": {
+        "title": "Has the intercom changed address?",
+        "description": "The configured Vimar intercom announced itself at {new} instead of {old}. Confirm only if you moved it or your router gave it a new address: anyone on the local network can announce its MAC. On confirmation Home Assistant uses {new} and reloads the integration."
       }
     },
     "error": {
@@ -62,7 +66,8 @@
     "abort": {
       "already_configured": "Device is already configured.",
       "no_mac": "The intercom announced itself without a MAC: add it by hand from Settings → Devices & services.",
-      "single_instance_allowed": "Vimar Intercom is already set up: only one installation is supported."
+      "single_instance_allowed": "Vimar Intercom is already set up: only one installation is supported.",
+      "address_updated": "Intercom address updated."
     },
     "create_entry": {
       "transport_fallback": "Home Assistant could not register over {tried} and uses {used} instead: {detail}. It works, but if you expected {tried}, check the intercom's network settings."
