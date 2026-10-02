@@ -600,3 +600,5 @@ def test_the_av_key_page_is_translated(cf):
         page = step["av_key"]
         assert "{param}" in page["description"] and "{key}" in page["description"], name
         assert set(page["data"]) == {"regenerate"}, name
+        # hassfest refuses anything that looks like HTML, `<key>` included.
+        assert "<" not in json.dumps(page, ensure_ascii=False), name

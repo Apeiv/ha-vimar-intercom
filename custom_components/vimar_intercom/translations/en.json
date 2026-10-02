@@ -187,7 +187,7 @@
       },
       "av_key": {
         "title": "/av stream key",
-        "description": "`/api/vimar_intercom/av` without `autocall=0` calls the panel: it only accepts an authenticated Home Assistant user or this key in the `{param}` parameter. The integration's camera adds it by itself.\n\nCurrent key: `{key}`\n\nFor go2rtc, Frigate or Scrypted append `&{param}=<key>` to the URL (see docs/EXTERNAL.md). On passive URLs (`autocall=0`) it is optional for now, but a wrong key is refused.\n\nIf a log or a URL with the key ever reached someone else, regenerate it: the old key stops working at once and the integration reloads (a call in progress drops).",
+        "description": "`/api/vimar_intercom/av` without `autocall=0` calls the panel: it only accepts an authenticated Home Assistant user or this key in the `{param}` parameter. The integration's camera adds it by itself.\n\nCurrent key: `{key}`\n\nFor go2rtc, Frigate or Scrypted append `&{param}=` followed by the key to the URL (see docs/EXTERNAL.md). On passive URLs (`autocall=0`) it is optional for now, but a wrong key is refused.\n\nIf a log or a URL with the key ever reached someone else, regenerate it: the old key stops working at once and the integration reloads (a call in progress drops).",
         "data": {
           "regenerate": "Regenerate the key"
         },

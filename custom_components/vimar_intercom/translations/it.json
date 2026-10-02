@@ -187,7 +187,7 @@
       },
       "av_key": {
         "title": "Chiave dello stream /av",
-        "description": "`/api/vimar_intercom/av` senza `autocall=0` chiama la targa: accetta solo un utente di Home Assistant autenticato oppure questa chiave nel parametro `{param}`. La camera dell'integrazione la usa da sola.\n\nChiave attuale: `{key}`\n\nPer go2rtc, Frigate o Scrypted aggiungi `&{param}=<chiave>` all'URL (vedi docs/EXTERNAL.md). Sugli URL passivi (`autocall=0`) per ora è facoltativa, ma una chiave sbagliata viene rifiutata.\n\nSe un log o un URL con la chiave è finito in mani altrui, rigenerala: la vecchia smette subito di funzionare e l'integrazione si ricarica (una chiamata in corso cade).",
+        "description": "`/api/vimar_intercom/av` senza `autocall=0` chiama la targa: accetta solo un utente di Home Assistant autenticato oppure questa chiave nel parametro `{param}`. La camera dell'integrazione la usa da sola.\n\nChiave attuale: `{key}`\n\nPer go2rtc, Frigate o Scrypted aggiungi `&{param}=` seguito dalla chiave all'URL (vedi docs/EXTERNAL.md). Sugli URL passivi (`autocall=0`) per ora è facoltativa, ma una chiave sbagliata viene rifiutata.\n\nSe un log o un URL con la chiave è finito in mani altrui, rigenerala: la vecchia smette subito di funzionare e l'integrazione si ricarica (una chiamata in corso cade).",
         "data": {
           "regenerate": "Rigenera la chiave"
         },
