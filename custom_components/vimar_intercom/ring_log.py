@@ -5,6 +5,7 @@ import contextlib
 import json
 import os
 import re
+import stat
 import tempfile
 import threading
 from collections.abc import Callable
@@ -23,8 +24,17 @@ def write_photo(folder: str, name: str, jpeg: bytes) -> int:
     prima sullo stesso nome, e la card non tiene quella vecchia in cache."""
     os.makedirs(folder, exist_ok=True)
     for n in (name, LAST_PHOTO):
-        with open(os.path.join(folder, n), "wb") as fh:
-            fh.write(jpeg)
+        # New file, then rename over the target (as update_ring_log does): a symlink
+        # or hard link planted at that name is replaced, never written through.
+        fd, tmp = tempfile.mkstemp(dir=folder, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(jpeg)
+            os.chmod(tmp, 0o644)  # mkstemp makes 0600; photos were readable by others before
+            os.replace(tmp, os.path.join(folder, n))
+        finally:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(tmp)
     return int(os.path.getmtime(os.path.join(folder, name)) * 1000)
 
 
@@ -35,7 +45,12 @@ def read_last_photo(path: str | None, folder: str | None) -> bytes | None:
         if not candidate:
             continue
         try:
-            with open(candidate, "rb") as fh:
+            # Only a regular file, never a symlink someone left in the folder
+            # (it would serve any file Home Assistant can read as the photo).
+            if not stat.S_ISREG(os.lstat(candidate).st_mode):
+                continue
+            fd = os.open(candidate, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            with os.fdopen(fd, "rb") as fh:
                 return fh.read()
         except OSError:
             continue

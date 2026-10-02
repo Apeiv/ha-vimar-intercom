@@ -160,45 +160,6 @@ class _Datagrams(asyncio.DatagramProtocol):
         pass
 
 
-class ReplayFilter:
-    """Replay protection for the SRTP we receive (RFC 3711 §3.3.2), as libsrtp
-    does it: per SSRC, the highest packet index accepted and a bitmap of the
-    WINDOW indices below it.
-
-    The index is the 48-bit ROC || sequence, estimated here from the highest
-    index accepted exactly as ``SRTPContext`` estimates it for decryption.
-    Checked after authentication, so a forged packet never moves the window.
-    Without it, one captured voice packet sent again and again was played to
-    the street every time.
-    """
-
-    WINDOW = 128
-
-    def __init__(self) -> None:
-        self._streams: dict[int, tuple[int, int]] = {}   # ssrc -> (max index, bitmap)
-
-    def fresh(self, packet: bytes) -> bool:
-        """True the first time this packet's index is seen, and records it."""
-        seq, ssrc = struct.unpack_from("!H", packet, 2)[0], struct.unpack_from("!I", packet, 8)[0]
-        state = self._streams.get(ssrc)
-        if state is None:
-            self._streams[ssrc] = (seq, 1)
-            return True
-        top, seen = state
-        roc = top >> 16
-        index = min((((r << 16) | seq) for r in (roc - 1, roc, roc + 1) if r >= 0),
-                    key=lambda i: abs(i - top))
-        behind = top - index
-        if behind < 0:
-            seen = 1 if -behind >= self.WINDOW else ((seen << -behind) | 1) & ((1 << self.WINDOW) - 1)
-            self._streams[ssrc] = (index, seen)
-            return True
-        if behind >= self.WINDOW or seen >> behind & 1:
-            return False
-        self._streams[ssrc] = (top, seen | 1 << behind)
-        return True
-
-
 # ─── The audio bridge: both directions on a single port ────────────
 
 
@@ -233,7 +194,6 @@ class AudioBridge:
         self._tx = SRTPContext(srtp_key_b64)
         self._rx = SRTPContext(srtp_key_b64)
         self._tx_rtcp = SRTCPContext(srtp_key_b64)
-        self._rx_replay = ReplayFilter()
         # ffmpeg picks the SSRC (-ssrc). We learn it from the first packet.
         self._ssrc: int | None = None
         self._phone_tr: asyncio.DatagramTransport | None = None
@@ -410,15 +370,16 @@ class AudioBridge:
         """Phone → street: the answering person's voice."""
         if addr[0] != self._phone_addr[0] or len(data) < 12 or is_rtcp(data):
             return
+        replayed = self._rx.replayed
         plain = self._rx.unprotect(data)
+        if plain is None and self._rx.replayed != replayed:
+            self.stats["replayed"] += 1  # authentic, but a packet already received
+            return
         if plain is None:
             self.stats["auth_fail"] += 1
             if self.stats["auth_fail"] in (1, 50):
                 _LOGGER.warning("HomeKit: audio from the phone fails to decrypt "
                                 "(%d packets)", self.stats["auth_fail"])
-            return
-        if not self._rx_replay.fresh(plain):
-            self.stats["replayed"] += 1
             return
         if self.stats["from_phone"] == 0:
             _LOGGER.info("HomeKit: audio arriving from the phone (%dB)", len(data))
