@@ -645,6 +645,23 @@ def test_plain_av_for_an_authenticated_user_needs_no_key(views, av_key):
     assert r.status == 503 and hub.opened == 1
 
 
+def test_the_user_check_reads_the_key_ha_sets(views, av_key):
+    """HA's auth middleware stores the result under "ha_authenticated"
+    (homeassistant.helpers.http.KEY_AUTHENTICATED). Reading "hass_authenticated",
+    as 1.0.18's #63 code did, never matches: an HA user without the key got 403."""
+    from custom_components.vimar_intercom import views as views_mod
+    assert views_mod.KEY_AUTHENTICATED == "ha_authenticated"
+
+    class OnlyHaKey(Request):
+        def get(self, k, d=None):
+            return {"ha_authenticated": True}.get(k, d)
+
+    hub = ViewHub()
+    hub.open_result = False
+    r = _av_req(views, hub, OnlyHaKey())
+    assert r.status == 503 and hub.opened == 1
+
+
 @pytest.mark.parametrize("query", [{}, {"autocall": "0"}, {"mode": "passive"}])
 def test_a_wrong_key_is_refused_in_every_mode_even_for_a_user(views, av_key, query, caplog):
     hub = ViewHub()

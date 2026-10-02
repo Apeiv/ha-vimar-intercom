@@ -44,7 +44,7 @@ la rubrica: [Configurazione](https://github.com/lollox80/ha-vimar-intercom/blob/
 ## Cosa ottieni
 
 - **Squillo**: un'entità evento e i sensori dello squillo per le tue automazioni; a scelta una foto e
-  una breve clip di ogni visitatore, e webhook per Alexa o Scrypted. → [Entità, servizi e automazioni](https://github.com/lollox80/ha-vimar-intercom/blob/main/docs/ENTITIES.it.md)
+  una breve clip di ogni visitatore, e webhook per Alexa o Scrypted; un pulsante *Squillo di prova* per provare le automazioni. → [Entità, servizi e automazioni](https://github.com/lollox80/ha-vimar-intercom/blob/main/docs/ENTITIES.it.md)
 - **Porta, cancello e attuatori**: una serratura, il pulsante *Apri porta* e un pulsante per ogni
   attuatore della rubrica (F1/F2, luci scala, relè). → [Configurazione](https://github.com/lollox80/ha-vimar-intercom/blob/main/docs/CONFIGURATION.it.md)
 - **Video e voce**: la camera chiama la targa solo quando la apri, e mostra chi c'è mentre suona; la card

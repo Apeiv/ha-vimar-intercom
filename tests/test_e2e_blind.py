@@ -25,6 +25,8 @@ from custom_components.vimar_intercom import media_handler as media
 from custom_components.vimar_intercom import runtime as R
 from custom_components.vimar_intercom import sip_client as sip
 
+pytestmark = pytest.mark.slow
+
 JPEG = b"\xff\xd8FOTO\xff\xd9"
 
 

@@ -210,7 +210,7 @@ def _stub(name: str, **attrs) -> None:
 
 
 @pytest.fixture(scope="module")
-def cf():
+def of():
     _stub("homeassistant.components.file_upload", process_uploaded_file=None)
     _stub("homeassistant.data_entry_flow", FlowResult=dict)
     _stub("homeassistant.helpers.selector")
@@ -222,7 +222,7 @@ def cf():
     ce = sys.modules["homeassistant.config_entries"]
     if getattr(sys.modules["homeassistant"], "_is_stub", False):
         ce.ConfigFlow = _ConfigFlow
-    return pytest.importorskip("custom_components.vimar_intercom.config_flow")
+    return pytest.importorskip("custom_components.vimar_intercom.options_flow")
 
 
 class _Entry:
@@ -231,9 +231,9 @@ class _Entry:
         self.options = options
 
 
-def _confirm(cf, options: dict, imported: dict):
+def _confirm(of, options: dict, imported: dict):
     def mk():
-        flow = cf.OptionsFlowHandler(_Entry(options))
+        flow = of.OptionsFlowHandler(_Entry(options))
         flow._imported = imported
         flow._imported_gid = "3"
         flow._picg_from_rest = None
@@ -245,37 +245,37 @@ def _confirm(cf, options: dict, imported: dict):
     return form["description_placeholders"]["door_info"], saved["data"]
 
 
-def test_conferma_2fv2_salva_la_targa_della_porta(cf, tmp_path):
+def test_conferma_2fv2_salva_la_targa_della_porta(of, tmp_path):
     db = tmp_path / "rubrica.db"
     _make_db_2fv2(db)
     imported = rubrica_import.parse_rubrica_file(str(db), "3")
-    info, data = _confirm(cf, {"sga_target": "61000", "picg_target": "60001"}, imported)
+    info, data = _confirm(of, {"sga_target": "61000", "picg_target": "60001"}, imported)
     assert data["door_target"] == "55001"
     assert data["sga_target"] == "61000"
     assert "55001" in info
 
 
-def test_conferma_2f_porta_uguale_a_prima(cf, tmp_path):
+def test_conferma_2f_porta_uguale_a_prima(of, tmp_path):
     db = tmp_path / "rubrica.db"
     _make_db_2f(db)
     imported = rubrica_import.parse_rubrica_file(str(db), "101")
-    info, data = _confirm(cf, {"sga_target": "55001", "door_target": "55001"}, imported)
+    info, data = _confirm(of, {"sga_target": "55001", "door_target": "55001"}, imported)
     assert data["door_target"] == "55001"
     assert "coincide" in info
 
 
-def test_conferma_senza_porta_lascia_quella_configurata(cf):
+def test_conferma_senza_porta_lascia_quella_configurata(of):
     imported = {"actuators": [{"name": "Luce", "msg": "X", "target": "55001", "icon": "light"}],
                 "sga": "61000", "system": {}, "door": None}
-    info, data = _confirm(cf, {"door_target": "55009"}, imported)
+    info, data = _confirm(of, {"door_target": "55009"}, imported)
     assert data["door_target"] == "55009"
     assert "resta" in info
 
 
-def test_conferma_senza_porta_ne_opzione_dice_sga(cf):
+def test_conferma_senza_porta_ne_opzione_dice_sga(of):
     imported = {"actuators": [{"name": "Luce", "msg": "X", "target": "55001", "icon": "light"}],
                 "sga": "61000", "system": {}}
-    info, data = _confirm(cf, {}, imported)
+    info, data = _confirm(of, {}, imported)
     assert data["door_target"] == ""
     assert "SGA" in info and "61000" in info
 

@@ -283,3 +283,15 @@ class TestHardening:
                                own_device_id="ours")
         inventory.note_peer({"from": "<sip:60999@d>", "mobile-imei": "ours"})
         assert inventory.snapshot()[0]["is_self"] is True
+
+
+def test_a_crafted_sip_header_cannot_stall_the_uri_regexes():
+    """"sip:" repeated with no "@" made every start scan to the end of the header."""
+    import time
+
+    header = "sip:" * 16_000
+    start = time.perf_counter()
+    assert inv.sip_id(header) == ""
+    assert inv._uri_host(header) == ""
+    assert time.perf_counter() - start < 0.5
+    assert inv.sip_id("<sip:60901@127.0.0.1>;tag=x") == "60901"

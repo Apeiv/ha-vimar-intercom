@@ -21,12 +21,14 @@ STREAM_HANGUP_DELAY = 30
 # Niente auto-call per 60 s dopo la fine di una chiamata (qualsiasi, anche
 # rifiutata o annullata), di un auto-call fallito o di uno squillo, ma solo per
 # le riaperture «di riflesso»: go2rtc e lo stream worker riaprono /av da soli
-# appena lo stream finisce (entro QUICK_REOPEN_S dall'uscita dell'ultimo
-# spettatore), e ogni riapertura richiamava la targa (486, poi un altro
-# tentativo). Nel frattempo /av risponde subito 503. Chi apre la camera dopo
-# (dashboard, HomeKit, anche entro il minuto) chiama: non è una riconnessione.
+# appena lo stream finisce, con un back-off che cresce (1, 2, 4, 8 s...), e ogni
+# riapertura richiamava la targa (486, poi un altro tentativo). Nel frattempo /av
+# risponde subito 503. Riflesso = l'ultimo spettatore di /av è uscito dopo la
+# fine della chiamata (era lì quando è finita, o è una riapertura già rifiutata):
+# il tempo fra un tentativo e l'altro non lo distingue da una persona (#57).
+# Chi apre la camera senza aver guardato /av alla fine (dashboard dopo la card,
+# HomeKit) chiama anche entro il minuto.
 AUTO_CALL_COOLDOWN = 60
-QUICK_REOPEN_S = 5
 # Tetto del clip dello squillo (video dell'anteprima e, se rispondiamo noi, della chiamata).
 CLIP_MAX_S = 60
 # The longest a view opening during an automatic hang-up waits for it.
@@ -559,7 +561,7 @@ class VimarIntercomHub:
         # Chiamata in corso, in partenza o in arrivo (vedi call_pending): si aspetta il
         # video, senza chiamare né rispondere da soli (uno stream aperto ruberebbe lo
         # squillo al Tab). Altrimenti, nella pausa AUTO_CALL_COOLDOWN, una riapertura
-        # subito dopo l'uscita dell'ultimo spettatore non chiama e riceve 503.
+        # di riflesso (l'ultimo spettatore è uscito dopo la fine) non chiama e riceve 503.
         # Not call_pending: an audio WebSocket open anywhere (a dashboard with the
         # card, a phone with the app) is global state, not this viewer's call,
         # and it used to stop every HomeKit view from calling: 15 s of waiting,
@@ -567,7 +569,7 @@ class VimarIntercomHub:
         if self._call_in_view:
             return True
         now = time.monotonic()
-        if (reflex_guard and now - self._viewers_left_at < QUICK_REOPEN_S
+        if (reflex_guard and self._viewers_left_at >= self._auto_ended_at
                 and now - self._auto_ended_at < AUTO_CALL_COOLDOWN):
             _LOGGER.info("Stream riaperto subito dopo la fine del precedente: "
                          "riconnessione, niente auto-call")

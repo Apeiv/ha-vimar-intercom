@@ -37,8 +37,9 @@ All in `custom_components/vimar_intercom/`.
   under a version segment, so a change to any card module reaches browsers). `services.py`: the
   `vimar_intercom.*` services. `views.py`: the HTTP views (`/api/vimar_intercom/av`,
   `audio_ws`, `debug`, `rings`).
-- `config_flow.py`: config flow (QR, manual, zeroconf `_eipvdes._tcp`) with transport probe,
-  and the options flow (network, settings, phonebook fetch/import from intercom or cloud).
+- `config_flow.py`: config flow (QR, manual, zeroconf `_eipvdes._tcp`) with transport probe.
+  `options_flow.py`: the options flow (network, settings, HomeKit, /av key, phonebook
+  fetch/import from intercom or cloud).
 - `runtime.py`: module-wide settings (`R.*`) filled by `configure(entry.data)` at setup;
   `const.py` holds only static, non-plant constants.
 - `profiles.py`: per-plant-family defaults (transport, media encryption). A starting point;
@@ -61,7 +62,9 @@ package `__init__`. `tests/harness/` is a fake panel on 127.0.0.1 for the SIP en
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest tests                     # default run, what CI runs
+python -m pytest tests                     # default run, without the slow e2e tests (~1 min)
+python -m pytest tests -m slow             # the slow e2e tests (~2 min)
+python -m pytest tests -m "not live and not media and not browser"   # both, what CI runs
 python -m pytest tests/test_srtp.py        # one file
 python -m pytest tests -k manifest         # by name
 python -m pytest tests -m media            # real ffmpeg/aiohttp media (needs ffmpeg, aiohttp)

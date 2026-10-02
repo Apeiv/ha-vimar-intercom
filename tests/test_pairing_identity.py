@@ -46,6 +46,11 @@ def cf():
     return pytest.importorskip("custom_components.vimar_intercom.config_flow")
 
 
+@pytest.fixture(scope="module")
+def of(cf):
+    return pytest.importorskip("custom_components.vimar_intercom.options_flow")
+
+
 def test_a_challenge_with_commas_in_quotes_keeps_its_realm(cf):
     challenge = cf._parse_challenge(
         'SIP/2.0 401 Unauthorized\r\n'
@@ -149,15 +154,15 @@ def test_the_options_test_removes_its_own_binding(cf, monkeypatch, unregister):
     assert "Authorization: Digest" in seen[2]
 
 
-def test_the_options_flow_asks_for_the_unregister(cf, monkeypatch):
+def test_the_options_flow_asks_for_the_unregister(of, monkeypatch):
     seen = {}
 
     async def _test(**kw):
         seen.update(kw)
         return True, "ok"
 
-    monkeypatch.setattr(cf, "_test_sip_registration", _test)
+    monkeypatch.setattr(of, "_test_sip_registration", _test)
     from tests.test_config_flow_camera_target import _base_entry_data, _flow
-    flow = _flow(cf, _base_entry_data())
+    flow = _flow(of, _base_entry_data())
     asyncio.run(flow.async_step_settings({"local_proxy": "192.0.2.9", "use_local_udp": True}))
     assert seen.get("unregister") is True

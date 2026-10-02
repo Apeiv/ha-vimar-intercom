@@ -17,7 +17,7 @@ def _stub(name: str, **attrs) -> None:
 
 
 @pytest.fixture(scope="module")
-def cf():
+def of():
     _stub("homeassistant.components.file_upload", process_uploaded_file=None)
     _stub("homeassistant.data_entry_flow", FlowResult=dict)
     _stub("homeassistant.helpers.selector")
@@ -29,7 +29,7 @@ def cf():
     ce = sys.modules["homeassistant.config_entries"]
     if getattr(sys.modules["homeassistant"], "_is_stub", False):
         ce.ConfigFlow = _ConfigFlow
-    return pytest.importorskip("custom_components.vimar_intercom.config_flow")
+    return pytest.importorskip("custom_components.vimar_intercom.options_flow")
 
 
 class _Entry:
@@ -45,8 +45,8 @@ def _hass(**kw) -> types.SimpleNamespace:
     return types.SimpleNamespace(auth=types.SimpleNamespace(async_get_users=_users), **kw)
 
 
-def _flow(cf, data: dict, options: dict | None = None):
-    flow = cf.OptionsFlowHandler(_Entry(data, options))
+def _flow(of, data: dict, options: dict | None = None):
+    flow = of.OptionsFlowHandler(_Entry(data, options))
     flow.hass = _hass()
     flow.async_show_form = lambda **kw: {"type": "form", **kw}
     flow.async_create_entry = lambda **kw: {"type": "create_entry", **kw}
@@ -61,8 +61,8 @@ def _base_entry_data() -> dict:
 
 
 @pytest.mark.parametrize("key", ["camera_target", "internal_panel_target", "door_target"])
-def test_non_digit_target_rejected(cf, key):
-    flow = _flow(cf, _base_entry_data())
+def test_non_digit_target_rejected(of, key):
+    flow = _flow(of, _base_entry_data())
     result = asyncio.run(flow.async_step_settings({
         "local_proxy": "192.0.2.1",
         "use_local_udp": False,
@@ -73,10 +73,10 @@ def test_non_digit_target_rejected(cf, key):
 
 
 @pytest.mark.parametrize("target, key", [("55001@altro", "invalid_actuator_target"), ("AUTO", None), ("55002", None)])
-def test_target_attuatore_come_le_targhe(cf, target, key):
+def test_target_attuatore_come_le_targhe(of, target, key):
     """Il target di un attuatore finisce nella request line del MESSAGE: stessa regola
     numerica di hub.sip_uri, più AUTO (la targa dell'apri-porta)."""
-    flow = _flow(cf, _base_entry_data())
+    flow = _flow(of, _base_entry_data())
     result = asyncio.run(flow.async_step_settings({
         "local_proxy": "192.0.2.1", "use_local_udp": False,
         "actuators": f'[{{"name": "Luce", "msg": "L", "target": "{target}", "icon": "light"}}]',
@@ -88,9 +88,9 @@ def test_target_attuatore_come_le_targhe(cf, target, key):
         assert result["type"] == "create_entry" and result["data"]["actuators"][0]["target"] == target
 
 
-def test_cartella_foto_sotto_www_rifiutata(cf, tmp_path):
+def test_cartella_foto_sotto_www_rifiutata(of, tmp_path):
     """/config/www è servita su /local senza login: la foto della strada no."""
-    flow = _flow(cf, _base_entry_data())
+    flow = _flow(of, _base_entry_data())
 
     async def _job(f, *a):
         return f(*a)
@@ -104,9 +104,9 @@ def test_cartella_foto_sotto_www_rifiutata(cf, tmp_path):
     assert result["type"] == "form" and result["errors"]["snapshot_dir"] == "path_public"
 
 
-def test_messaggio_di_assenza_fuori_dalle_cartelle_lette_da_ha(cf, tmp_path):
+def test_messaggio_di_assenza_fuori_dalle_cartelle_lette_da_ha(of, tmp_path):
     """Il percorso va dritto a `ffmpeg -i`: stessa regola di snapshot_dir (is_allowed_path)."""
-    flow = _flow(cf, _base_entry_data())
+    flow = _flow(of, _base_entry_data())
     f = tmp_path / "messaggio.mp3"
     f.write_bytes(b"x")
 
@@ -121,17 +121,17 @@ def test_messaggio_di_assenza_fuori_dalle_cartelle_lette_da_ha(cf, tmp_path):
     assert result["type"] == "form" and result["errors"]["away_message_file"] == "file_not_allowed"
 
 
-def test_testo_del_messaggio_oltre_255_rifiutato(cf):
-    flow = _flow(cf, _base_entry_data())
+def test_testo_del_messaggio_oltre_255_rifiutato(of):
+    flow = _flow(of, _base_entry_data())
     result = asyncio.run(flow.async_step_settings({
         "local_proxy": "192.0.2.1", "use_local_udp": False, "away_message_text": "x" * 256}))
     assert result["errors"]["away_message_text"] == "text_too_long"
 
 
-def test_view_keepalive_predefinito_segue_il_cambio_di_modalita(cf, monkeypatch):
-    flow = _flow(cf, {**_base_entry_data(), "use_local_udp": False})
+def test_view_keepalive_predefinito_segue_il_cambio_di_modalita(of, monkeypatch):
+    flow = _flow(of, {**_base_entry_data(), "use_local_udp": False})
     async def _ok(**kw): return True, ""
-    monkeypatch.setattr(cf, "_test_sip_registration", _ok)
+    monkeypatch.setattr(of, "_test_sip_registration", _ok)
     # cloud -> locale con il 120 della vecchia modalità: diventa il 0 della nuova
     r = asyncio.run(flow.async_step_settings({
         "local_proxy": "192.0.2.1", "use_local_udp": True, "view_keepalive": 120}))
@@ -140,7 +140,7 @@ def test_view_keepalive_predefinito_segue_il_cambio_di_modalita(cf, monkeypatch)
     r = asyncio.run(flow.async_step_settings({
         "local_proxy": "192.0.2.1", "use_local_udp": True, "view_keepalive": 30}))
     assert r["data"]["view_keepalive"] == 30
-def _form_defaults(cf, monkeypatch, flow) -> dict:
+def _form_defaults(of, monkeypatch, flow) -> dict:
     """The defaults the settings form offers, by key (voluptuous is a stub here)."""
     defaults: dict = {}
 
@@ -148,26 +148,26 @@ def _form_defaults(cf, monkeypatch, flow) -> dict:
         defaults[key] = default
         return ("optional", key)
 
-    monkeypatch.setattr(cf.vol, "Optional", _optional)
+    monkeypatch.setattr(of.vol, "Optional", _optional)
     result = asyncio.run(flow.async_step_settings(None))
     assert result["type"] == "form"
     return defaults
 
 
-def test_camera_target_is_not_prefilled_with_55100(cf, monkeypatch):
+def test_camera_target_is_not_prefilled_with_55100(of, monkeypatch):
     """Pre-filled 55100 got saved on the first save: CAMERA_TARGET_CONFIGURED
     became true and the panel learned from the last ring was never used."""
-    defaults = _form_defaults(cf, monkeypatch, _flow(cf, _base_entry_data()))
+    defaults = _form_defaults(of, monkeypatch, _flow(of, _base_entry_data()))
     assert defaults["camera_target"] == ""
 
 
-def test_camera_target_prefills_a_configured_value(cf, monkeypatch):
-    flow = _flow(cf, _base_entry_data(), {"camera_target": "55102"})
-    assert _form_defaults(cf, monkeypatch, flow)["camera_target"] == "55102"
+def test_camera_target_prefills_a_configured_value(of, monkeypatch):
+    flow = _flow(of, _base_entry_data(), {"camera_target": "55102"})
+    assert _form_defaults(of, monkeypatch, flow)["camera_target"] == "55102"
 
 
-def test_an_empty_camera_target_is_saved_empty(cf):
-    flow = _flow(cf, _base_entry_data(), {"camera_target": "55102"})
+def test_an_empty_camera_target_is_saved_empty(of):
+    flow = _flow(of, _base_entry_data(), {"camera_target": "55102"})
     result = asyncio.run(flow.async_step_settings({
         "local_proxy": "192.0.2.1", "use_local_udp": False, "camera_target": ""}))
     assert result["type"] == "create_entry"
@@ -178,7 +178,7 @@ def test_an_empty_camera_target_is_saved_empty(cf):
     ({"local_domain": "local.test"}, "local.test"),
     ({}, "example.test"),
 ])
-def test_options_sip_test_uses_the_local_domain(cf, monkeypatch, extra, expected):
+def test_options_sip_test_uses_the_local_domain(of, monkeypatch, extra, expected):
     """In local UDP mode runtime.configure registers on local_domain: the
     options flow must test that domain, as the setup flow does."""
     seen = {}
@@ -187,8 +187,8 @@ def test_options_sip_test_uses_the_local_domain(cf, monkeypatch, extra, expected
         seen.update(kw)
         return True, "ok"
 
-    monkeypatch.setattr(cf, "_test_sip_registration", _test)
-    flow = _flow(cf, {**_base_entry_data(), **extra})
+    monkeypatch.setattr(of, "_test_sip_registration", _test)
+    flow = _flow(of, {**_base_entry_data(), **extra})
     result = asyncio.run(flow.async_step_settings({
         "local_proxy": "192.0.2.9", "use_local_udp": True}))
     assert result["type"] == "create_entry"
@@ -197,14 +197,14 @@ def test_options_sip_test_uses_the_local_domain(cf, monkeypatch, extra, expected
 
 
 @pytest.mark.parametrize("test_ok, registered", [(True, 1), (False, 0)])
-def test_the_options_sip_test_registers_the_live_binding_again(cf, monkeypatch, test_ok, registered):
+def test_the_options_sip_test_registers_the_live_binding_again(of, monkeypatch, test_ok, registered):
     """The test's unregister (Expires: 0, same +sip.instance) can remove the live
     binding: the running hub registers again at once, even if the form is not
     saved (review of #31)."""
     async def _test(**kw):
         return test_ok, "ok" if test_ok else "503"
 
-    monkeypatch.setattr(cf, "_test_sip_registration", _test)
+    monkeypatch.setattr(of, "_test_sip_registration", _test)
     calls, tasks = [], []
 
     class Hub:
@@ -212,9 +212,9 @@ def test_the_options_sip_test_registers_the_live_binding_again(cf, monkeypatch, 
             calls.append(True)
             return True
 
-    flow = _flow(cf, _base_entry_data())
+    flow = _flow(of, _base_entry_data())
     flow._entry.entry_id = "e1"
-    flow.hass.data = {cf.DOMAIN: {"e1": {"hub": Hub()}}}
+    flow.hass.data = {of.DOMAIN: {"e1": {"hub": Hub()}}}
     flow.hass.async_create_background_task = lambda coro, name: tasks.append(coro)
 
     async def main():

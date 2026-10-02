@@ -16,6 +16,7 @@ import pytest
 from harness import media as hm
 from harness.media import decodable_frames
 from harness.rig import Rig, run
+from harness.web import av_url
 
 from custom_components.vimar_intercom import av_stream
 from custom_components.vimar_intercom import media_handler as media
@@ -77,7 +78,7 @@ def _hook(monkeypatch, tl: _Timeline):
 
 async def _read_av(base: str, tl: _Timeline, seconds: float):
     loop = asyncio.get_running_loop()
-    async with aiohttp.ClientSession() as s, s.get(base + "/api/vimar_intercom/av") as r:
+    async with aiohttp.ClientSession() as s, s.get(base + av_url()) as r:
         assert r.status == 200, r.status
         end = loop.time() + seconds
         async for chunk in r.content.iter_any():

@@ -43,6 +43,8 @@ class _Sock:
 class _Srtp:
     """An SRTP context whose authentication always fails."""
 
+    replayed = 0
+
     def unprotect(self, data):
         return None
 
@@ -138,6 +140,17 @@ def test_srtp_video_is_decrypted_and_counted():
     vp.srtp_rx = rx
     vp.datagram_received(tx.protect(_rtp(SPS, pt=96)), ("198.51.100.7", 5002))
     assert nals == [SPS] and vp._srtp_ok == 1
+
+
+def test_a_duplicate_srtp_video_packet_is_not_an_auth_failure():
+    tx, rx = _srtp_pair()
+    vp = _video()
+    nals = _collect(vp)
+    vp.srtp_rx = rx
+    packet = tx.protect(_rtp(SPS, pt=96))
+    vp.datagram_received(packet, ("198.51.100.7", 5002))
+    vp.datagram_received(packet, ("198.51.100.7", 5002))
+    assert nals == [SPS] and rx.replayed == 1 and vp._srtp_fail == 0
 
 
 def test_audio_is_forwarded_to_the_av_ffmpeg_while_it_runs():

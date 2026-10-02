@@ -16,6 +16,11 @@ def cf():
     return pytest.importorskip("custom_components.vimar_intercom.config_flow")
 
 
+@pytest.fixture(scope="module")
+def of(cf):
+    return pytest.importorskip("custom_components.vimar_intercom.options_flow")
+
+
 def _form(**kw):
     return {"type": "form", **kw}
 
@@ -33,17 +38,17 @@ async def _job(fn, *args):
     ('[{"name": "x", "msg": "OPEN"}]', "chiavi mancanti"),
     ('[{"name": "x", "msg": "OPEN", "target": "55001", "icon": "rocket"}]', "non valida"),
 ])
-def test_a_malformed_actuator_list_is_refused_with_a_reason(cf, raw, message):
+def test_a_malformed_actuator_list_is_refused_with_a_reason(of, raw, message):
     with pytest.raises(ValueError, match=message):
-        cf._parse_actuators(raw)
+        of._parse_actuators(raw)
 
 
-def test_an_empty_actuator_field_means_no_buttons(cf):
-    assert cf._parse_actuators("  ") == []
+def test_an_empty_actuator_field_means_no_buttons(of):
+    assert of._parse_actuators("  ") == []
 
 
-def test_actuator_values_are_normalised_to_strings(cf):
-    assert cf._parse_actuators('[{"name": 1, "msg": "OPEN", "target": " 55001 ", "icon": "door"}]') == [
+def test_actuator_values_are_normalised_to_strings(of):
+    assert of._parse_actuators('[{"name": 1, "msg": "OPEN", "target": " 55001 ", "icon": "door"}]') == [
         {"name": "1", "msg": "OPEN", "target": "55001", "icon": "door"}]
 
 
@@ -173,10 +178,10 @@ def test_the_network_form_shows_the_plant(cf):
     assert result["description_placeholders"]["sip_user"] == "60999"
 
 
-def test_the_setup_flow_hands_out_the_options_flow(cf):
+def test_the_setup_flow_hands_out_the_options_flow(cf, of):
     entry = types.SimpleNamespace(data={}, options={})
     handler = cf.VimarIntercomConfigFlow.async_get_options_flow(entry)
-    assert isinstance(handler, cf.OptionsFlowHandler) and handler._entry is entry
+    assert isinstance(handler, of.OptionsFlowHandler) and handler._entry is entry
 
 
 # ─── Zeroconf: entries that do not match ─────────────────────────────────────
@@ -216,9 +221,9 @@ ENTRY_DATA = {"sip_user": "60999", "sip_password": "pw", "sip_domain": "plant.ex
               "local_proxy": "192.0.2.1", "use_local_udp": False, "gid": "101"}
 
 
-def _options_flow(cf, data=None, options=None, *, hass_data=None, allowed=True, files=()):
+def _options_flow(of, data=None, options=None, *, hass_data=None, allowed=True, files=()):
     entry = types.SimpleNamespace(entry_id="e1", data=dict(data or ENTRY_DATA), options=dict(options or {}))
-    flow = cf.OptionsFlowHandler(entry)
+    flow = of.OptionsFlowHandler(entry)
 
     async def users():
         return [types.SimpleNamespace(id="u1", name="Anna", system_generated=False),
@@ -236,10 +241,10 @@ def _options_flow(cf, data=None, options=None, *, hass_data=None, allowed=True, 
     return flow
 
 
-def test_the_options_start_from_a_menu(cf):
+def test_the_options_start_from_a_menu(of):
     """Settings first, the phonebook steps in order, and every entry leads to a
     step. Other pages may join the menu (the HomeKit one does in #32)."""
-    flow = _options_flow(cf)
+    flow = _options_flow(of)
     menu = asyncio.run(flow.async_step_init())
     assert menu["type"] == "menu"
     options = menu["menu_options"]
@@ -248,46 +253,46 @@ def test_the_options_start_from_a_menu(cf):
     assert all(callable(getattr(flow, f"async_step_{o}", None)) for o in options), "a dead menu entry"
 
 
-def _settings(cf, extra, **kw):
-    return asyncio.run(_options_flow(cf, **kw).async_step_settings({"local_proxy": "192.0.2.1",
+def _settings(of, extra, **kw):
+    return asyncio.run(_options_flow(of, **kw).async_step_settings({"local_proxy": "192.0.2.1",
                                                                      "use_local_udp": False, **extra}))
 
 
-def test_an_away_file_that_does_not_exist_is_refused(cf, tmp_path):
-    result = _settings(cf, {"away_message_file": str(tmp_path / "missing.mp3")})
+def test_an_away_file_that_does_not_exist_is_refused(of, tmp_path):
+    result = _settings(of, {"away_message_file": str(tmp_path / "missing.mp3")})
     assert result["errors"] == {"away_message_file": "file_not_found"}
 
 
-def test_an_away_file_outside_the_allowed_folders_is_refused(cf, tmp_path):
-    result = _settings(cf, {"away_message_file": str(tmp_path / "x.mp3")}, allowed=False)
+def test_an_away_file_outside_the_allowed_folders_is_refused(of, tmp_path):
+    result = _settings(of, {"away_message_file": str(tmp_path / "x.mp3")}, allowed=False)
     assert result["errors"] == {"away_message_file": "file_not_allowed"}
 
 
-def test_an_existing_away_file_is_saved(cf, tmp_path):
+def test_an_existing_away_file_is_saved(of, tmp_path):
     f = tmp_path / "away.mp3"
     f.write_bytes(b"x")
-    result = _settings(cf, {"away_message_file": str(f)})
+    result = _settings(of, {"away_message_file": str(f)})
     assert result["type"] == "create_entry" and result["data"]["away_message_file"] == str(f)
 
 
-def test_webhook_urls_must_be_http(cf):
-    result = _settings(cf, {"ring_webhook_url": "ftp://192.0.2.5/x",
+def test_webhook_urls_must_be_http(of):
+    result = _settings(of, {"ring_webhook_url": "ftp://192.0.2.5/x",
                             "ring_end_webhook_url": "https://example.test/end"})
     assert result["errors"] == {"ring_webhook_url": "invalid_url"}
 
 
-def test_a_snapshot_folder_outside_the_allowed_ones_is_refused(cf):
-    result = _settings(cf, {"snapshot_dir": "/elsewhere"}, allowed=False)
+def test_a_snapshot_folder_outside_the_allowed_ones_is_refused(of):
+    result = _settings(of, {"snapshot_dir": "/elsewhere"}, allowed=False)
     assert result["errors"] == {"snapshot_dir": "path_not_allowed"}
 
 
-def test_an_invalid_intercom_address_is_refused_in_the_options(cf):
-    result = _settings(cf, {"local_proxy": "intercom.example.test"})
+def test_an_invalid_intercom_address_is_refused_in_the_options(of):
+    result = _settings(of, {"local_proxy": "intercom.example.test"})
     assert result["errors"] == {"local_proxy": "invalid_ip"}
 
 
-def test_the_settings_form_offers_only_real_users(cf):
-    flow = _options_flow(cf, options={"allowed_users": ["u1", "gone"]})
+def test_the_settings_form_offers_only_real_users(of):
+    flow = _options_flow(of, options={"allowed_users": ["u1", "gone"]})
     result = asyncio.run(flow.async_step_settings())
     assert result["step_id"] == "settings" and result["errors"] == {}
 
@@ -297,7 +302,7 @@ def test_the_settings_form_offers_only_real_users(cf):
 ACTUATORS = [{"name": "Porta", "msg": "OPEN_2F", "target": "55001", "icon": "door"}]
 
 
-def _fake_rest(cf, monkeypatch, *, download=None, nicknames=None, parsed=None):
+def _fake_rest(of, monkeypatch, *, download=None, nicknames=None, parsed=None):
     calls = []
 
     def fake_download(host, user, password, name, dest):
@@ -316,35 +321,35 @@ def _fake_rest(cf, monkeypatch, *, download=None, nicknames=None, parsed=None):
         calls.append(("parse", gid))
         return parsed if parsed is not None else {"actuators": ACTUATORS, "sga": "55001", "system": {}}
 
-    monkeypatch.setattr(cf.rest_client, "download_db", fake_download)
-    monkeypatch.setattr(cf.rest_client, "get_nicknames", fake_nicks)
-    monkeypatch.setattr(cf.rubrica_import, "parse_rubrica_file", fake_parse)
+    monkeypatch.setattr(of.rest_client, "download_db", fake_download)
+    monkeypatch.setattr(of.rest_client, "get_nicknames", fake_nicks)
+    monkeypatch.setattr(of.rubrica_import, "parse_rubrica_file", fake_parse)
     return calls
 
 
-def test_without_an_intercom_address_there_is_nothing_to_fetch(cf):
-    flow = _options_flow(cf, data={**ENTRY_DATA, "local_proxy": ""})
+def test_without_an_intercom_address_there_is_nothing_to_fetch(of):
+    flow = _options_flow(of, data={**ENTRY_DATA, "local_proxy": ""})
     result = asyncio.run(flow.async_step_fetch_rubrica({"rubrica_gid": "101"}))
     assert result["errors"] == {"base": "no_local_proxy"}
     assert result["description_placeholders"]["host"] == "—"
 
 
-def test_the_fetch_form_is_shown_first(cf):
-    result = asyncio.run(_options_flow(cf).async_step_fetch_rubrica())
+def test_the_fetch_form_is_shown_first(of):
+    result = asyncio.run(_options_flow(of).async_step_fetch_rubrica())
     assert result["step_id"] == "fetch_rubrica" and result["errors"] == {}
 
 
-def test_the_phonebook_from_the_intercom_leads_to_the_confirmation_with_its_picg(cf, monkeypatch):
-    calls = _fake_rest(cf, monkeypatch, nicknames=[{"role": "PICG", "ext": "61000", "name": ""}])
-    result = asyncio.run(_options_flow(cf).async_step_fetch_rubrica({"rubrica_gid": " "}))
+def test_the_phonebook_from_the_intercom_leads_to_the_confirmation_with_its_picg(of, monkeypatch):
+    calls = _fake_rest(of, monkeypatch, nicknames=[{"role": "PICG", "ext": "61000", "name": ""}])
+    result = asyncio.run(_options_flow(of).async_step_fetch_rubrica({"rubrica_gid": " "}))
     assert result["step_id"] == "import_confirm"
     assert calls == [("download", "192.0.2.1", "60999", "rubrica"), ("parse", "101")]
     assert "61000" in result["description_placeholders"]["picg_info"]
 
 
-def test_missing_nicknames_do_not_spoil_the_import(cf, monkeypatch):
-    _fake_rest(cf, monkeypatch, nicknames=cf.rest_client.RestError("x"))
-    flow = _options_flow(cf)
+def test_missing_nicknames_do_not_spoil_the_import(of, monkeypatch):
+    _fake_rest(of, monkeypatch, nicknames=of.rest_client.RestError("x"))
+    flow = _options_flow(of)
     result = asyncio.run(flow.async_step_fetch_rubrica({"rubrica_gid": "7"}))
     assert result["step_id"] == "import_confirm" and flow._picg_from_rest is None
     assert flow._imported_gid == "7"
@@ -355,19 +360,19 @@ def test_missing_nicknames_do_not_spoil_the_import(cf, monkeypatch):
     ("unavailable", "rest_unavailable"),
     ("other", "rubrica_import_failed"),
 ])
-def test_fetch_errors_are_named(cf, monkeypatch, error, base):
-    exc = {"auth": cf.rest_client.RestAuthError("401 from 192.0.2.1"),
-           "unavailable": cf.rest_client.RestUnavailable("192.0.2.1 unreachable"),
-           "other": cf.rest_client.RestError("500")}[error]
-    _fake_rest(cf, monkeypatch, download=exc)
-    result = asyncio.run(_options_flow(cf).async_step_fetch_rubrica({"rubrica_gid": "101"}))
+def test_fetch_errors_are_named(of, monkeypatch, error, base):
+    exc = {"auth": of.rest_client.RestAuthError("401 from 192.0.2.1"),
+           "unavailable": of.rest_client.RestUnavailable("192.0.2.1 unreachable"),
+           "other": of.rest_client.RestError("500")}[error]
+    _fake_rest(of, monkeypatch, download=exc)
+    result = asyncio.run(_options_flow(of).async_step_fetch_rubrica({"rubrica_gid": "101"}))
     assert result["errors"] == {"base": base}
     assert result["description_placeholders"]["rubrica_error"] == str(exc)
 
 
-def test_a_phonebook_without_actuators_for_the_flat_is_explained(cf, monkeypatch):
-    _fake_rest(cf, monkeypatch, parsed={"actuators": [], "sga": None, "system": {}})
-    result = asyncio.run(_options_flow(cf).async_step_fetch_rubrica({"rubrica_gid": "9"}))
+def test_a_phonebook_without_actuators_for_the_flat_is_explained(of, monkeypatch):
+    _fake_rest(of, monkeypatch, parsed={"actuators": [], "sga": None, "system": {}})
+    result = asyncio.run(_options_flow(of).async_step_fetch_rubrica({"rubrica_gid": "9"}))
     assert result["errors"] == {"base": "rubrica_no_actuators"}
     assert "GID 9" in result["description_placeholders"]["rubrica_error"]
 
@@ -387,78 +392,78 @@ class _Hub:
             self.stats["init_status"] = {"token": self.token_later}
 
 
-def _cloud_flow(cf, hub, data=CLOUD_DATA):
-    return _options_flow(cf, data=data, hass_data={"vimar_intercom": {"e1": {"hub": hub}}} if hub else None)
+def _cloud_flow(of, hub, data=CLOUD_DATA):
+    return _options_flow(of, data=data, hass_data={"vimar_intercom": {"e1": {"hub": hub}}} if hub else None)
 
 
 @pytest.fixture
-def fast_sleep(cf, monkeypatch):
+def fast_sleep(of, monkeypatch):
     real_sleep = asyncio.sleep
 
     async def sleep(_seconds):
         await real_sleep(0)
 
-    monkeypatch.setattr(cf.asyncio, "sleep", sleep)
+    monkeypatch.setattr(of.asyncio, "sleep", sleep)
 
 
-def test_without_the_integration_loaded_there_is_no_cloud_token(cf):
-    result = asyncio.run(_cloud_flow(cf, None).async_step_fetch_rubrica_cloud())
+def test_without_the_integration_loaded_there_is_no_cloud_token(of):
+    result = asyncio.run(_cloud_flow(of, None).async_step_fetch_rubrica_cloud())
     assert result["errors"] == {"base": "no_cloud_token"}
 
 
-def test_a_token_arriving_after_the_status_request_is_used(cf, fast_sleep):
+def test_a_token_arriving_after_the_status_request_is_used(of, fast_sleep):
     hub = _Hub({"rubrica_ver": "abc"}, token_later="tok")
-    result = asyncio.run(_cloud_flow(cf, hub).async_step_fetch_rubrica_cloud())
+    result = asyncio.run(_cloud_flow(of, hub).async_step_fetch_rubrica_cloud())
     assert result["errors"] == {}
 
 
-def test_a_manual_entry_uses_its_sip_domain_as_the_cloud_domain(cf, monkeypatch):
+def test_a_manual_entry_uses_its_sip_domain_as_the_cloud_domain(of, monkeypatch):
     seen = {}
 
     def download(cdomain, cproxy, token, ver):
         seen["cdomain"] = cdomain
         return b"SQLite format 3\x00"
 
-    monkeypatch.setattr(cf.cloud_phonebook, "download", download)
-    monkeypatch.setattr(cf.rubrica_import, "parse_rubrica_file",
+    monkeypatch.setattr(of.cloud_phonebook, "download", download)
+    monkeypatch.setattr(of.rubrica_import, "parse_rubrica_file",
                         lambda path, gid: {"actuators": ACTUATORS, "sga": "55001"})
     data = {**ENTRY_DATA, "cloud_proxy": "relay.example.test", "sip_domain": "plant.relay.example.test"}
     hub = _Hub({"init_status": {"token": "tok"}, "rubrica_ver": "abc"})
-    result = asyncio.run(_cloud_flow(cf, hub, data).async_step_fetch_rubrica_cloud({"rubrica_gid": "101"}))
+    result = asyncio.run(_cloud_flow(of, hub, data).async_step_fetch_rubrica_cloud({"rubrica_gid": "101"}))
     assert result["step_id"] == "import_confirm" and seen["cdomain"] == "plant.relay.example.test"
 
 
-def test_missing_cloud_data_is_named(cf):
+def test_missing_cloud_data_is_named(of):
     data = {**ENTRY_DATA, "cloud_proxy": "", "cloud_domain": "plant.relay.example.test"}
     hub = _Hub({"init_status": {"token": "tok"}, "rubrica_ver": "abc"})
-    result = asyncio.run(_cloud_flow(cf, hub, data).async_step_fetch_rubrica_cloud())
+    result = asyncio.run(_cloud_flow(of, hub, data).async_step_fetch_rubrica_cloud())
     assert result["errors"] == {"base": "cloud_failed"}
     assert result["description_placeholders"]["rubrica_error"].startswith("manca cproxy")
 
 
-def test_a_cloud_download_error_is_shown(cf, monkeypatch):
+def test_a_cloud_download_error_is_shown(of, monkeypatch):
     def fail(*a):
-        raise cf.cloud_phonebook.CloudPhonebookError("relay.example.test ha risposto HTTP 500")
+        raise of.cloud_phonebook.CloudPhonebookError("relay.example.test ha risposto HTTP 500")
 
-    monkeypatch.setattr(cf.cloud_phonebook, "download", fail)
+    monkeypatch.setattr(of.cloud_phonebook, "download", fail)
     hub = _Hub({"init_status": {"token": "tok"}, "rubrica_ver": "abc"})
-    result = asyncio.run(_cloud_flow(cf, hub).async_step_fetch_rubrica_cloud({"rubrica_gid": "101"}))
+    result = asyncio.run(_cloud_flow(of, hub).async_step_fetch_rubrica_cloud({"rubrica_gid": "101"}))
     assert result["errors"] == {"base": "cloud_failed"}
     assert "HTTP 500" in result["description_placeholders"]["rubrica_error"]
 
 
-def test_a_cloud_phonebook_without_actuators_is_explained(cf, monkeypatch):
-    monkeypatch.setattr(cf.cloud_phonebook, "download", lambda *a: b"SQLite format 3\x00")
-    monkeypatch.setattr(cf.rubrica_import, "parse_rubrica_file", lambda path, gid: {"actuators": []})
+def test_a_cloud_phonebook_without_actuators_is_explained(of, monkeypatch):
+    monkeypatch.setattr(of.cloud_phonebook, "download", lambda *a: b"SQLite format 3\x00")
+    monkeypatch.setattr(of.rubrica_import, "parse_rubrica_file", lambda path, gid: {"actuators": []})
     hub = _Hub({"init_status": {"token": "tok"}, "rubrica_ver": "abc"})
-    result = asyncio.run(_cloud_flow(cf, hub).async_step_fetch_rubrica_cloud({"rubrica_gid": "5"}))
+    result = asyncio.run(_cloud_flow(of, hub).async_step_fetch_rubrica_cloud({"rubrica_gid": "5"}))
     assert result["errors"] == {"base": "rubrica_no_actuators"}
     assert "GID 5" in result["description_placeholders"]["rubrica_error"]
 
 
 # ─── Options: phonebook from an uploaded file ────────────────────────────────
 
-def _upload(cf, monkeypatch, parse):
+def _upload(of, monkeypatch, parse):
     seen = []
 
     @contextlib.contextmanager
@@ -466,50 +471,50 @@ def _upload(cf, monkeypatch, parse):
         seen.append(upload_id)
         yield f"/tmp/uploads/{upload_id}.db"
 
-    monkeypatch.setattr(cf, "process_uploaded_file", process_uploaded_file)
-    monkeypatch.setattr(cf.rubrica_import, "parse_rubrica_file", parse)
+    monkeypatch.setattr(of, "process_uploaded_file", process_uploaded_file)
+    monkeypatch.setattr(of.rubrica_import, "parse_rubrica_file", parse)
     return seen
 
 
-def test_the_upload_form_is_shown_first(cf):
-    result = asyncio.run(_options_flow(cf).async_step_import_rubrica())
+def test_the_upload_form_is_shown_first(of):
+    result = asyncio.run(_options_flow(of).async_step_import_rubrica())
     assert result["step_id"] == "import_rubrica" and result["errors"] == {}
 
 
-def test_an_uploaded_phonebook_leads_to_the_confirmation(cf, monkeypatch):
+def test_an_uploaded_phonebook_leads_to_the_confirmation(of, monkeypatch):
     parsed_paths = []
 
     def parse(path, gid):
         parsed_paths.append((path, gid))
         return {"actuators": ACTUATORS, "sga": "55001", "system": {}}
 
-    seen = _upload(cf, monkeypatch, parse)
-    result = asyncio.run(_options_flow(cf).async_step_import_rubrica({"rubrica_file": "up1", "rubrica_gid": ""}))
+    seen = _upload(of, monkeypatch, parse)
+    result = asyncio.run(_options_flow(of).async_step_import_rubrica({"rubrica_file": "up1", "rubrica_gid": ""}))
     assert result["step_id"] == "import_confirm"
     assert seen == ["up1"] and parsed_paths == [("/tmp/uploads/up1.db", "101")]
 
 
-def test_an_unreadable_upload_is_refused(cf, monkeypatch):
+def test_an_unreadable_upload_is_refused(of, monkeypatch):
     def parse(path, gid):
-        raise cf.rubrica_import.RubricaImportError("Non è un database SQLite valido")
+        raise of.rubrica_import.RubricaImportError("Non è un database SQLite valido")
 
-    _upload(cf, monkeypatch, parse)
-    result = asyncio.run(_options_flow(cf).async_step_import_rubrica({"rubrica_file": "up1"}))
+    _upload(of, monkeypatch, parse)
+    result = asyncio.run(_options_flow(of).async_step_import_rubrica({"rubrica_file": "up1"}))
     assert result["errors"] == {"rubrica_file": "rubrica_import_failed"}
     assert "SQLite" in result["description_placeholders"]["rubrica_error"]
 
 
-def test_an_upload_without_actuators_for_the_flat_is_refused(cf, monkeypatch):
-    _upload(cf, monkeypatch, lambda path, gid: {"actuators": []})
-    result = asyncio.run(_options_flow(cf).async_step_import_rubrica({"rubrica_file": "up1", "rubrica_gid": "3"}))
+def test_an_upload_without_actuators_for_the_flat_is_refused(of, monkeypatch):
+    _upload(of, monkeypatch, lambda path, gid: {"actuators": []})
+    result = asyncio.run(_options_flow(of).async_step_import_rubrica({"rubrica_file": "up1", "rubrica_gid": "3"}))
     assert result["errors"] == {"rubrica_file": "rubrica_no_actuators"}
     assert "GID appartamento 3" in result["description_placeholders"]["rubrica_error"]
 
 
 # ─── Options: import confirmation ────────────────────────────────────────────
 
-def _confirm_flow(cf, imported, options=None, picg_from_rest=None):
-    flow = _options_flow(cf, options=options)
+def _confirm_flow(of, imported, options=None, picg_from_rest=None):
+    flow = _options_flow(of, options=options)
     flow._imported = imported
     flow._picg_from_rest = picg_from_rest
     return flow
@@ -526,19 +531,19 @@ def _confirm_flow(cf, imported, options=None, picg_from_rest=None):
     ({"actuators": ACTUATORS}, {"door_target": "55001"}, "door_info", "resta quella già configurata"),
     ({"actuators": ACTUATORS, "sga": "55009"}, {}, "door_info", "resta all'SGA (55009)"),
 ])
-def test_the_confirmation_explains_each_value(cf, imported, options, key, expected):
-    result = asyncio.run(_confirm_flow(cf, imported, options).async_step_import_confirm())
+def test_the_confirmation_explains_each_value(of, imported, options, key, expected):
+    result = asyncio.run(_confirm_flow(of, imported, options).async_step_import_confirm())
     assert expected in result["description_placeholders"][key]
 
 
-def test_a_picg_declared_by_the_intercom_equal_to_the_configured_one(cf):
-    flow = _confirm_flow(cf, {"actuators": ACTUATORS, "sga": "55001"}, {"picg_target": "61000"}, "61000")
+def test_a_picg_declared_by_the_intercom_equal_to_the_configured_one(of):
+    flow = _confirm_flow(of, {"actuators": ACTUATORS, "sga": "55001"}, {"picg_target": "61000"}, "61000")
     result = asyncio.run(flow.async_step_import_confirm())
     assert "coincide" in result["description_placeholders"]["picg_info"]
 
 
-def test_confirming_keeps_the_other_options_and_saves_the_imported_values(cf):
-    flow = _confirm_flow(cf, {"actuators": ACTUATORS, "sga": "55009", "door": "55002", "camera": "55100"},
+def test_confirming_keeps_the_other_options_and_saves_the_imported_values(of):
+    flow = _confirm_flow(of, {"actuators": ACTUATORS, "sga": "55009", "door": "55002", "camera": "55100"},
                          {"away_message_text": "back soon", "internal_panel_target": "55200"})
     result = asyncio.run(flow.async_step_import_confirm({}))
     data = result["data"]
@@ -551,8 +556,8 @@ def test_confirming_keeps_the_other_options_and_saves_the_imported_values(cf):
 
 # ─── /av key (#63) ───────────────────────────────────────────────────────────
 
-def _key_flow(cf, key="stored-av-key"):
-    flow = _options_flow(cf, data={**ENTRY_DATA, "av_key": key}, options={"camera_target": "55100"})
+def _key_flow(of, key="stored-av-key"):
+    flow = _options_flow(of, data={**ENTRY_DATA, "av_key": key}, options={"camera_target": "55100"})
     flow.updates, flow.reloads = [], []
 
     def update(entry, **kw):
@@ -563,25 +568,25 @@ def _key_flow(cf, key="stored-av-key"):
     return flow
 
 
-def test_the_av_key_page_is_in_the_menu_and_shows_the_key(cf):
-    flow = _key_flow(cf)
+def test_the_av_key_page_is_in_the_menu_and_shows_the_key(of):
+    flow = _key_flow(of)
     assert "av_key" in asyncio.run(flow.async_step_init())["menu_options"]
     form = asyncio.run(flow.async_step_av_key())
     assert form["step_id"] == "av_key"
     assert form["description_placeholders"] == {"param": "auth", "key": "stored-av-key"}
 
 
-def test_saving_without_regenerating_changes_nothing(cf):
-    flow = _key_flow(cf)
+def test_saving_without_regenerating_changes_nothing(of):
+    flow = _key_flow(of)
     result = asyncio.run(flow.async_step_av_key({"regenerate": False}))
     assert result["type"] == "create_entry" and result["data"] == {"camera_target": "55100"}
     assert flow.updates == [] and flow.reloads == []
 
 
-def test_regenerating_stores_a_new_key_and_reloads(cf, monkeypatch):
-    runtime = cf.runtime
+def test_regenerating_stores_a_new_key_and_reloads(of, monkeypatch):
+    runtime = of.runtime
     monkeypatch.setattr(runtime, "AV_KEY", "stored-av-key")
-    flow = _key_flow(cf)
+    flow = _key_flow(of)
     result = asyncio.run(flow.async_step_av_key({"regenerate": True}))
     new = flow._entry.data["av_key"]
     assert new != "stored-av-key" and len(new) == 32 and runtime.AV_KEY == new
@@ -591,9 +596,9 @@ def test_regenerating_stores_a_new_key_and_reloads(cf, monkeypatch):
     assert result["data"] == {"camera_target": "55100"}
 
 
-def test_the_av_key_page_is_translated(cf):
+def test_the_av_key_page_is_translated(of):
     import pathlib
-    base = pathlib.Path(cf.__file__).parent
+    base = pathlib.Path(of.__file__).parent
     for name in ("strings.json", "translations/en.json", "translations/it.json"):
         step = json.loads((base / name).read_text(encoding="utf-8"))["options"]["step"]
         assert "av_key" in step["init"]["menu_options"], name

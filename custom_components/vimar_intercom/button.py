@@ -7,6 +7,7 @@ import re
 
 from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -53,6 +54,7 @@ async def async_setup_entry(
         VimarHangupButton(hub, entry.entry_id),
         # target=None → stesso default dell'apri-porta di hub.async_door.
         VimarDoorButton(hub, entry.entry_id, None, "Apri Porta", "door_street", "mdi:door-open"),
+        VimarTestRingButton(hub, entry.entry_id),
     ]
 
     # Attuatori dinamici dalla rubrica: options["actuators"] ha la precedenza
@@ -203,6 +205,25 @@ class VimarDoorButton(ButtonEntity):
             # Come la serratura: un errore visibile, non un «premuto» con la porta
             # chiusa e la riga nel log (issue #23).
             raise HomeAssistantError(f"Apertura non riuscita: {msg}")
+
+
+class VimarTestRingButton(ButtonEntity):
+    """Test ring: the `simulate_ring` service with its default duration, so ring
+    automations and notifications can be tried without writing YAML."""
+
+    _attr_has_entity_name = False
+    _attr_name = "Squillo di prova"
+    _attr_icon = "mdi:bell-ring-outline"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, hub, entry_id: str) -> None:
+        self._hub = hub
+        self._attr_unique_id = f"{entry_id}_test_ring"
+        self._attr_device_info = device_info(entry_id)
+
+    async def async_press(self) -> None:
+        if not self._hub.simulate_ring(20):
+            raise HomeAssistantError("Squillo di prova non avviato: una chiamata è già in corso")
 
 
 class VimarActuatorButton(ButtonEntity):
