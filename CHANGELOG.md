@@ -6,6 +6,8 @@ Italian and are kept as they were written.
 
 ## [Unreleased]
 
+## [1.0.19] - 2026-10-02
+
 ### Added
 
 - **Docs: clear the ring notification on the other phones** ([#99](../../issues/99)): a recipe in
@@ -30,6 +32,7 @@ Italian and are kept as they were written.
   `logger:` entry if you filter on the old name.
 - **README**: an *Open in HACS* button (My Home Assistant) and a last-commit badge; the release, downloads and
   stars badges are gone, since HACS already shows them at the top of the page.
+
 ### Fixed
 
 - **Card popup, iPhone: closing it no longer taps the card underneath.** The tap on X or Hang up also landed on the compact card that takes the popup's place: during a ring it hit Answer (the popup came back and the card answered), after a hang-up it reopened the popup and called the panel. For 0.8 s after the popup closes, taps on the compact card are ignored.
@@ -67,6 +70,7 @@ Italian and are kept as they were written.
   of `OPEN_2F`). If the door stops opening, set that actuator's `msg` back to `OPEN_2F` in Options → *Actuators
   (JSON)*, and please report it on #58. A row naming the panel wins over an `AUTO` row, and the "no door
   actuator" line is logged once per panel.
+
 ### Security
 
 - **Test ring button is admin only** ([#85](../../pull/85)): it starts the same fake ring as the admin-only
