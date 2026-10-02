@@ -19,11 +19,14 @@ is older and partly stale (Italian); trust the code over it.
 
 All in `custom_components/vimar_intercom/`.
 
-- `sip_client.py`: the SIP stack. Transport (UDP, TLS with fallback), digest auth, REGISTER,
+- `sip_client.py`: the SIP stack. Transport (UDP, TLS with fallback), auth retries, REGISTER,
   INVITE/answer, MESSAGE, INFO (`picture_fast_update` keyframe requests), dialogs.
   State is module-level globals, not a class.
 - `sdp.py`: the SDP we offer or answer (`build_sdp`) and the parser for the peer's
   (`parse_sdp`), plus the local SRTP keys our last SDP advertised.
+- `sip_message.py`: the SIP message layer. `_parse` (first line, headers, body), header
+  helpers, TLS stream framing (`_split_stream`, `MAX_SIP_BODY`) and the Digest response
+  (`_make_auth`). No sockets, no call state.
 - `hub.py`: `VimarIntercomHub`, the orchestrator. Call lifecycle, ring/state/event callbacks
   for entities, stats, keepalive, keyframe requests (a burst at call start, one per lost
   packet, never periodic), camera target learning, device inventory.

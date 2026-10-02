@@ -929,7 +929,7 @@ class _Writer:
 
 def test_the_tls_reader_keeps_alive_and_reconnects_on_every_failure(monkeypatch):
     monkeypatch.setattr(R, "USE_LOCAL_UDP", False)
-    monkeypatch.setattr(sip, "MAX_SIP_BODY", 200)
+    monkeypatch.setattr(sip.SM, "MAX_SIP_BODY", 200)
     good, bad = _Writer(), _Writer(fail=True)
     reasons, dispatched = [], []
     ok_msg = b"OPTIONS sip:7001@x SIP/2.0\r\nCall-ID: a\r\nContent-Length: 0\r\n\r\n"
