@@ -1069,6 +1069,7 @@ def test_layout_popup_card_compatta_stili(monkeypatch, engine, style):  # noqa: 
                 assert await c.page.evaluate(f"({vis})('#talk')") and not await c.page.evaluate(f"({vis})('#view')")
                 assert await c.page.evaluate(f"({vis})('#hangup')") == (style == "tile")
                 if style == "tile":
+                    await asyncio.sleep(1)  # past the close guard (CLOSE_GUARD_MS)
                     await c.tap("hangup")
                     await rig.peer.wait_for(is_(code=603, cid="ring-compatta"))
                     assert rig.services == ["lock.unlock", "vimar_intercom.decline"] and not (await c.info())["pop"], rig.services
@@ -1195,6 +1196,7 @@ def test_layout_popup_tastiera_e_anteprima_dell_editor(monkeypatch, engine):  # 
                 await c.tap("x")
                 await c.until(IDLE + " && !info().pop")
                 assert rig.services == ["vimar_intercom.call", "vimar_intercom.hangup"], rig.services
+                await asyncio.sleep(1)  # past the close guard (CLOSE_GUARD_MS)
                 await c.page.evaluate("document.body.append(document.createElement('hui-card-preview').appendChild(card).parentNode)")
                 await c.page.evaluate("card.shadowRoot.querySelector('.name').click()")
                 await c.until("info().pop")
@@ -1246,6 +1248,7 @@ def test_layout_popup_cronologia_non_chiama_e_chiusura_riaggancia(monkeypatch, e
                 assert not rig.services and not rig.peer.got(is_("INVITE")) and (await c.T())["av"] == []
                 await c.page.evaluate("card._pop.close()")
                 await c.until("!info().pop")
+                await asyncio.sleep(1)  # past the close guard (CLOSE_GUARD_MS)
                 await c.page.evaluate("card.shadowRoot.querySelector('.name').click()")  # chiamata dalla card
                 await c.until("info().pill === 'In chiamata' && info().pop")
                 await c.tap("x")
@@ -1274,6 +1277,80 @@ def test_layout_popup_si_apre_allo_squillo_una_volta(monkeypatch, engine):  # no
                 await c.until(IDLE)
                 rig.ring("ring-2")
                 await c.until("info().pop")
+                assert not (await c.T())["errors"]
+    run(s())
+
+
+@pytest.mark.parametrize("engine", ["chromium"], indirect=True)
+def test_layout_popup_close_tap_does_not_reach_the_compact_card(monkeypatch, engine):  # noqa: F811
+    """On the iPhone the tap on X landed again on the compact card that took the popup's place:
+    during the ring it hit "Answer" (the popup came back and the card answered), after the
+    hang-up it hit the card (popup again, black, and a call to the panel). Right after the popup
+    closes, taps on the compact card are ignored; the ring goes on and a later tap works."""
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            await rig.register()
+            async with Card(rig, engine, layout="popup") as c:
+                await c.until(IDLE)
+                rig.ring("ring-x")
+                await c.until("info().pop && info().talk === 'Rispondi'")
+                await c.tap("x")
+                await asyncio.sleep(0.05)
+                await c.page.evaluate("tap('talk'); card.shadowRoot.querySelector('ha-card').click()")
+                await asyncio.sleep(1)
+                assert not (await c.info())["pop"] and not rig.services, rig.services
+                assert rig.hub.is_ringing  # X is "not now": the ring goes on for everyone else
+                await c.page.evaluate("card.shadowRoot.querySelector('ha-card').click()")  # a real tap later
+                await c.until("info().pop")
+                assert not rig.services, rig.services
+                assert not (await c.T())["errors"]
+    run(s())
+
+
+@pytest.mark.parametrize("engine", ["chromium"], indirect=True)
+def test_layout_popup_closed_on_a_ring_stays_closed_for_that_ring(monkeypatch, engine):  # noqa: F811
+    """X during the ring: no service call, and the popup does not come back by itself for that
+    ring, whatever follows (a state flap, answered elsewhere, the end). A new ring opens it."""
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            await rig.register()
+            async with Card(rig, engine, layout="popup") as c:
+                await c.until(IDLE)
+                rig.ring("ring-a")
+                await c.until("info().pop && info().talk === 'Rispondi'")
+                await c.tap("x")
+                await c.until("!info().pop")
+                for state in ("idle", None, "in_call", "idle"):  # flap, back to ringing, answered elsewhere
+                    rig.state_override = state
+                    await asyncio.sleep(0.6)
+                    assert not (await c.info())["pop"], state
+                rig.state_override = None
+                rig.peer.request("CANCEL", "ring-a", 1, "pnl")
+                await c.until(IDLE)
+                await asyncio.sleep(0.5)
+                assert not (await c.info())["pop"] and not rig.services, rig.services
+                rig.ring("ring-b")
+                await c.until("info().pop")
+                assert not (await c.T())["errors"]
+    run(s())
+
+
+@pytest.mark.parametrize("engine", ["chromium"], indirect=True)
+def test_layout_popup_waiting_for_video_is_not_a_black_box(monkeypatch, engine):  # noqa: F811
+    """A live view whose first frame has not arrived (here the panel never answers) shows the
+    doorbell icon and "In attesa del video…", not an empty black canvas."""
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            await rig.register()
+            async with Card(rig, engine, layout="popup") as c:
+                await c.until(IDLE)
+                await c.page.evaluate("card.shadowRoot.querySelector('.name').click()")
+                await c.until("info().pop && info().video === 'canvas'")
+                ph = await c.page.evaluate("""(() => { const p = card.shadowRoot.querySelector('.ph');
+                  return [getComputedStyle(p).display, getComputedStyle(p, '::after').content]; })()""")
+                assert ph == ["grid", '"In attesa del video…"'], ph
+                await c.tap("x")
+                await c.until("!info().pop && !card.shadowRoot.querySelector('ha-card').classList.contains('wait')")
                 assert not (await c.T())["errors"]
     run(s())
 

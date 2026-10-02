@@ -122,14 +122,14 @@ const SET = {
   "select.vimar_intercom_segreteria_file_audio": { k: "file", state: "a.wav", attributes: { friendly_name: "Segreteria · file audio", options: ["a.wav", "b.wav"] } },
 };
 const setEnts = Object.entries(SET).filter(([, v]) => !WANT || WANT.includes(v.k));
-const mkHass = (status, lastRing = {}) => ({
+const mkHass = (status, lastRing = {}, ringTime = null) => ({
   user: { is_admin: !QS.has("noadmin") },
   entities: Object.fromEntries([["camera.vimar_intercom_intercom", 0], ...setEnts].map(([id]) => [id, { entity_id: id, device_id: "dev1", platform: "vimar_intercom" }])),
   states: {
     ...Object.fromEntries(setEnts.map(([id, v]) => [id, { state: v.state, attributes: v.attributes }])),
     "camera.vimar_intercom_intercom": { state: "idle", attributes: { card_entities: Object.fromEntries(setEnts.map(([id, v]) => [v.k === "vm" ? "segreteria" : v.k, id])) } },
     "sensor.vimar_intercom_intercom_stato": { state: status },
-    "sensor.vimar_intercom_intercom_ultimo_squillo": { state: "unknown", attributes: lastRing },
+    "sensor.vimar_intercom_intercom_ultimo_squillo": { state: ringTime || "unknown", attributes: lastRing },
     "lock.vimar_intercom_serratura": { state: "locked" },
     "button.garage": { state: "unknown", attributes: { friendly_name: "Garage" } },
   },
@@ -148,7 +148,7 @@ let last = "";
 setInterval(async () => {
   try {
     const j = await (await fetch("/state")).json(), s = JSON.stringify(j);
-    if (s !== last && window.card) { last = s; card.hass = mkHass(j.status, j.last_ring); }
+    if (s !== last && window.card) { last = s; card.hass = mkHass(j.status, j.last_ring, j.last_ring_time); }
   } catch (e) {}
 }, 100);
 document.querySelector("home-assistant").hass = mkHass("unknown");

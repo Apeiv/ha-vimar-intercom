@@ -193,7 +193,8 @@ async def start(rig):
         return web.Response(text=PAGE.replace("__AV_URL__", av_url()), content_type="text/html")
 
     async def state(r):  # come i sensori: stato, e foto/clip dell'ultimo squillo (attributi)
-        return web.json_response({"status": rig.state_override or hub.status, "last_ring": hub.ring_media()})
+        return web.json_response({"status": rig.state_override or hub.status, "last_ring": hub.ring_media(),
+                                  "last_ring_time": (t := hub.stats.get("last_ring_time")) and t.isoformat()})
 
     async def ring_photo(r):
         return await photo.get(r, r.match_info["name"])
