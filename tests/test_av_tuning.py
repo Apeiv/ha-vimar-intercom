@@ -9,6 +9,7 @@ import socket
 import types
 
 import pytest
+from harness.rig import wait_until
 
 from custom_components.vimar_intercom import av_stream as av
 from custom_components.vimar_intercom import media_handler as media
@@ -207,7 +208,7 @@ def test_the_last_client_leaving_during_the_call_starts_the_grace(monkeypatch, g
         q = await av.av_subscribe()
         await av.av_unsubscribe(q)
         straight_after = grace[0].killed
-        await asyncio.sleep(0.15)
+        await wait_until(lambda: grace[0].killed, what="the grace ends")
         return straight_after
 
     assert asyncio.run(run()) is False, "not stopped as the last client leaves"

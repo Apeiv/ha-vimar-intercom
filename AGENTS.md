@@ -61,7 +61,9 @@ package `__init__`. `tests/harness/` is a fake panel on 127.0.0.1 for the SIP en
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest tests                     # default run, what CI runs
+python -m pytest tests                     # default run, without the slow e2e tests (~1 min)
+python -m pytest tests -m slow             # the slow e2e tests (~2 min)
+python -m pytest tests -m "not live and not media and not browser"   # both, what CI runs
 python -m pytest tests/test_srtp.py        # one file
 python -m pytest tests -k manifest         # by name
 python -m pytest tests -m media            # real ffmpeg/aiohttp media (needs ffmpeg, aiohttp)
