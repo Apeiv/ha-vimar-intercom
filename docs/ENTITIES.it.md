@@ -8,12 +8,12 @@
 |---|---|---|
 | Intercom (Videocitofono) | `camera` | Video **on‑demand** (stream): aprendolo parte la chiamata SIP (non a una riconnessione entro 5 s dall'uscita dell'ultimo spettatore, per 60 s dalla fine di una chiamata: `/av` risponde 503; `/av` risponde 503 subito anche quando la chiamata che aspettava viene rifiutata o finisce, salvo con il WebSocket dell'app iOS collegato: allora aspetta fino a 25 s la chiamata dell'app); durante uno squillo mostra l'anteprima senza rispondere. Le foto sono istantanee in chiamata o durante lo squillo (fotogrammi completi, puliti), assenti altrimenti: le miniature non fanno mai squillare la targa |
 | Doorbell (Campanello) | `event` | Entità `event` (device_class DOORBELL), event_type `ring`, allo squillo (INVITE in arrivo) |
-| Serratura | `lock` | Apri porta (`OPEN_2F` → `door_target`); auto‑relock dopo 5 s (nessun feedback fisico) |
+| Serratura | `lock` | Apri porta: il comando dell'attuatore porta della rubrica (`OPEN_2F` se non c'è) → `door_target`; auto‑relock dopo 5 s (nessun feedback fisico) |
 | Chiama | `button` | Chiamata SIP verso la targa di default |
 | Chiama Video (esterno) / Chiama Casa (interno) | `button` | Chiamata verso `camera_target` / `internal_panel_target` |
 | Rispondi / Riaggancia | `button` | Rispondi (200 OK) / termina (BYE) |
 | Rifiuta | `button` | Solo mentre suona: rifiuta con `603 Decline`, così smette di suonare tutta la casa, come nell'app. Anche il servizio `vimar_intercom.decline` |
-| Apri Porta | `button` | `OPEN_2F` verso `door_target` |
+| Apri Porta | `button` | Come la serratura: il comando porta della rubrica (altrimenti `OPEN_2F`) verso `door_target` |
 | *Attuatori dinamici* | `button` | Uno per voce in `options["actuators"]` (F1/F2, luci scala, relè…); invia `MSG` con `Panda: command` |
 | Segreteria | `switch` | `VOICEMAIL;ON/OFF` (Panda: blue) verso l'SGA; stato letto dagli annunci del Tab e da `GET_INIT_STATUS`, chiesto dopo ogni comando. Il valore comandato si vede per 10 s al massimo: senza conferma lo stato diventa *sconosciuto* ([#9](https://github.com/lollox80/ha-vimar-intercom/issues/9)) |
 | Non Disturbare | `switch` | `DND;ON/OFF` (Panda: blue) verso l'SGA; stesse regole della Segreteria |
@@ -44,7 +44,7 @@
 | `vimar_intercom.call` | Chiamata SIP verso una targa/monitor | `target` |
 | `vimar_intercom.answer` | Risponde alla chiamata in arrivo | — |
 | `vimar_intercom.hangup` | Termina la chiamata attiva | — |
-| `vimar_intercom.open_door` | Comando di apertura (`OPEN_2F`; solo comandi `OPEN` / `OPEN_*`); senza `target` va a `door_target` | `target`, `command` |
+| `vimar_intercom.open_door` | Comando di apertura. Senza `command`: quello dell'attuatore porta della rubrica per quella targa, altrimenti `OPEN_2F`; un `command` dato deve essere `OPEN` / `OPEN_*`. Senza `target` va a `door_target` | `target`, `command` |
 | `vimar_intercom.fetch_local` | GET HTTP Digest verso l'interfaccia locale del Tab (home mode). Solo amministratori e automazioni | `path`, `save_as`, `host`, `scheme` |
 | `vimar_intercom.find_sga` | Cerca il PICG interrogando una serie di indirizzi ([#14](https://github.com/lollox80/ha-vimar-intercom/issues/14)). Solo amministratori e automazioni | `start`, `end`, `targets`, `probe`, `delay`, `reply_wait`, `sip_timeout`, `apply`, `apply_sga` |
 | `vimar_intercom.simulate_ring` | Squillo di prova (admin): uno squillo completo senza la targa e senza traffico SIP. Lo stato passa a squilla (card, sensori), partono l'evento campanello e il webhook di inizio, e dopo `duration` secondi finisce come uno squillo senza risposta (webhook di fine). Non si può rispondere, il messaggio di assenza lo ignora, uno squillo vero lo sostituisce e non finisce nel registro squilli | `duration` (da 1 a 90 s, predefinito 20) |

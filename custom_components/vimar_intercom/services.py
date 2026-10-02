@@ -69,7 +69,9 @@ OPEN_DOOR_SCHEMA = vol.Schema({
     vol.Optional("target"): _sip_id,  # vuoto: runtime.DOOR_TARGET (targa dell'attuatore porta, altrimenti SGA)
     # Solo comandi di apertura (OPEN, OPEN_2F, ...): il servizio è aperto a ogni
     # utente, i MESSAGE liberi no.
-    vol.Optional("command", default="OPEN_2F"): vol.All(cv.string, vol.Match(r"^OPEN(_[A-Z0-9_]{1,16})?\Z")),
+    # Senza command: il corpo dell'attuatore porta di quella targa nella
+    # rubrica, altrimenti OPEN_2F (#58).
+    vol.Optional("command"): vol.All(cv.string, vol.Match(r"^OPEN(_[A-Z0-9_]{1,16})?\Z")),
 })
 
 

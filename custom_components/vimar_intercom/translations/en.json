@@ -337,7 +337,7 @@
         },
         "command": {
           "name": "Command",
-          "description": "Door-open command"
+          "description": "Door-open command. Empty = the one of the phonebook's door actuator for that panel, otherwise OPEN_2F."
         }
       }
     },

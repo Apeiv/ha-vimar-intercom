@@ -10,6 +10,18 @@ Italian and are kept as they were written.
 
 - **README**: an *Open in HACS* button (My Home Assistant) and a last-commit badge; the release, downloads and
   stars badges are gone, since HACS already shows them at the top of the page.
+### Fixed
+
+- **The door is opened with your plant's own command** ([#58](../../issues/58)): the lock, the *Open Door* button,
+  HomeKit's gate and `open_door` without `command` now send the `MSG` of the phonebook's door actuator for that
+  panel, as the VIEW app does, instead of a fixed `OPEN_2F`. The body is taken only together with its panel, since
+  a relay module can use the same body towards another one. Without a door actuator in the phonebook nothing
+  changes (`OPEN_2F`, with a log line saying so). The *Last Door Open* sensor shows the command sent and where it
+  came from (`phonebook`, `default`, `explicit`). **Takes effect on update, without a new import**: if the
+  phonebook you already imported has a door actuator, its `MSG` is used from now on (for example `OPEN` instead
+  of `OPEN_2F`). If the door stops opening, set that actuator's `msg` back to `OPEN_2F` in Options → *Actuators
+  (JSON)*, and please report it on #58. A row naming the panel wins over an `AUTO` row, and the "no door
+  actuator" line is logged once per panel.
 
 ## [1.0.18] - 2026-10-02
 

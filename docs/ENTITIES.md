@@ -8,12 +8,12 @@
 |---|---|---|
 | Intercom | `camera` | **On-demand** video (stream): opening it places the SIP call (not on a reconnection within 5 s of the last viewer leaving, for 60 s after the end of a call: `/av` answers 503; `/av` also answers 503 at once when the call it was waiting for is refused or ends, unless the iOS app's WebSocket is connected: then it waits up to 25 s for the app's call); during a ring it shows the preview without answering. Snapshots are instant during a call or ring (clean keyframes), none otherwise, so thumbnails never ring the panel |
 | Doorbell | `event` | `event` entity (device class DOORBELL), event type `ring`, fired on ring (incoming INVITE) |
-| Lock | `lock` | Opens the door (`OPEN_2F` → `door_target`); auto-relocks after 5 s (there is no physical feedback) |
+| Lock | `lock` | Opens the door: the command of the phonebook's door actuator (`OPEN_2F` if there is none) → `door_target`; auto-relocks after 5 s (there is no physical feedback) |
 | Call | `button` | SIP call to the default outdoor unit |
 | Call Video (outdoor) / Call Home (indoor) | `button` | Call to `camera_target` / `internal_panel_target` |
 | Answer / Hang up | `button` | Answer (200 OK) / end the call (BYE) |
 | Decline | `button` | Only while it rings: refuses the call with `603 Decline`, so the whole house stops ringing, as in the app. Also the `vimar_intercom.decline` service |
-| Open Door | `button` | `OPEN_2F` to `door_target` |
+| Open Door | `button` | Same as the lock: the phonebook's door command (else `OPEN_2F`) to `door_target` |
 | *Dynamic actuators* | `button` | One per entry in `options["actuators"]` (F1/F2, stair lights, relays…); sends `MSG` with `Panda: command` |
 | Voicemail | `switch` | `VOICEMAIL;ON/OFF` (Panda: blue) to the SGA; state read from the Tab's announcements and from `GET_INIT_STATUS`, asked after every command. The commanded value is shown for 10 s at most: with no confirmation the state becomes *unknown* ([#9](https://github.com/lollox80/ha-vimar-intercom/issues/9)) |
 | Do Not Disturb | `switch` | `DND;ON/OFF` (Panda: blue) to the SGA; same rules as Voicemail |
@@ -44,7 +44,7 @@
 | `vimar_intercom.call` | SIP call to an outdoor unit or monitor | `target` |
 | `vimar_intercom.answer` | Answers the incoming call | — |
 | `vimar_intercom.hangup` | Ends the active call | — |
-| `vimar_intercom.open_door` | Door open command (`OPEN_2F`; only `OPEN` / `OPEN_*` commands); without `target` it goes to `door_target` | `target`, `command` |
+| `vimar_intercom.open_door` | Door open command. Without `command`: the body of the phonebook's door actuator for that panel, else `OPEN_2F`; a given `command` must be `OPEN` / `OPEN_*`. Without `target` it goes to `door_target` | `target`, `command` |
 | `vimar_intercom.fetch_local` | HTTP Digest GET against the Tab's local interface (home mode). Admins and automations only | `path`, `save_as`, `host`, `scheme` |
 | `vimar_intercom.find_sga` | Finds the PICG by probing a range of addresses ([#14](https://github.com/lollox80/ha-vimar-intercom/issues/14)). Admins and automations only | `start`, `end`, `targets`, `probe`, `delay`, `reply_wait`, `sip_timeout`, `apply`, `apply_sga` |
 | `vimar_intercom.simulate_ring` | Test ring (admin): a whole ring without the panel and with no SIP traffic. The state goes to ringing (card, sensors), the doorbell event and the start webhook fire, and after `duration` seconds it ends like an unanswered ring (end webhook). It cannot be answered, the away message ignores it, a real ring replaces it, and it stays out of the ring log | `duration` (1 to 90 s, default 20) |
