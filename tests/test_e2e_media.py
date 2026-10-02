@@ -10,9 +10,9 @@ import asyncio
 import time
 
 import pytest
-from harness.media import audio_info, decodable_frames, frame_sizes, luma_means
+from harness.media import PanelMedia, audio_info, decodable_frames, frame_sizes, luma_means
 from harness.peer import is_
-from harness.rig import Rig, run, wait_until
+from harness.rig import Rig, our_media_addrs, run, wait_until
 from harness.web import AvClient
 
 from custom_components.vimar_intercom import av_passive, av_stream, frame_grabber
@@ -42,6 +42,33 @@ def test_cloud_srtp_rollover_e_foto_decodificabili(monkeypatch):
             assert segs and segs[0] >= 15, f"segmento senza video: {segs}"
             assert srtp_fail == 0, f"SRTP fail {srtp_fail}"
             assert 503 in av.statuses and len(rig.peer.got(is_("INVITE"))) == 1, av.statuses
+    run(s())
+
+
+def test_av_survives_a_packet_600_ahead_mid_call(monkeypatch):
+    """One packet 600 ahead on the same SSRC, ~2 s into a call with /av open.
+    ffmpeg's RTP demuxer accepts a jump under 3000, emits it after max_delay as
+    the new head and drops every live packet as "too late" until the numbers
+    pass it: ~20 s of frozen camera stream, Frigate and Scrypted included."""
+    async def s():
+        async with Rig(monkeypatch, real_av=True, http=True) as rig:
+            await rig.register()
+
+            def start_media(our_sdp, seq0=None):
+                if rig.panel_media:
+                    rig.panel_media.stop()
+                rig.panel_media = PanelMedia(rig.peer.key, 1000, rig.peer.pt, stray=600, stray_after=40)
+                rig.panel_media.start(*our_media_addrs(our_sdp))
+            rig.start_media = start_media
+            rig.answer(media_on=True)
+            assert (await rig.hub.async_call())[0]
+            av = AvClient(rig.base, reconnect=False).start()
+            await wait_until(lambda: av.bytes > 20000, 10, "video su /av")
+            await asyncio.sleep(7)
+            await rig.hub.async_hangup()
+            await asyncio.wait_for(av.task, 5)
+            n = decodable_frames(av.segments[0])
+            assert n >= 75, f"/av: {n} decodable frames in ~8 s after one packet 600 ahead (expected ~110)"
     run(s())
 
 

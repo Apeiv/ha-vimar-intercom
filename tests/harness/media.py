@@ -52,11 +52,12 @@ class PanelMedia:
     SRTP. `start()` di nuovo = encoder riavviato: SSRC, seq e timestamp nuovi."""
 
     def __init__(self, key: str | None = None, seq0: int | None = None, pt: int = 96, gop: int = 15,
-                 stray: int = 0):
+                 stray: int = 0, stray_after: int = 1):
         self.key, self.seq0, self.pt = key, seq0, pt
-        # stray: after the first video packet, one more (a filler NAL) numbered this
-        # far ahead on the same SSRC, as a relay or a panel resending old packets does.
-        self.stray = stray
+        # stray: after the `stray_after`-th video packet (the first by default), one more
+        # (a filler NAL) numbered this far ahead on the same SSRC, as a relay or a panel
+        # resending old packets does.
+        self.stray, self.stray_after = stray, stray_after
         self.aus = access_units(gop)
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setblocking(False)
@@ -107,7 +108,7 @@ class PanelMedia:
                     self.sent += 1
                     if self.sent - 1 not in self.drop:
                         self.sock.sendto(srtp_v.protect(rtp) if srtp_v else rtp, vaddr)
-                    if self.sent == 1 and self.stray:
+                    if self.sent == self.stray_after and self.stray:
                         rtp = struct.pack("!BBHII", 0x80, self.pt, (self.seq + self.stray) & 0xFFFF,
                                           ts, ssrc) + b"\x0c\x00"
                         self.sock.sendto(srtp_v.protect(rtp) if srtp_v else rtp, vaddr)
