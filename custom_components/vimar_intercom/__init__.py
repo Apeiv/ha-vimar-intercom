@@ -37,6 +37,7 @@ from .services import _sip_id as _sip_id  # re-exported: the tests reach it from
 from .views import (
     VimarAudioWSView,
     VimarAVStreamView,
+    VimarAwayUploadView,
     VimarDebugView,
     VimarRingPhotoView,
     VimarRingsView,
@@ -247,6 +248,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.http.register_view(VimarDebugView())
     hass.http.register_view(VimarRingsView(hass))
     hass.http.register_view(VimarRingPhotoView(hass))
+    hass.http.register_view(VimarAwayUploadView(hass))
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 

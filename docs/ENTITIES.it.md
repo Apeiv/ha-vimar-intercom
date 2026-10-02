@@ -133,6 +133,45 @@ automation:
             image: "/api/camera_proxy/camera.vimar_intercom_intercom"
 ```
 
+### Togliere la notifica di squillo dagli altri telefoni
+
+Con la notifica di squillo su più telefoni, dopo che qualcuno ha risposto gli altri continuano a mostrarla.
+Mandala con un `tag` fisso e cancellala con lo stesso `tag` quando il sensore binario *Squillo* torna spento:
+qualcuno ha risposto (dalla card, da un telefono o dal Tab), ha rifiutato, oppure lo squillo è finito.
+
+```yaml
+automation:
+  - alias: "Citofono - Squillo → notifica"
+    trigger:
+      - platform: state
+        entity_id: event.vimar_intercom_doorbell
+    action:
+      - action: notify.TUTTI_I_TELEFONI  # un gruppo notify, oppure un'azione per telefono
+        data:
+          title: "🔔 Qualcuno al citofono"
+          message: "Squillo delle {{ now().strftime('%H:%M:%S') }}."
+          data:
+            tag: squillo-citofono
+            image: "/api/camera_proxy/camera.vimar_intercom_intercom"
+
+  - alias: "Citofono - Fine squillo → togli la notifica"
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.vimar_intercom_intercom_squillo  # il tuo sensore Squillo
+        from: "on"
+        to: "off"
+    action:
+      - action: notify.TUTTI_I_TELEFONI
+        data:
+          message: clear_notification
+          data:
+            tag: squillo-citofono
+```
+
+`tag` e `clear_notification` sono funzioni dell'app Companion di Home Assistant (Android e iOS). L'entity id
+del sensore binario dipende dalla lingua che aveva Home Assistant quando hai aggiunto l'integrazione:
+controllalo nella pagina del dispositivo. Provala con il pulsante *Squillo di prova*.
+
 `camera.snapshot` funziona durante una chiamata o uno squillo. Per avere la foto di ogni visitatore non
 serve un'automazione: imposta **Cartella foto squillo** nelle opzioni. Prova le tue automazioni con
 `vimar_intercom.simulate_ring`. Non puntare una `camera: platform: ffmpeg` su `/api/vimar_intercom/av`:

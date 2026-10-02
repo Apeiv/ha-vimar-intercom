@@ -8,6 +8,9 @@ Italian and are kept as they were written.
 
 ### Added
 
+- **Docs: clear the ring notification on the other phones** ([#99](../../issues/99)): a recipe in
+  `docs/ENTITIES.md` (and the Italian page) that sends the ring notification with a fixed `tag` and clears it
+  with `clear_notification` when the ringing binary sensor goes off, so nobody taps a ring that is already taken.
 - **Test ring button** (diagnostic, on the device page): a 20 s test ring in one tap, the same as the
   `simulate_ring` service, to try your ring automations and notifications without writing YAML. It reports an
   error if a real call or ring is in progress.
@@ -15,6 +18,10 @@ Italian and are kept as they were written.
   takes an mp3, wav or m4a (max 5 MB), saves it in `<media folder>/citofono/messaggi` and makes it the away
   message. Only the file name is kept (no paths); a different file with the same name gets `-2` added instead of
   being overwritten.
+- **Upload the away message from the card**: in the card's *Intercom settings*, under *Away message audio file*,
+  an *Upload* button (*Replace* when a file is already chosen) sends the file to the new admin-only
+  `POST /api/vimar_intercom/away_upload`, with the same rules as the settings upload, and selects it. The old file
+  stays in the folder. The file list now shows *None (use the text)* instead of `none`.
 
 ### Changed
 

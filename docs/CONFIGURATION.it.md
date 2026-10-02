@@ -155,6 +155,10 @@ i casi in cui ha funzionato tutto al primo colpo sono utili quanto quelli in cui
   l'autenticazione HA (la card li carica con percorsi firmati). Il secondo serve solo file
   `squillo_AAAAMMGG_HHMMSS[_mmm].jpg` / `.mp4` dentro `snapshot_dir`, nient'altro (nemmeno un
   clip ancora in scrittura); la cartella non viene mai esposta sotto `/local`.
+- Caricamento del messaggio di assenza dalla card: `POST /api/vimar_intercom/away_upload?name=<nome file>`
+  col file come corpo. Solo amministratori (gli altri hanno 401); stesse regole del caricamento dalle
+  opzioni (solo il nome del file, mp3/wav/m4a, massimo 5 MB, controllati mentre si legge, mai sopra un
+  altro file).
 - In modalità UDP locale i pacchetti SIP che non arrivano dal citofono vengono scartati: un altro
   dispositivo in LAN non può simulare uno squillo.
 - L'RTP in chiaro (senza SRTP) è accettato solo dall'altro capo della chiamata in corso.
