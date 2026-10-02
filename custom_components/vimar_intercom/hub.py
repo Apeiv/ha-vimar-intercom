@@ -17,7 +17,6 @@ from . import runtime as R
 from . import sip_client as sip
 from .plant_messages import SIP_ID_NAMES as SIP_ID_NAMES
 from .plant_messages import PlantMessages
-from .plant_messages import sip_id_name as sip_id_name
 from .ring_media import RingMedia
 
 _LOGGER = logging.getLogger(__name__)
