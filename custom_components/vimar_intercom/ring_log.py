@@ -45,16 +45,24 @@ def read_last_photo(path: str | None, folder: str | None) -> bytes | None:
         if not candidate:
             continue
         try:
-            # Only a regular file, never a symlink someone left in the folder
-            # (it would serve any file Home Assistant can read as the photo).
+            # Only a regular file with one name, never a symlink or hard link someone left
+            # in the folder (it would serve any file Home Assistant can read as the photo).
             if not stat.S_ISREG(os.lstat(candidate).st_mode):
                 continue
             fd = os.open(candidate, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
             with os.fdopen(fd, "rb") as fh:
+                if _linked(os.fstat(fh.fileno())):
+                    continue
                 return fh.read()
         except OSError:
             continue
     return None
+
+
+def _linked(st: os.stat_result) -> bool:
+    """Not a regular file, or a file with other names: a hard link planted in the folder.
+    Our photos and clips are always renamed into place from a new file, so they have one."""
+    return not stat.S_ISREG(st.st_mode) or st.st_nlink > 1  # some shares report 0
 
 
 def update_ring_log(folder: str, change: Callable[[list], None]) -> None:
@@ -78,7 +86,7 @@ def update_ring_log(folder: str, change: Callable[[list], None]) -> None:
                 os.unlink(tmp)
         for r in dropped:
             for k in ("photo", "clip"):
-                if path := ring_photo_path(folder, str(r.get(k) or "")):
+                if path := _ring_path(folder, str(r.get(k) or "")):
                     with contextlib.suppress(OSError):
                         os.unlink(path)
 
@@ -93,16 +101,23 @@ def read_ring_log(folder: str) -> list[dict]:
     return [r for r in rings if isinstance(r, dict)] if isinstance(rings, list) else []
 
 
-def ring_photo_path(folder: str, name: str) -> str | None:
-    """Percorso del file `name` se è davvero una foto (jpg) o un clip (mp4) di uno
-    squillo dentro `folder`: nient'altro (nemmeno un .mp4.part in scrittura)."""
+def _ring_path(folder: str, name: str) -> str | None:
+    """Percorso di `name` (un nome di foto/clip di squillo) dentro `folder`. Non si
+    risolve il file: un symlink resta un symlink, si toglie lui e non il suo bersaglio."""
     if not folder or not RING_FILE.fullmatch(name):
         return None
-    base = os.path.realpath(folder)
-    path = os.path.realpath(os.path.join(base, name))
-    if os.path.dirname(path) != base or not os.path.isfile(path):
+    return os.path.join(os.path.realpath(folder), name)
+
+
+def ring_photo_path(folder: str, name: str) -> str | None:
+    """Percorso del file `name` se è davvero una foto (jpg) o un clip (mp4) di uno
+    squillo dentro `folder`: nient'altro (nemmeno un .mp4.part in scrittura, né un hard
+    link a un altro file)."""
+    path = _ring_path(folder, name)
+    try:
+        return None if path is None or _linked(os.lstat(path)) else path
+    except OSError:
         return None
-    return path
 
 
 def recent_rings(folder: str, limit: int) -> list[dict]:

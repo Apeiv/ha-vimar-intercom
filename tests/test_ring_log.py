@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import stat
 
 import pytest
 
@@ -194,3 +195,59 @@ def test_a_symlink_as_the_last_photo_is_not_served(tmp_path):
     assert rl.read_last_photo(str(folder / rl.LAST_PHOTO), None) is None
     (tmp_path / "real.jpg").write_bytes(b"jpg")
     assert rl.read_last_photo(str(tmp_path / "real.jpg"), None) == b"jpg"
+
+
+def test_a_hard_link_in_the_folder_is_not_served(tmp_path):
+    """#46: a hard link to another file, left at the last photo or at a ring file name,
+    is not a photo or a clip of ours (they are always renamed into place, one name)."""
+    victim = tmp_path / "secret.txt"
+    victim.write_bytes(b"not a photo")
+    folder = tmp_path / "foto"
+    folder.mkdir()
+    try:
+        os.link(victim, folder / rl.LAST_PHOTO)
+        os.link(victim, folder / "squillo_20260927_101500.mp4")
+    except OSError:
+        pytest.skip("cannot create a hard link here")
+    assert rl.read_last_photo(None, str(folder)) is None
+    assert rl.ring_photo_path(str(folder), "squillo_20260927_101500.mp4") is None
+    rl.write_photo(str(folder), "squillo_20260927_101500.jpg", b"NEW")
+    assert rl.read_last_photo(None, str(folder)) == b"NEW"
+    assert rl.ring_photo_path(str(folder), "squillo_20260927_101500.jpg")
+
+
+def test_a_share_reporting_zero_links_is_still_served():
+    from types import SimpleNamespace
+
+    reg = stat.S_IFREG | 0o644
+    assert not rl._linked(SimpleNamespace(st_mode=reg, st_nlink=0))
+    assert not rl._linked(SimpleNamespace(st_mode=reg, st_nlink=1))
+    assert rl._linked(SimpleNamespace(st_mode=reg, st_nlink=2))
+
+
+def test_rotation_removes_a_ring_file_even_if_it_was_hard_linked(tmp_path):
+    victim = tmp_path / "other.txt"
+    victim.write_bytes(b"x")
+    folder = tmp_path / "foto"
+    folder.mkdir()
+    try:
+        os.link(victim, folder / "squillo_20260927_101500.jpg")
+    except OSError:
+        pytest.skip("cannot create a hard link here")
+    rl.update_ring_log(str(folder), lambda r: r.append({"time": "0", "photo": "squillo_20260927_101500.jpg"}))
+    rl.update_ring_log(str(folder), lambda r: r.extend({"time": str(i)} for i in range(1, rl.RING_LOG_MAX + 1)))
+    assert not (folder / "squillo_20260927_101500.jpg").exists() and victim.read_bytes() == b"x"
+
+
+def test_a_symlink_to_a_file_in_the_folder_is_not_served_and_rotation_keeps_the_target(tmp_path):
+    folder = tmp_path / "foto"
+    folder.mkdir()
+    (folder / "squillo.json").write_text("[]")
+    try:
+        os.symlink(folder / "squillo.json", folder / "squillo_20260927_101500.jpg")
+    except OSError:
+        pytest.skip("cannot create a symlink here")
+    assert rl.ring_photo_path(str(folder), "squillo_20260927_101500.jpg") is None
+    rl.update_ring_log(str(folder), lambda r: r.append({"time": "0", "photo": "squillo_20260927_101500.jpg"}))
+    rl.update_ring_log(str(folder), lambda r: r.extend({"time": str(i)} for i in range(1, rl.RING_LOG_MAX + 1)))
+    assert (folder / "squillo.json").exists()

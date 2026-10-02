@@ -4,6 +4,7 @@ and the cleanup. No ffmpeg needed (CI has none)."""
 from __future__ import annotations
 
 import asyncio
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -239,7 +240,7 @@ def _run_record(nals, tmp_path, proc, *, ps=None, max_s=5.0, pcm=None, after=Non
     async def run():
         q: asyncio.Queue = asyncio.Queue()
         task = asyncio.create_task(fg._record(q, ps, str(tmp_path / "clip.mp4"), max_s, done.append))
-        await asyncio.sleep(0)
+        await asyncio.sleep(0.05)  # the .part is claimed in an executor thread first
         for i, nal in enumerate(nals):
             q.put_nowait(nal)
             for _ in range(5):
@@ -310,10 +311,96 @@ def test_a_stuck_clip_ffmpeg_is_killed(monkeypatch, tmp_path):
 
 
 def test_a_clip_that_cannot_be_renamed_is_reported_as_not_saved(monkeypatch, tmp_path):
-    proc = _Proc()  # no .part written: os.replace fails
+    proc = _Proc(on_wait=_writes_part)
     _spawner(monkeypatch, proc)
+
+    def no_rename(src, dst):
+        raise PermissionError(dst)
+
+    monkeypatch.setattr(fg.os, "replace", no_rename)
     result, _ = _run_record([SPS, PPS, IDR], tmp_path, proc)
     assert result is None
+
+
+def test_the_clip_file_is_claimed_off_the_event_loop(monkeypatch, tmp_path):
+    import threading
+
+    seen = []
+    real = fg._claim
+    monkeypatch.setattr(fg, "_claim", lambda p: (seen.append(threading.get_ident()), real(p)))
+    proc = _Proc(on_wait=_writes_part)
+    _spawner(monkeypatch, proc)
+    _run_record([SPS, PPS, IDR], tmp_path, proc)
+    assert seen and threading.get_ident() not in seen
+
+
+def test_on_done_is_called_when_the_part_cannot_be_removed(monkeypatch, tmp_path):
+    proc = _Proc()  # no .part written by ffmpeg, ffmpeg fails
+    proc.returncode = 1
+    _spawner(monkeypatch, proc)
+    real = os.unlink
+
+    def deny(p):
+        if str(p).endswith(".part"):
+            raise PermissionError(p)
+        real(p)
+
+    monkeypatch.setattr(fg.os, "unlink", deny)
+    result, _ = _run_record([SPS, PPS, IDR], tmp_path, proc)
+    assert result is None
+
+
+def test_the_audio_part_is_removed_when_the_rename_fails(monkeypatch, tmp_path):
+    path = tmp_path / "clip.mp4"
+    path.write_bytes(b"MP4")
+    remux = _Proc(on_wait=lambda p: open(p.args[-1], "wb").write(b"MP4+AAC"))
+    _spawner(monkeypatch, remux)
+
+    def no_rename(src, dst):
+        raise PermissionError(dst)
+
+    monkeypatch.setattr(fg.os, "replace", no_rename)
+    asyncio.run(fg._add_audio(str(path), b"\x00\x00"))
+    assert path.read_bytes() == b"MP4" and not (tmp_path / "clip.mp4.a.part").exists()
+
+
+def _plant(link, victim, kind):
+    try:
+        (os.link if kind == "hard" else os.symlink)(victim, link)
+    except OSError:
+        pytest.skip(f"cannot create a {kind} link here")
+
+
+@pytest.mark.parametrize("kind", ["hard", "sym"])
+def test_a_link_planted_at_the_clip_part_is_not_written_through(monkeypatch, tmp_path, kind):
+    """#46: ffmpeg -y opens the .part by name. A link left at that name is replaced by a
+    file of our own first, so the clip never lands in the file it points at."""
+    victim = tmp_path / "victim.txt"
+    victim.write_bytes(b"keep me")
+    folder = tmp_path / "foto"
+    folder.mkdir()
+    _plant(folder / "clip.mp4.part", victim, kind)
+    proc = _Proc(on_wait=_writes_part)
+    _spawner(monkeypatch, proc)
+    result, _ = _run_record([SPS, PPS, IDR], folder, proc)
+    assert victim.read_bytes() == b"keep me"
+    assert result == str(folder / "clip.mp4")
+    assert not os.path.islink(result) and os.stat(result).st_nlink == 1
+    assert (folder / "clip.mp4").read_bytes() == b"MP4"
+
+
+@pytest.mark.parametrize("kind", ["hard", "sym"])
+def test_a_link_planted_at_the_audio_part_is_not_written_through(monkeypatch, tmp_path, kind):
+    victim = tmp_path / "victim.txt"
+    victim.write_bytes(b"keep me")
+    path = tmp_path / "clip.mp4"
+    path.write_bytes(b"MP4")
+    _plant(tmp_path / "clip.mp4.a.part", victim, kind)
+    remux = _Proc(on_wait=lambda p: open(p.args[-1], "wb").write(b"MP4+AAC"))
+    _spawner(monkeypatch, remux)
+    asyncio.run(fg._add_audio(str(path), b"\x00\x00"))
+    assert victim.read_bytes() == b"keep me" and path.read_bytes() == b"MP4+AAC"
+    assert not path.is_symlink() and os.stat(path).st_nlink == 1
 
 
 def test_the_panel_audio_is_remuxed_into_the_clip(monkeypatch, tmp_path):

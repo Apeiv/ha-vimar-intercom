@@ -132,6 +132,13 @@ async def _record(q: asyncio.Queue, ps, path: str, max_s: float, on_done) -> Non
         if started:
             pcm_buf.extend(pcm)
 
+    loop = asyncio.get_running_loop()
+    try:
+        await loop.run_in_executor(None, _claim, part)  # off the loop: /media can be a NAS
+    except OSError as e:
+        _LOGGER.warning("Clip squillo non salvato (%s): %s", path, e)
+        on_done(None)
+        return
     media.add_pcm_tap(tap)
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -145,9 +152,9 @@ async def _record(q: asyncio.Queue, ps, path: str, max_s: float, on_done) -> Non
     except OSError as e:
         _LOGGER.warning("Clip squillo: ffmpeg non avviabile (%s)", e)
         media.remove_pcm_tap(tap)
+        await loop.run_in_executor(None, _finish, part, None)
         on_done(None)
         return
-    loop = asyncio.get_running_loop()
     sps, pps = ps or (None, None)
     end = loop.time() + max_s
     try:
@@ -194,11 +201,27 @@ async def _record(q: asyncio.Queue, ps, path: str, max_s: float, on_done) -> Non
     on_done(path if ok else None)
 
 
+def _claim(part: str) -> None:
+    """An empty file of our own at `part`, before ffmpeg -y opens it by name. Whatever was
+    there (a symlink, a hard link) is unlinked first, so the final component is never a
+    link, and "x" (O_EXCL) fails rather than follow one that appears in between (#46).
+    ponytail: ffmpeg still reopens the name, so a swap in that window is not covered;
+    a private 0700 directory would close it."""
+    with contextlib.suppress(FileNotFoundError):
+        os.unlink(part)
+    open(part, "xb").close()
+
+
 def _finish(part: str, path: str | None) -> None:
     if path:
-        os.replace(part, path)
+        try:
+            os.replace(part, path)
+        except OSError:
+            with contextlib.suppress(OSError):
+                os.unlink(part)
+            raise
     else:
-        with contextlib.suppress(FileNotFoundError):
+        with contextlib.suppress(OSError):  # whatever it is, the caller still gets on_done
             os.unlink(part)
 
 
@@ -207,6 +230,12 @@ async def _add_audio(path: str, pcm: bytes) -> None:
     in più, senza ricodifica video, con l'audio (raw, via stdin) codificato in AAC. Se
     fallisce il clip resta quello già scritto, muto: niente perso."""
     tmp = path + ".a.part"
+    loop = asyncio.get_running_loop()
+    try:
+        await loop.run_in_executor(None, _claim, tmp)
+    except OSError as e:
+        _LOGGER.warning("Audio clip squillo non aggiunto (%s)", e)
+        return
     try:
         proc = await asyncio.create_subprocess_exec(
             "ffmpeg", "-y", "-loglevel", "error", "-i", path,
@@ -216,15 +245,17 @@ async def _add_audio(path: str, pcm: bytes) -> None:
             stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except OSError as e:
         _LOGGER.warning("Audio clip squillo non aggiunto (%s)", e)
+        await loop.run_in_executor(None, _finish, tmp, None)
         return
     try:
         await asyncio.wait_for(proc.communicate(pcm), 15)
     except TimeoutError:
         proc.kill()
         await proc.wait()
-        return
-    loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, _finish, tmp, path if proc.returncode == 0 else None)
+    try:
+        await loop.run_in_executor(None, _finish, tmp, path if proc.returncode == 0 else None)
+    except OSError as e:
+        _LOGGER.warning("Audio clip squillo non aggiunto (%s)", e)
 
 
 async def _grab(q: asyncio.Queue) -> None:

@@ -67,7 +67,9 @@ Italian and are kept as they were written.
 - **Symlink in the snapshot folder** ([#46](../../issues/46)): a symlink or hard link left in the ring photo folder at
   the name of `ultimo_squillo.jpg` (or of a ring photo) was followed, so the photo overwrote another file, and the
   camera could show any file Home Assistant can read. Photos are now written to a new file and renamed over the
-  name, and the last photo is read only if it is a regular file. Clips, which ffmpeg writes, are not covered.
+  name, and the last photo is read only if it is a regular file. The ring clip (and its audio remux), which
+  ffmpeg opens by name, now goes to a file the integration creates first, after removing whatever was at that
+  name. A photo or clip with more than one name (a hard link) is no longer served.
 - **Slow patterns on SIP headers** ([#46](../../issues/46)): the Tab 5S/7S Plus model patterns and the SIP user and host
   patterns of the device inventory could take seconds on a crafted header (a long run of spaces, or `sip:`
   repeated without an `@`), stalling Home Assistant. The patterns no longer backtrack that way, and the
