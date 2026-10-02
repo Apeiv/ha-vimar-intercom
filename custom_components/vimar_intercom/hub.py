@@ -528,6 +528,7 @@ class VimarIntercomHub:
                 "type": "state",
                 "registered": sip.registered,
                 "in_call": sip.in_call,
+                "ringing": self.is_ringing,  # as views._state
             }), "WS state broadcast")
 
     async def stream_opened(self, reflex_guard: bool = True) -> bool:
