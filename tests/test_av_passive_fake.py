@@ -327,6 +327,41 @@ def test_while_live_the_encoder_gets_the_panel_frame_and_its_audio(monkeypatch):
     assert enc.killed and media.pcm_taps == []
 
 
+def test_the_end_of_the_video_brings_back_the_standby_even_with_a_stuck_decoder(monkeypatch):
+    # The decoder can reattach to /av right as the call ends and then wait forever on
+    # an ffmpeg with no RTP: it must be cancelled, and its last frame not shown.
+    _run_env(monkeypatch)
+    enc = _Proc()
+    cancelled = []
+
+    async def stuck_decode(is_live, on_live):
+        av_passive._live = b"LIVE"
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.append(1)
+            raise
+
+    monkeypatch.setattr(av_passive, "_decode", stuck_decode)
+    live = [True]
+
+    async def run():
+        task = asyncio.create_task(av_passive._run(enc, b"STANDBY", lambda: live[0], lambda: None, 1))
+        while b"LIVE" not in enc.stdin.writes:
+            await asyncio.sleep(0.01)
+        live[0] = False
+        n = len(enc.stdin.writes)
+        while len(enc.stdin.writes) < n + 3:
+            await asyncio.sleep(0.01)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        return n
+
+    n = asyncio.run(run())
+    assert set(enc.stdin.writes[n + 1:]) == {b"STANDBY"}, "no frozen panel frame after the call"
+    assert cancelled == [1], "the stuck decoder is cancelled when the video ends"
+
+
 def test_a_cancelled_encoder_loop_leaves_the_clients_alone(monkeypatch):
     _run_env(monkeypatch)
     enc = _Proc()
@@ -395,6 +430,26 @@ def test_the_decoder_keeps_the_latest_panel_frame_until_the_video_ends(monkeypat
     assert dec.stdin.writes == [b"\x47ts"] and dec.stdin.closed
     assert dec.killed
     assert "-an" in dec.args and "mpegts" in dec.args
+
+
+def test_the_decoder_hands_over_only_the_frames_the_encoder_uses(monkeypatch):
+    # The panel sends 25 fps; the encoder takes FPS. The rest was raw video read
+    # through a pipe on Home Assistant's event loop for nothing.
+    dec = _Proc()
+    _spawner(monkeypatch, dec)
+
+    async def av_subscribe():
+        return asyncio.Queue()
+
+    async def av_unsubscribe(queue):
+        pass
+
+    monkeypatch.setattr(av_stream, "av_subscribe", av_subscribe)
+    monkeypatch.setattr(av_stream, "av_unsubscribe", av_unsubscribe)
+    live = iter([True])
+    asyncio.run(av_passive._decode(lambda: next(live, False), lambda: None))
+    vf = dec.args[dec.args.index("-vf") + 1]
+    assert vf.endswith(f",fps={av_passive.FPS}")
 
 
 def test_a_stuck_decoder_does_not_hang_the_live_view(monkeypatch):

@@ -174,12 +174,18 @@ async def _run(enc, standby: bytes, is_live, on_live, port: int) -> None:
     try:
         audio = await _audio_in(port)
         while not pump.done():
-            if is_live() and (decoder is None or decoder.done()):
+            live = is_live()
+            if live and (decoder is None or decoder.done()):
                 decoder = asyncio.create_task(_decode(is_live, on_live))
-            chunk = bytes(_pcm[:_CHUNK]) if is_live() else b""
+            elif not live and decoder and not decoder.done():
+                # At call end the decoder can attach to /av again after the media
+                # stopped but before in_call drops, then wait forever on an ffmpeg
+                # with no RTP while _live keeps the panel's last frame.
+                decoder.cancel()
+            chunk = bytes(_pcm[:_CHUNK]) if live else b""
             del _pcm[:_CHUNK]
             audio.write(chunk + _SILENCE[len(chunk):])  # mancante = silenzio, mai un buco
-            enc.stdin.write(_live or standby)
+            enc.stdin.write((live and _live) or standby)
             await audio.drain()
             await enc.stdin.drain()
             n += 1
@@ -232,7 +238,9 @@ async def _decode(is_live, on_live) -> None:
                 dec = await asyncio.create_subprocess_exec(
                     "ffmpeg", "-loglevel", "error", "-probesize", "32768", "-analyzeduration", "1",
                     "-fpsprobesize", "0", "-threads", "1", "-f", "mpegts", "-i", "pipe:0", "-an",
-                    "-vf", _SCALE, "-pix_fmt", "yuv420p", "-f", "rawvideo", "pipe:1",
+                    # The encoder takes FPS frames a second: the panel's other ones were
+                    # raw video read through a pipe on HA's loop for nothing.
+                    "-vf", f"{_SCALE},fps={FPS}", "-pix_fmt", "yuv420p", "-f", "rawvideo", "pipe:1",
                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
                 feeder = asyncio.create_task(_feed(q, dec.stdin))
                 try:
