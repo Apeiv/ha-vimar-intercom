@@ -6,6 +6,11 @@ Italian and are kept as they were written.
 
 ## [Unreleased]
 
+### Changed
+
+- **README**: an *Open in HACS* button (My Home Assistant) and a last-commit badge; the release, downloads and
+  stars badges are gone, since HACS already shows them at the top of the page.
+
 ## [1.0.18] - 2026-10-02
 
 ### Changed
