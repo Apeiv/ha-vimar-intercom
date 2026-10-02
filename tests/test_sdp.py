@@ -35,7 +35,7 @@ def test_build_sdp_plain_rtp_default():
 
 def test_build_sdp_asks_the_panel_for_2_mbit_video():
     """256 kbit/s made the 40515 send 16 fps blocky video; it honours 2048."""
-    R.MEDIA_ENC = False
+    S.MEDIA_ENC = False
     offer = sip.parse_sdp(sip.build_sdp())
     for sdp in (sip.build_sdp(), sip.build_sdp(offer)):
         assert "b=AS:2200\r\nt=0 0" in sdp
