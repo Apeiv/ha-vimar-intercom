@@ -151,6 +151,26 @@ def rms(pcm: bytes) -> float:
 # Le porte dell'ffmpeg di /av si leggono da av_stream (non da const) a ogni
 # pacchetto: il banco di prova (tests/harness/rig.py) le sostituisce lì.
 
+#: Replays in a row before a warning, and again every this many (~2-5 s of media).
+REPLAY_WARN_RUN = 250
+
+
+def _replay_dropped(proto, kind: str) -> None:
+    """Count an authentic packet the SRTP context dropped as a replay.
+
+    A stray duplicate is normal. A panel that restarts its sequence lower on the
+    same SSRC is not: every packet after that is a "replay" and the media stops
+    with nothing in the log. Debug on the call's first one, a warning for a long run.
+    """
+    proto._replay_run += 1
+    if proto.srtp_rx.replayed == 1:
+        _LOGGER.debug("SRTP %s: dropped a packet already received (replay)", kind)
+    if proto._replay_run % REPLAY_WARN_RUN == 0:
+        _LOGGER.warning("SRTP %s: the last %d packets were all dropped as replays (%d this call): "
+                        "did the panel restart its sequence on the same SSRC?",
+                        kind, proto._replay_run, proto.srtp_rx.replayed)
+
+
 def _from_the_call(proto, addr) -> bool:
     """Plain RTP only from the other end of the current call.
 
@@ -207,6 +227,7 @@ class RTPAudioProtocol(asyncio.DatagramProtocol):
         self.pkt_count = 0
         self.srtp_rx: SRTPContext | None = None
         self.srtp_tx: SRTPContext | None = None
+        self._replay_run = 0  # SRTP replays in a row
         # Voce in uscita: μ-law in attesa del pacer (_tx_loop, 160 B ogni 20 ms).
         self.tx_buf = bytearray()
         self.tx_enabled = False   # False durante l'anteprima dello squillo
@@ -235,11 +256,16 @@ class RTPAudioProtocol(asyncio.DatagramProtocol):
 
         # Decrypt SRTP → RTP
         if self.srtp_rx:
+            replayed = self.srtp_rx.replayed
             rtp = self.srtp_rx.unprotect(data)
             if rtp is None:
+                if self.srtp_rx.replayed != replayed:
+                    _replay_dropped(self, "audio")
+                    return
                 if self.pkt_count == 0:
                     _LOGGER.warning("SRTP audio auth failed from %s (%dB)", addr, len(data))
                 return
+            self._replay_run = 0
         elif _from_the_call(self, addr):
             rtp = data
         else:
@@ -382,6 +408,7 @@ class RTPVideoProtocol(asyncio.DatagramProtocol):
         self.remote_addr = None
         self.pkt_count = 0
         self.srtp_rx: SRTPContext | None = None
+        self._replay_run = 0  # SRTP replays in a row
         # Forward plain RTP (H.264) to the AV ffmpeg only while it's running.
         # Enabled by av_stream.av_subscribe(), disabled by stop_av_ffmpeg() so we
         # never blast packets at a closed/absent socket.
@@ -482,13 +509,15 @@ class RTPVideoProtocol(asyncio.DatagramProtocol):
             replayed = self.srtp_rx.replayed
             rtp = self.srtp_rx.unprotect(data)
             if rtp is None:
-                if self.srtp_rx.replayed != replayed:
-                    return  # a duplicate of a packet already received, not an auth failure
+                if self.srtp_rx.replayed != replayed:  # already received, not an auth failure
+                    _replay_dropped(self, "video")
+                    return
                 self._srtp_fail += 1
                 if self._srtp_fail <= 5 or self._srtp_fail % 100 == 0:
                     _LOGGER.warning("SRTP video auth FAIL #%d (pkt %dB)", self._srtp_fail, len(data))
                 return
             self._srtp_ok += 1
+            self._replay_run = 0
         elif _from_the_call(self, addr):
             rtp = data
         else:
