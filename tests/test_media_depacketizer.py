@@ -191,6 +191,26 @@ def test_idr_burst_reordered_by_the_relay_is_not_lost(monkeypatch):
     assert len(nals) == 1 and len(nals[0]) > 12 * 20
 
 
+def test_a_40_packet_keyframe_burst_reordered_by_the_relay_is_not_lost(monkeypatch):
+    """At 1.5 Mbit/s a keyframe is ~40 packets and the P frames follow at once:
+    packet 1 turns up 34 ms late, after more than 64 others had piled up behind it."""
+    now = [100.0]
+    monkeypatch.setattr(mh.time, "monotonic", lambda: now[0])
+    p, _, calls = _video_rx()
+    nals = []
+    p.frame_sink = nals.append
+    p._lost = lambda why: pytest.fail(why)
+    idr = [_fua(500 + i, first=i == 0, last=i == 39) for i in range(40)]
+    p_frames = [_pkt(540 + i) for i in range(60)]
+    burst = idr[:1] + idr[2:] + p_frames + idr[1:2]   # seq 501 arrives 99 places late
+    for data in burst:
+        now[0] += 0.0003                               # 100 packets in 30 ms, inside REORDER_WAIT
+        p.datagram_received(data, p.remote_addr)
+    assert not p._drop_until_idr
+    assert calls == list(range(500, 600))
+    assert len(nals) == 1 + 60
+
+
 def test_a_real_gap_is_declared_lost_after_the_reorder_wait(monkeypatch):
     now = [100.0]
     monkeypatch.setattr(mh.time, "monotonic", lambda: now[0])

@@ -33,6 +33,15 @@ def test_build_sdp_plain_rtp_default():
     assert sip._local_video_crypto_key is None
 
 
+def test_build_sdp_asks_the_panel_for_2_mbit_video():
+    """256 kbit/s made the 40515 send 16 fps blocky video; it honours 2048."""
+    R.MEDIA_ENC = False
+    offer = sip.parse_sdp(sip.build_sdp())
+    for sdp in (sip.build_sdp(), sip.build_sdp(offer)):
+        assert "b=AS:2200\r\nt=0 0" in sdp
+        assert "m=video" in sdp and "b=AS:2048\r\n" in sdp.split("m=video")[1]
+
+
 def test_build_sdp_srtp_when_enabled():
     """MEDIA_ENC=True → RTP/SAVP con a=crypto e chiavi base64 generate."""
     R.MEDIA_ENC = True
