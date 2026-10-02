@@ -7,9 +7,9 @@ import asyncio
 
 import pytest
 
+from custom_components.vimar_intercom import button, webhook
 from custom_components.vimar_intercom import hub as hub_mod
 from custom_components.vimar_intercom import runtime as R
-from custom_components.vimar_intercom import webhook
 
 sip = hub_mod.sip
 START, END = "http://hook.invalid/on", "http://hook.invalid/off"
@@ -95,3 +95,32 @@ def test_a_real_ring_takes_over(hub, log, monkeypatch):
     # The doorbell callback runs inline, the webhooks are tasks: check them apart.
     assert [x for x in log if x != "doorbell"] == [START, END, START, END]
     assert log.count("doorbell") == 2
+
+
+@pytest.mark.parametrize("busy", ["in_call", "calling", "ringing", "test_ring"])
+def test_the_test_ring_button_cannot_fire_during_a_real_call_or_ring(hub, log, monkeypatch, busy):
+    """The button goes through the same guard as the service: while a call or a ring is
+    on it raises, and nothing rings, fires a webhook or touches SIP."""
+    class _Err(Exception):
+        pass
+    monkeypatch.setattr(button, "HomeAssistantError", _Err)
+    b = button.VimarTestRingButton(hub, "e1")
+
+    async def run():
+        if busy == "test_ring":
+            await b.async_press()           # the first press rings
+            assert hub.is_ringing
+            await asyncio.sleep(0.01)       # let the start webhook go out
+            log.clear()
+        elif busy == "ringing":
+            monkeypatch.setitem(sip.pending_incoming, "active", True)
+        else:
+            monkeypatch.setattr(sip, busy, True)
+        before = hub._sim_ring
+        with pytest.raises(_Err):
+            await b.async_press()
+        assert hub._sim_ring is before      # no second simulation
+        if busy == "test_ring":
+            hub._stop_simulated_ring()
+    asyncio.run(run())
+    assert log == ([] if busy != "test_ring" else [END])

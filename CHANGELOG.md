@@ -6,6 +6,12 @@ Italian and are kept as they were written.
 
 ## [Unreleased]
 
+### Added
+
+- **Test ring button** (diagnostic, on the device page): a 20 s test ring in one tap, the same as the
+  `simulate_ring` service, to try your ring automations and notifications without writing YAML. It reports an
+  error if a real call or ring is in progress.
+
 ### Changed
 
 - **README**: an *Open in HACS* button (My Home Assistant) and a last-commit badge; the release, downloads and

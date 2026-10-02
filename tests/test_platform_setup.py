@@ -62,6 +62,10 @@ class _Hub:
         self.pressed.append(("command", kw["body"], kw["target"]))
         return self.ok, "200"
 
+    def simulate_ring(self, duration):
+        self.pressed.append(("sim_ring", duration))
+        return self.ok
+
     async def async_set_apt_param(self, name, value):
         self.pressed.append(("apt", name, value))
         return self.ok, "200" if self.ok else "Timeout"
@@ -126,7 +130,7 @@ def test_buttons_include_the_actuators_from_the_options_and_skip_broken_ones(cap
     with caplog.at_level(logging.ERROR):
         entities = _setup(button, _Hub(), entry)
     assert _ids(entities) == ["e1_call", "e1_call_ext", "e1_call_int", "e1_answer", "e1_decline",
-                              "e1_hangup", "e1_door_street", "e1_act_luce_scala_open_3"]
+                              "e1_hangup", "e1_door_street", "e1_test_ring", "e1_act_luce_scala_open_3"]
     assert "Attuatore ignorato" in caplog.text
 
 
@@ -147,7 +151,19 @@ def test_buttons_send_what_they_say(ha_error, monkeypatch):
     for entity in _setup(button, hub, entry):
         asyncio.run(entity.async_press())
     assert hub.pressed == [("call", None), ("call", "55100"), ("call", "55200"), ("answer",),
-                           ("decline",), ("hangup",), ("door", None), ("command", "OPEN_3", "55009")]
+                           ("decline",), ("hangup",), ("door", None), ("sim_ring", 20),
+                           ("command", "OPEN_3", "55009")]
+
+
+def test_test_ring_button_simulates_a_ring_and_complains_when_busy(ha_error):
+    hub = _Hub()
+    b = button.VimarTestRingButton(hub, "e1")
+    assert b._attr_entity_category == "diagnostic"
+    asyncio.run(b.async_press())
+    assert hub.pressed == [("sim_ring", 20)]
+    hub.ok = False  # a real call or ring in progress
+    with pytest.raises(_HAError):
+        asyncio.run(b.async_press())
 
 
 def test_answer_button_stops_following_the_hub_when_removed():
