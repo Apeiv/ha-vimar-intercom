@@ -547,3 +547,58 @@ def test_confirming_keeps_the_other_options_and_saves_the_imported_values(cf):
         "55009", "55009", "55002", "55100")
     assert data["internal_panel_target"] == "55200" and data["actuators"] == ACTUATORS
     assert json.dumps(data)  # everything stored is plain JSON
+
+
+# ─── /av key (#63) ───────────────────────────────────────────────────────────
+
+def _key_flow(cf, key="stored-av-key"):
+    flow = _options_flow(cf, data={**ENTRY_DATA, "av_key": key}, options={"camera_target": "55100"})
+    flow.updates, flow.reloads = [], []
+
+    def update(entry, **kw):
+        flow.updates.append(kw)
+        entry.data = kw.get("data", entry.data)
+    flow.hass.config_entries = types.SimpleNamespace(
+        async_update_entry=update, async_schedule_reload=flow.reloads.append)
+    return flow
+
+
+def test_the_av_key_page_is_in_the_menu_and_shows_the_key(cf):
+    flow = _key_flow(cf)
+    assert "av_key" in asyncio.run(flow.async_step_init())["menu_options"]
+    form = asyncio.run(flow.async_step_av_key())
+    assert form["step_id"] == "av_key"
+    assert form["description_placeholders"] == {"param": "auth", "key": "stored-av-key"}
+
+
+def test_saving_without_regenerating_changes_nothing(cf):
+    flow = _key_flow(cf)
+    result = asyncio.run(flow.async_step_av_key({"regenerate": False}))
+    assert result["type"] == "create_entry" and result["data"] == {"camera_target": "55100"}
+    assert flow.updates == [] and flow.reloads == []
+
+
+def test_regenerating_stores_a_new_key_and_reloads(cf, monkeypatch):
+    runtime = cf.runtime
+    monkeypatch.setattr(runtime, "AV_KEY", "stored-av-key")
+    flow = _key_flow(cf)
+    result = asyncio.run(flow.async_step_av_key({"regenerate": True}))
+    new = flow._entry.data["av_key"]
+    assert new != "stored-av-key" and len(new) == 32 and runtime.AV_KEY == new
+    assert flow.updates == [{"data": {**ENTRY_DATA, "av_key": new}}]
+    assert flow.reloads == ["e1"]
+    # The options stay as they were: the reload is asked for explicitly.
+    assert result["data"] == {"camera_target": "55100"}
+
+
+def test_the_av_key_page_is_translated(cf):
+    import pathlib
+    base = pathlib.Path(cf.__file__).parent
+    for name in ("strings.json", "translations/en.json", "translations/it.json"):
+        step = json.loads((base / name).read_text(encoding="utf-8"))["options"]["step"]
+        assert "av_key" in step["init"]["menu_options"], name
+        page = step["av_key"]
+        assert "{param}" in page["description"] and "{key}" in page["description"], name
+        assert set(page["data"]) == {"regenerate"}, name
+        # hassfest refuses anything that looks like HTML, `<key>` included.
+        assert "<" not in json.dumps(page, ensure_ascii=False), name

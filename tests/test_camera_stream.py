@@ -177,4 +177,8 @@ def test_stream_source_is_loopback_on_the_real_http_port(http, expected):
     cam._hass = SimpleNamespace(
         config=SimpleNamespace(internal_url="https://proxy.example.test"),
         **({"http": SimpleNamespace(**http)} if http else {}))
-    assert asyncio.run(cam.stream_source()) == expected
+    url = asyncio.run(cam.stream_source())
+    base, _, query = url.partition("?")
+    assert base == expected
+    # The /av key (#63) rides along, so plain /av accepts the stream worker.
+    assert query == f"{camera_mod.R.AV_KEY_PARAM}={camera_mod.R.AV_KEY}" and camera_mod.R.AV_KEY

@@ -84,6 +84,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.config_entries.async_update_entry(
             entry, data={**entry.data, **identity})
         _LOGGER.info("Identità dispositivo generata per questa installazione")
+    # The /av key (#63), once per installation like the identity. Never logged.
+    if (key := _missing_av_key(entry.data)) is not None:
+        hass.config_entries.async_update_entry(entry, data={**entry.data, **key})
+        _LOGGER.info("Generated the /av key for this installation")
 
     # Popola il modulo runtime con i dati del config entry.
     # Le options (impostazioni rete modificate da OptionsFlow) sovrascrivono
@@ -292,6 +296,13 @@ def _missing_identity(data) -> dict | None:
     if legacy:
         return {"device_imei": legacy, "device_uuid": legacy}
     return runtime.new_device_identity()
+
+
+def _missing_av_key(data) -> dict | None:
+    """The /av key to add to an entry that lacks one, or None."""
+    if str(data.get("av_key") or "").strip():
+        return None
+    return {"av_key": runtime.new_av_key()}
 
 
 def _learned_data(data, updates: dict) -> dict | None:

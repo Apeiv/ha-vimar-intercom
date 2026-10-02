@@ -940,7 +940,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         """Menu: impostazioni a mano, rubrica dal citofono, o file rubrica.db."""
         return self.async_show_menu(
             step_id="init",
-            menu_options=["settings", "homekit", "fetch_rubrica", "fetch_rubrica_cloud", "import_rubrica"],
+            menu_options=["settings", "homekit", "av_key", "fetch_rubrica", "fetch_rubrica_cloud",
+                          "import_rubrica"],
         )
 
     async def async_step_settings(
@@ -1253,6 +1254,32 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     default=current.get(CONF_HOMEKIT_RING_BUTTON, DEFAULT_HOMEKIT_RING_BUTTON),
                 ): bool,
             }),
+        )
+
+    async def async_step_av_key(
+        self, user_input: dict | None = None
+    ) -> FlowResult:
+        """The /av key (#63): shown for go2rtc/Frigate/Scrypted, and regenerated on request.
+
+        A new key goes in the entry data (not the options) and the entry reloads, so
+        the camera hands HA's stream worker the new URL; the old key stops working.
+        """
+        if user_input is not None:
+            if user_input.get("regenerate"):
+                key = runtime.new_av_key()
+                self.hass.config_entries.async_update_entry(
+                    self._entry, data={**self._entry.data, "av_key": key})
+                runtime.AV_KEY = key
+                self.hass.config_entries.async_schedule_reload(self._entry.entry_id)
+            return self.async_create_entry(title="", data=dict(self._entry.options))
+        key = str(self._entry.data.get("av_key") or "")
+        return self.async_show_form(
+            step_id="av_key",
+            description_placeholders={
+                "param": runtime.AV_KEY_PARAM,
+                "key": key or "-",
+            },
+            data_schema=vol.Schema({vol.Optional("regenerate", default=False): bool}),
         )
 
     async def async_step_fetch_rubrica(

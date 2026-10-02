@@ -7,10 +7,11 @@ calling the panel on their own.
 
 The integration has no always-on RTSP camera. Video exists only while the doorbell rings
 (preview) or a call is up (about 10 s for a "view" on a Tab 5S Up). It is served as MPEG-TS
-(H.264 + PCMU) on `http://<ha>:8123/api/vimar_intercom/av`, LAN only, no token.
+(H.264 + PCMU) on `http://<ha>:8123/api/vimar_intercom/av`, LAN only.
 
 - **`/api/vimar_intercom/av`** (plain): opening it while idle **places a call** to the panel
-  ("Vedi esterno"). It is meant for Home Assistant's own camera stream and the card. A tool that
+  ("Vedi esterno"). It is meant for Home Assistant's own camera stream and the card, and it
+  answers only an authenticated HA user or the installation's key (see [The /av key](#the-av-key)). A tool that
   reconnects in a loop would keep calling a shared building panel: **never point Scrypted, go2rtc
   or Frigate at this URL**.
 - **`/api/vimar_intercom/av?autocall=0`** (passive, also `?mode=passive`): never calls. While a
@@ -32,6 +33,26 @@ The integration has no always-on RTSP camera. Video exists only while the doorbe
 
 Everything below uses the continuous passive URL. `<ha>` is the LAN IP of Home Assistant
 (`127.0.0.1` when the tool runs on the same host with host networking).
+
+## The /av key
+
+Each installation has a key for `/av`, created at first start and never expiring. Find it in
+Settings → Vimar Intercom → **Configure** → *`/av` stream key*, and append it as `&auth=<key>`:
+
+```
+http://<ha>:8123/api/vimar_intercom/av?autocall=0&idle=image&auth=<key>
+```
+
+- Plain `/av` (the one that calls) **requires** it, unless the request comes from a logged-in
+  Home Assistant user. The integration's own camera adds it by itself.
+- On the passive URLs it is **optional for now**: existing go2rtc/Frigate/Scrypted setups keep
+  working without it. Add it anyway; a later release will make it required there too, with a note
+  in the changelog.
+- A wrong key is refused (403) on every URL, passive ones included.
+- The parameter is named `auth` because Home Assistant masks that name when its stream logs a URL,
+  and the integration masks it in its own logs. Other tools may still log the URL: if a log or a
+  config with the key is ever shared, **regenerate** the key on the same options page and update
+  the URLs.
 
 ## Doorbell trigger
 

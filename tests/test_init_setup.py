@@ -207,7 +207,7 @@ def _setup(init, hass, entry):
 
 def _entry(**data):
     base = {"sip_user": "1001", "sip_password": "pw", "sip_domain": "example.invalid",
-            "device_imei": "imei-test", "device_uuid": "uuid-test"}
+            "device_imei": "imei-test", "device_uuid": "uuid-test", "av_key": "av-key-test"}
     base.update(data)
     return FakeEntry(data=base)
 
@@ -260,6 +260,21 @@ def test_an_entry_with_identity_is_not_rewritten_at_setup(init, tmp_path):
     hass = _hass(tmp_path)
     _setup(init, hass, _entry())
     assert hass.updates == []
+
+
+def test_an_entry_without_an_av_key_gets_one_once_and_it_is_not_logged(init, tmp_path, caplog):
+    """#63: the key is stored in the entry data (no reload) and used by runtime."""
+    hass = _hass(tmp_path)
+    entry = _entry()
+    del entry.data["av_key"]
+    with caplog.at_level("DEBUG"):
+        _setup(init, hass, entry)
+    key = entry.data["av_key"]
+    assert len(key) == 32 and init.runtime.AV_KEY == key
+    assert len(hass.updates) == 1 and hass.updates[0]["options"] is None
+    assert key not in caplog.text
+    _setup(init, hass, entry)
+    assert entry.data["av_key"] == key and len(hass.updates) == 1
 
 
 def test_setup_retries_when_the_proxy_is_unreachable(init, tmp_path, monkeypatch):
