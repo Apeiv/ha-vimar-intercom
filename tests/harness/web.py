@@ -189,9 +189,6 @@ async def start(rig):
     async def page(r):
         return web.Response(text=PAGE, content_type="text/html")
 
-    async def card(r):
-        return web.FileResponse(CARD_JS)
-
     async def state(r):  # come i sensori: stato, e foto/clip dell'ultimo squillo (attributi)
         return web.json_response({"status": rig.state_override or hub.status, "last_ring": hub.ring_media()})
 
@@ -200,7 +197,7 @@ async def start(rig):
 
     app.router.add_get(photo.url, ring_photo)
     app.router.add_get("/", page)
-    app.router.add_get("/card.js", card)
+    app.router.add_static("/vimar_intercom", CARD_JS.parent)  # the card's modules, as HA serves www/
     app.router.add_get("/state", state)
     app.router.add_post("/svc/{d}/{s}", svc)
     rig.http = web.AppRunner(app, handler_cancellation=True, shutdown_timeout=0.5)  # come HA

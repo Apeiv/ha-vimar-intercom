@@ -8,7 +8,7 @@ A HACS custom integration (`custom_components/vimar_intercom`, domain `vimar_int
 Vimar/Elvox video intercoms. It emulates the official VIEW app with its own asyncio SIP stack,
 registering over the Vimar cloud TLS relay or over local UDP to the intercom. Media is RTP or
 SRTP, H.264 video plus G.711 audio. It exposes entities, services, ring photos and clips, the
-`/av` MPEG-TS stream for HA's camera, and a Lovelace card (`www/vimar-intercom-card.js`).
+`/av` MPEG-TS stream for HA's camera, and a Lovelace card (`www/`: ES modules, entry `vimar-intercom-card.js`).
 
 Read before changing behaviour: `README.md` (user docs; `README.it.md` is the Italian copy),
 `docs/HARDWARE.md` (what real plants do), `docs/TEST_PLAN.md` (field tests),
@@ -33,7 +33,8 @@ All in `custom_components/vimar_intercom/`.
   continuous re-encoded stream (standby image when idle) for Scrypted/go2rtc/Frigate.
 - `frame_grabber.py`: per-call ffmpeg keeping the latest JPEG, plus the MP4 ring clip.
   `ring_log.py` stores ring photos/clips and the log the card reads.
-- `__init__.py`: entry setup/teardown, static path for the card. `services.py`: the
+- `__init__.py`: entry setup/teardown, `www/` served as a folder for the card (plain and
+  under a version segment, so a change to any card module reaches browsers). `services.py`: the
   `vimar_intercom.*` services. `views.py`: the HTTP views (`/api/vimar_intercom/av`,
   `audio_ws`, `debug`, `rings`).
 - `config_flow.py`: config flow (QR, manual, zeroconf `_eipvdes._tcp`) with transport probe,

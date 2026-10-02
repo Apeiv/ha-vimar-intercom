@@ -232,10 +232,13 @@ def test_setup_wires_the_hub_views_services_card_and_platforms(init, tmp_path):
     assert entry.listeners == [init._async_update_listener] and entry.unloads == ["remove-listener"]
     assert {type(v).__name__ for v in hass.views} == {
         "VimarAVStreamView", "VimarAudioWSView", "VimarDebugView", "VimarRingsView", "VimarRingPhotoView"}
-    # The card: one static path, loaded by the frontend with a version stamp.
-    assert [p[0] for p in hass.static] == [init.CARD_URL]
-    assert os.path.basename(hass.static[0][1]) == "vimar-intercom-card.js"
-    assert len(init.js_urls) == 1 and init.js_urls[0].startswith(init.CARD_URL + "?v=")
+    # The card: www/ served as a folder twice, plain (CARD_URL stays valid) and under a version
+    # segment, which the frontend loads so every module of the card is fetched fresh.
+    www = os.path.join(os.path.dirname(init.__file__), "www")
+    v = int(max(os.path.getmtime(os.path.join(www, f)) for f in os.listdir(www) if f.endswith(".js")))
+    assert [(p[0], p[1]) for p in hass.static] == [(init.CARD_DIR, www), (f"{init.CARD_DIR}/{v}", www)]
+    assert os.path.isfile(os.path.join(www, init.CARD_URL.rpartition("/")[2]))
+    assert init.js_urls == [f"{init.CARD_DIR}/{v}/vimar-intercom-card.js"]
     names = {n for _, n in hass.services.handlers}
     assert names == {init.SERVICE_SEND_COMMAND, init.SERVICE_CALL, init.SERVICE_ANSWER,
                      init.SERVICE_DECLINE, init.SERVICE_HANGUP, init.SERVICE_OPEN_DOOR,
@@ -251,7 +254,7 @@ def test_a_second_setup_registers_the_card_and_services_once(init, tmp_path):
     handlers = dict(hass.services.handlers)
     init.orphan = False
     _setup(init, hass, _entry())
-    assert len(hass.static) == 1 and len(init.js_urls) == 1
+    assert len(hass.static) == 2 and len(init.js_urls) == 1
     assert hass.services.handlers == handlers
     assert init.removed_entities == ["switch.e1_away_message"]
 

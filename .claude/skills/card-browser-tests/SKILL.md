@@ -1,6 +1,6 @@
 ---
 name: card-browser-tests
-description: Run the Lovelace card's browser tests (pytest -m browser, Chromium/WebKit via Playwright) or the media tests in a disposable Docker container, without installing anything on the host. Use when changing www/vimar-intercom-card.js, the card harness (tests/harness/card.py), or when a browser/media test fails in CI.
+description: Run the Lovelace card's browser tests (pytest -m browser, Chromium/WebKit via Playwright) or the media tests in a disposable Docker container, without installing anything on the host. Use when changing the card (www/*.js), the card harness (tests/harness/card.py), or when a browser/media test fails in CI.
 ---
 
 # Card browser tests in a container
