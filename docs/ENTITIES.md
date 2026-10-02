@@ -133,6 +133,45 @@ automation:
             image: "/api/camera_proxy/camera.vimar_intercom_intercom"
 ```
 
+### Clear the ring notification on the other phones
+
+With the ring notification on several phones, the others keep showing it after someone answers. Send it
+with a fixed `tag` and clear it by that tag when the *Intercom Ringing* binary sensor goes off: answered
+(from the card, a phone or the Tab), declined, or the ring is over.
+
+```yaml
+automation:
+  - alias: "Intercom - Ring → notification"
+    trigger:
+      - platform: state
+        entity_id: event.vimar_intercom_doorbell
+    action:
+      - action: notify.ALL_PHONES  # a notify group, or one action per phone
+        data:
+          title: "🔔 Someone at the door"
+          message: "Ring at {{ now().strftime('%H:%M:%S') }}."
+          data:
+            tag: intercom-ring
+            image: "/api/camera_proxy/camera.vimar_intercom_intercom"
+
+  - alias: "Intercom - Ring over → clear the notification"
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.vimar_intercom_intercom_ringing  # your Intercom Ringing sensor
+        from: "on"
+        to: "off"
+    action:
+      - action: notify.ALL_PHONES
+        data:
+          message: clear_notification
+          data:
+            tag: intercom-ring
+```
+
+`tag` and `clear_notification` are features of the Home Assistant Companion app (Android and iOS). The
+binary sensor's entity id depends on the language Home Assistant had when the integration was added: check it
+on the device page. Try it with the *Test ring* button.
+
 `camera.snapshot` works during a call or a ring. For a photo of every visitor you don't need an
 automation: set **Ring snapshot folder** in the options. Test your automations with
 `vimar_intercom.simulate_ring`. Don't point a `camera: platform: ffmpeg` at `/api/vimar_intercom/av`:
