@@ -1327,24 +1327,20 @@ def test_info_sfidato_rimanda_una_volta_e_aspetta_la_risposta(monkeypatch):
 
 
 def test_av_aperto_dall_utente_dopo_la_chiamata_richiama(monkeypatch):
-    """Rispondi dalla card, riaggancia, poi la camera dalla dashboard entro il minuto: non è
-    una riconnessione di go2rtc (l'ultimo spettatore è uscito da più di QUICK_REOPEN_S), si
-    chiama. Prima: 503 secco per 60 s."""
+    """Rispondi dalla card, riaggancia, poi la camera dalla dashboard entro il minuto: nessuno
+    guardava /av alla fine, non è una riconnessione di go2rtc, si chiama. Prima: 503 secco
+    per 60 s. Chi invece guardava /av alla fine riprova dopo il minuto (#57)."""
     views = load_views(monkeypatch)
-    monkeypatch.setattr(hub_mod, "QUICK_REOPEN_S", 0.3)
 
     async def s():
         async with Rig(monkeypatch) as rig:
             hass = make_hass(rig)
             await rig.register()
             rig.peer.on_invite = answer_200
-            assert (await rig.hub.async_call())[0]
-            t = open_av(views, hass)
+            assert (await rig.hub.async_call())[0]      # dalla card, senza /av
             await asyncio.sleep(0.5)
             rig.bye(rig.peer.got(is_("INVITE"))[0])
-            await asyncio.wait_for(t, 5)                 # lo stream finisce...
-            r = await asyncio.wait_for(open_av(views, hass), 3)   # ...go2rtc lo riapre subito: 503
-            assert r.status == 503 and len(rig.peer.got(is_("INVITE"))) == 1
+            await wait_until(lambda: not rig.hub._busy_now, 3, "fine chiamata")
             await asyncio.sleep(0.6)                     # l'utente apre la camera dopo
             t = open_av(views, hass)
             await wait_until(lambda: len(rig.peer.got(is_("INVITE"))) == 2, 3, "auto-call dell'utente")

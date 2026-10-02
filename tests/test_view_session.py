@@ -157,13 +157,30 @@ def test_apertura_dall_utente_entro_il_minuto_chiama(hub, monkeypatch):
     assert _apri(hub) is True and hub.chiamate == [None]
 
 
-def test_riapertura_dopo_la_finestra_breve_chiama(hub, monkeypatch):
-    """L'ultimo spettatore è uscito da più di QUICK_REOPEN_S: non è go2rtc che si riconnette."""
+def test_riconnessioni_con_back_off_non_chiamano_nel_minuto(hub, monkeypatch):
+    """#57: dashboard aperta, go2rtc riapre /av ogni 1, 2, 4, 8... s dopo il riaggancio.
+    Ogni rifiutato passava da stream_closed e spostava la finestra di 5 s: superati i 5 s
+    di back-off partiva un auto-call ~10 s dopo il riaggancio."""
     t = [1000.0]
     monkeypatch.setattr(hub_mod.time, "monotonic", lambda: t[0])
     _fine_chiamata(hub, monkeypatch)
-    asyncio.run(hub.stream_closed())
-    assert _apri(hub) is False                        # riflesso: 4 ms dopo
-    asyncio.run(hub.stream_closed())
-    t[0] += hub_mod.QUICK_REOPEN_S + 1
+    asyncio.run(hub.stream_closed())                  # lo stream finisce con la chiamata
+    for gap in (1, 2, 4, 8, 16, 27):                  # fino a 58 s dal riaggancio
+        t[0] += gap
+        assert _apri(hub) is False, f"chiamata a {t[0] - 1000:.0f} s dal riaggancio"
+        asyncio.run(hub.stream_closed())
+    assert hub.chiamate == []
+    t[0] += hub_mod.AUTO_CALL_COOLDOWN                # finita la pausa si richiama
+    assert _apri(hub) is True and hub.chiamate == [None]
+
+
+def test_camera_chiusa_prima_della_fine_entro_il_minuto_chiama(hub, monkeypatch):
+    """Chi ha chiuso la camera prima della fine (la chiamata cade dopo, es. il riaggancio
+    ritardato) e la riapre entro il minuto è una persona: si chiama."""
+    t = [1000.0]
+    monkeypatch.setattr(hub_mod.time, "monotonic", lambda: t[0])
+    asyncio.run(hub.stream_closed())                  # l'utente chiude la camera
+    t[0] += 1
+    _fine_chiamata(hub, monkeypatch)                  # la chiamata finisce dopo
+    t[0] += 10
     assert _apri(hub) is True and hub.chiamate == [None]
