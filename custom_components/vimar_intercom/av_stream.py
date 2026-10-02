@@ -188,6 +188,15 @@ async def _wait_until_ffmpeg_listens(proc, timeout: float = FFMPEG_LISTEN_TIMEOU
     return False
 
 
+def _reap_orphan(spawn: asyncio.Future) -> None:
+    """Kill and wait (in the executor) an ffmpeg whose starter was cancelled."""
+    if spawn.cancelled() or spawn.exception():
+        return
+    proc = spawn.result()
+    proc.kill()
+    asyncio.get_running_loop().run_in_executor(None, proc.wait)
+
+
 async def _start_av_ffmpeg_locked():
     """Start ffmpeg that reads H264+PCMU RTP and outputs MPEG-TS to pipe.
 
@@ -253,9 +262,16 @@ async def _start_av_ffmpeg_locked():
         "-f", "mpegts",
         "pipe:1",
     ]
-    try:  # Popen (fork + exec) fuori dall'event loop
-        av_ffmpeg_proc = await loop.run_in_executor(
-            None, lambda: subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE))
+    # Popen (fork + exec) fuori dall'event loop. Shielded: a caller cancelled
+    # meanwhile (an /av client leaving, the passive decoder stopped) would lose
+    # the process, and its UDP ports with it ("bind failed" on the next call).
+    spawn = loop.run_in_executor(
+        None, lambda: subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE))
+    try:
+        av_ffmpeg_proc = await asyncio.shield(spawn)
+    except asyncio.CancelledError:
+        spawn.add_done_callback(_reap_orphan)
+        raise
     except Exception as e:
         _LOGGER.error("AV ffmpeg start error: %s", e)
         av_ffmpeg_proc = None

@@ -33,6 +33,9 @@ _CHUNK = AR * 2 // FPS       # byte di audio per fotogramma (100 ms)
 _SILENCE = bytes(_CHUNK)
 _pcm = bytearray()           # PCM live in attesa dell'encoder
 _SCALE = f"scale={W}:{H}:force_original_aspect_ratio=decrease,pad={W}:{H}:-1:-1"
+# Answering a cloud ring closes the ring before the 200 OK goes out and sets
+# in_call only after it: the video looks gone for a moment while it goes on.
+_DEAD_GRACE = 1.0  # s without video before the decoder is stopped
 _STANDBY_PNG = os.path.join(os.path.dirname(__file__), "standby.png")
 
 _standby: bytes | None = None
@@ -166,6 +169,7 @@ async def _run(enc, standby: bytes, is_live, on_live, port: int) -> None:
     audio = None
     loop = asyncio.get_running_loop()
     t0, n = loop.time(), 0
+    dead_since: float | None = None
     cancelled = False
     _pcm.clear()
     # Un tap fra tanti (media.pcm_taps): non sostituisce quelli già agganciati, es. il
@@ -175,9 +179,14 @@ async def _run(enc, standby: bytes, is_live, on_live, port: int) -> None:
         audio = await _audio_in(port)
         while not pump.done():
             live = is_live()
+            if live:
+                dead_since = None
+            elif dead_since is None:
+                dead_since = loop.time()
             if live and (decoder is None or decoder.done()):
                 decoder = asyncio.create_task(_decode(is_live, on_live))
-            elif not live and decoder and not decoder.done() and not decoder.cancelling():
+            elif (not live and loop.time() - dead_since >= _DEAD_GRACE
+                  and decoder and not decoder.done() and not decoder.cancelling()):
                 # At call end the decoder can attach to /av again after the media
                 # stopped but before in_call drops, then wait forever on an ffmpeg
                 # with no RTP while _live keeps the panel's last frame. Cancelled
@@ -186,7 +195,9 @@ async def _run(enc, standby: bytes, is_live, on_live, port: int) -> None:
             chunk = bytes(_pcm[:_CHUNK]) if live else b""
             del _pcm[:_CHUNK]
             audio.write(chunk + _SILENCE[len(chunk):])  # mancante = silenzio, mai un buco
-            enc.stdin.write((live and _live) or standby)
+            # The panel frame within the grace too: no standby flash while answering.
+            showing = live or loop.time() - dead_since < _DEAD_GRACE
+            enc.stdin.write((showing and _live) or standby)
             await audio.drain()
             await enc.stdin.drain()
             n += 1
@@ -241,8 +252,9 @@ async def _decode(is_live, on_live) -> None:
                     "ffmpeg", "-loglevel", "error", "-probesize", "32768", "-analyzeduration", "1",
                     "-fpsprobesize", "0", "-threads", "1", "-f", "mpegts", "-i", "pipe:0", "-an",
                     # The encoder takes FPS frames a second: the panel's other ones were
-                    # raw video read through a pipe on HA's loop for nothing.
-                    "-vf", f"{_SCALE},fps={FPS}", "-pix_fmt", "yuv420p", "-f", "rawvideo", "pipe:1",
+                    # raw video read through a pipe on HA's loop for nothing. Dropped
+                    # before scaling, so they are not scaled either.
+                    "-vf", f"fps={FPS},{_SCALE}", "-pix_fmt", "yuv420p", "-f", "rawvideo", "pipe:1",
                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
                 feeder = asyncio.create_task(_feed(q, dec.stdin))
                 try:
@@ -260,7 +272,9 @@ async def _decode(is_live, on_live) -> None:
                         except TimeoutError:
                             pass
             finally:
-                await av_stream.av_unsubscribe(q)
+                # Shielded: a cancel here would leave q in /av's fan-out, and
+                # ffmpeg would never get its "last client left" stop.
+                await asyncio.shield(av_stream.av_unsubscribe(q))
     finally:
         _live = None
 

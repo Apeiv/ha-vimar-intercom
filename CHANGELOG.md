@@ -32,15 +32,17 @@ Italian and are kept as they were written.
   Cloud TLS is unchanged: the relay sends `CANCEL`, and a gap in the preview there must not end the ring.
 - **Passive stream stuck on the last panel frame** ([#87](../../issues/87)) (`/av?autocall=0&idle=image`, Scrypted, go2rtc, Frigate):
   at the end of a call the live decoder could attach to `/av` again just as the media stopped, then wait
-  forever for video that never came, and the stream kept showing the panel's last frame until restart. The
-  decoder is now stopped when the video ends and the standby frame comes back at once.
+  forever for video that never came, and the stream kept showing the panel's last frame until restart. Once the
+  video has been gone for a second the decoder is stopped and the standby frame comes back (the grace covers
+  answering a ring, when the video looks gone for a moment).
 - **Choppy or frozen `/av` video on cloud plants** ([#87](../../issues/87)): the RTP forward reaches ffmpeg in arrival order, and with
   its default 0.1 s `max_delay` ffmpeg gave up on late packets ("max delay reached") and dropped frames. The
   input now waits up to 0.3 s (`-max_delay 300000 -reorder_queue_size 1024`). This can add up to 0.3 s of latency to `/av`.
 - **Passive stream load on Home Assistant** ([#87](../../issues/87)): the live decoder handed over all 25 fps of raw 640x480 video
-  (about 11 MB/s through a pipe on the event loop) while the encoder only uses 10. It now outputs 10 fps,
-  which also stops RTP packets from arriving late to the card and `/av`.
-- **`/audio_ws` initial state carries `ringing`**: a client that connects while the panel is ringing (an Echo
+  (about 11 MB/s through a pipe on the event loop) while the encoder only uses 10. It now outputs 10 fps.
+- An `/av` client leaving while ffmpeg was starting could leave that ffmpeg running with the UDP ports, and
+  the next call's ffmpeg failed with "bind failed". It is now killed.
+- **`/audio_ws` `state` messages carry `ringing`**: a client that connects while the panel is ringing (an Echo
   Show through Scrypted) now knows it and can watch instead of placing a call over the ring.
 - Live video froze for up to 3 s after each keyframe on cloud plants: packets the relay delivered a few milliseconds out of order were treated as lost. The reorder buffer now waits up to 80 ms for a gap.
 - **The door is opened with your plant's own command** ([#58](../../issues/58)): the lock, the *Open Door* button,
