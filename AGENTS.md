@@ -19,14 +19,19 @@ is older and partly stale (Italian); trust the code over it.
 
 All in `custom_components/vimar_intercom/`.
 
-- `sip_client.py`: the SIP stack. Transport (UDP, TLS with fallback), digest auth, REGISTER,
+- `sip_client.py`: the SIP stack. Transport (UDP, TLS with fallback), auth retries, REGISTER,
   INVITE/answer, MESSAGE, INFO (`picture_fast_update` keyframe requests), dialogs.
   State is module-level globals, not a class.
 - `sdp.py`: the SDP we offer or answer (`build_sdp`) and the parser for the peer's
   (`parse_sdp`), plus the local SRTP keys our last SDP advertised.
+- `sip_message.py`: the SIP message layer. `_parse` (first line, headers, body), header
+  helpers, TLS stream framing (`_split_stream`, `MAX_SIP_BODY`) and the Digest response
+  (`_make_auth`). No sockets, no call state.
 - `hub.py`: `VimarIntercomHub`, the orchestrator. Call lifecycle, ring/state/event callbacks
   for entities, stats, keepalive, keyframe requests (a burst at call start, one per lost
-  packet, never periodic), camera target learning, device inventory.
+  packet, never periodic), camera target learning, device inventory. Two mixins it inherits:
+  `plant_messages.py` (`PlantMessages`) parses the SIP MESSAGEs the plant sends (status,
+  phonebook, notifications) and `ring_media.py` (`RingMedia`) saves the ring photo, clip and log.
 - `media_handler.py`: RTP/SRTP transports, STUN, G.711 codec, H.264 depacketising, talk
   queue, PCM taps, audio WebSocket broadcast. `srtp.py` is the AES-CM crypto, `rtcp.py` a
   debug-only RTCP probe.

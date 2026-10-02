@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import os
 import socket
+import threading
 import types
 
 import pytest
@@ -113,6 +114,32 @@ def test_the_input_waits_for_out_of_order_packets(monkeypatch, fresh):
     i = cmd.index("-i")
     assert cmd[cmd.index("-max_delay") + 1] == "300000" and cmd.index("-max_delay") < i
     assert cmd[cmd.index("-reorder_queue_size") + 1] == "1024" and cmd.index("-reorder_queue_size") < i
+
+
+def test_a_caller_cancelled_while_ffmpeg_starts_does_not_orphan_it(monkeypatch, fresh):
+    # An /av client leaving (or the passive decoder stopped) during Popen: the
+    # process was lost with its UDP ports, and the next call got "bind failed".
+    inside, go = threading.Event(), threading.Event()
+    spawned = []
+
+    def popen(cmd, **kw):
+        inside.set()
+        go.wait(5)
+        spawned.append(FakeProc(cmd))
+        return spawned[-1]
+
+    monkeypatch.setattr(av.subprocess, "Popen", popen)
+
+    async def run():
+        task = asyncio.create_task(av._start_av_ffmpeg_locked())
+        await wait_until(inside.is_set, 2)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        go.set()
+        await wait_until(lambda: spawned and spawned[0].killed, 2)
+
+    asyncio.run(run())
+    assert spawned[0].killed and av.av_ffmpeg_proc is None
 
 
 # ─── waiting for ffmpeg's ports ──────────────────────────────────────────────

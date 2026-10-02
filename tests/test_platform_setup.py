@@ -150,6 +150,7 @@ def test_buttons_send_what_they_say(ha_error, monkeypatch):
     entry = _entry(options={"actuators": [{"name": "Luce", "msg": "OPEN_3", "target": "55009",
                                            "icon": "light"}]})
     for entity in _setup(button, hub, entry):
+        entity._context = None  # HA's default: no user (the Test ring button checks it)
         asyncio.run(entity.async_press())
     assert hub.pressed == [("call", None), ("call", "55100"), ("call", "55200"), ("answer",),
                            ("decline",), ("hangup",), ("door", None), ("sim_ring", 20),
@@ -159,12 +160,37 @@ def test_buttons_send_what_they_say(ha_error, monkeypatch):
 def test_test_ring_button_simulates_a_ring_and_complains_when_busy(ha_error):
     hub = _Hub()
     b = button.VimarTestRingButton(hub, "e1")
+    b._context = None  # no user, as from an automation
     assert b._attr_entity_category == "diagnostic"
     asyncio.run(b.async_press())
     assert hub.pressed == [("sim_ring", 20)]
     hub.ok = False  # a real call or ring in progress
     with pytest.raises(_HAError):
         asyncio.run(b.async_press())
+
+
+@pytest.mark.parametrize("user_id, is_admin, allowed", [
+    ("u1", True, True),       # administrator
+    ("u1", False, False),     # regular user, even one in allowed_users
+    ("ghost", True, False),   # id that no longer resolves to a user
+    (None, False, True),      # no user: automation or system call, like the admin service
+])
+def test_test_ring_button_is_admin_only_like_the_service(user_id, is_admin, allowed):
+    from homeassistant.exceptions import Unauthorized
+
+    async def get_user(uid):
+        return {"u1": types.SimpleNamespace(is_admin=is_admin)}.get(uid)
+
+    hub = _Hub()
+    b = button.VimarTestRingButton(hub, "e1")
+    b.hass = types.SimpleNamespace(auth=types.SimpleNamespace(async_get_user=get_user))
+    b._context = types.SimpleNamespace(user_id=user_id)
+    if allowed:
+        asyncio.run(b.async_press())
+    else:
+        with pytest.raises(Unauthorized):
+            asyncio.run(b.async_press())
+    assert hub.pressed == ([("sim_ring", 20)] if allowed else [])  # no fake ring when refused
 
 
 def test_answer_button_stops_following_the_hub_when_removed():

@@ -12,6 +12,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
 from .device import device_info
+from .plant_messages import sip_id_name
 
 
 async def async_setup_entry(
@@ -120,7 +121,6 @@ class VimarRingingSensor(_VimarHubBinarySensor):
     @property
     def extra_state_attributes(self) -> dict:
         st = self._hub.stats
-        from .hub import sip_id_name
         return {
             "chiamante": sip_id_name(st.get("last_caller_id")),
             "chiamante_id": st.get("last_caller_id"),

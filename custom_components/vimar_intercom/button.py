@@ -13,6 +13,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import runtime as R
+from .away_config import require_admin
 from .const import DOMAIN
 from .device import device_info
 
@@ -222,6 +223,9 @@ class VimarTestRingButton(ButtonEntity):
         self._attr_device_info = device_info(entry_id)
 
     async def async_press(self) -> None:
+        # Like the simulate_ring admin service: a fake ring fires webhooks, announcements
+        # and automations, so administrators and automations only.
+        await require_admin(self.hass, self._context)
         if not self._hub.simulate_ring(20):
             raise HomeAssistantError("Squillo di prova non avviato: una chiamata è già in corso")
 

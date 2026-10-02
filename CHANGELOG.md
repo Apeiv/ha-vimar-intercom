@@ -18,6 +18,9 @@ Italian and are kept as they were written.
 
 ### Changed
 
+- **Debug logs**: the plant message parsing now logs under `custom_components.vimar_intercom.plant_messages` and
+  the ring media under `custom_components.vimar_intercom.ring_media`, no longer under `...hub`. Adjust your
+  `logger:` entry if you filter on the old name.
 - **README**: an *Open in HACS* button (My Home Assistant) and a last-commit badge; the release, downloads and
   stars badges are gone, since HACS already shows them at the top of the page.
 ### Fixed
@@ -25,6 +28,10 @@ Italian and are kept as they were written.
 - **Card popup, iPhone: closing it no longer taps the card underneath.** The tap on X or Hang up also landed on the compact card that takes the popup's place: during a ring it hit Answer (the popup came back and the card answered), after a hang-up it reopened the popup and called the panel. For 0.8 s after the popup closes, taps on the compact card are ignored.
 - **Card popup: X during a ring means "not now".** It sends nothing to the panel (the ring goes on for everyone else) and the popup no longer opens by itself again for that ring, whatever follows (answered elsewhere, call ended, the card rebuilt). A new ring opens it as before.
 - **Card: no black box while waiting for video.** Until the first frame arrives the live view shows the doorbell icon and "In attesa del video…".
+- **Away message upload errors** ([#91](../../pull/91)): an expired upload showed the raw text
+  "File does not exist" in the form; any failure other than a wrong type or a too big file now shows the
+  translated *File not saved* error. An empty file or a name over 200 bytes is refused as a wrong file instead of
+  failing with an error in the log.
 - Live video from the 40515 was soft and choppy (16 fps, ~14 KB keyframes) because we asked the panel for 256 kbit/s. We now ask for 2 Mbit/s: it sends 25 fps at about 1.5 Mbit/s, same 720x576 picture. A keyframe is now a burst of about 40 packets, which filled the 64-packet cap of the reorder buffer before the 80 ms wait ran out and dropped the picture until the next keyframe, so the cap is now 512.
 - Card video colours looked off (skin and sky tints): the panel's SD H.264 carries no colour info, so browsers assumed BT.709. The decoder is now configured with BT.601.
 - **A dashboard left open no longer calls the panel again ~10 s after a hang-up** ([#57](../../issues/57)): go2rtc and the stream worker reconnect to `/av` with a growing back-off, and each refused reconnect moved the 5 s quick-reopen window forward, so the first one more than 5 s apart placed a call. Now a reconnect from a viewer that was watching `/av` when the call ended waits the full 60 s pause. Opening the camera within the minute still calls if `/av` was not open at the end (for example after answering from the card), and HomeKit is unchanged. So a viewer that was watching `/av` when the call ended now gets 503 for up to 60 s instead of about 5 s, for example when reopening the camera right after the panel closes a view at 120 s. That is intended.
@@ -35,15 +42,17 @@ Italian and are kept as they were written.
   Cloud TLS is unchanged: the relay sends `CANCEL`, and a gap in the preview there must not end the ring.
 - **Passive stream stuck on the last panel frame** ([#87](../../issues/87)) (`/av?autocall=0&idle=image`, Scrypted, go2rtc, Frigate):
   at the end of a call the live decoder could attach to `/av` again just as the media stopped, then wait
-  forever for video that never came, and the stream kept showing the panel's last frame until restart. The
-  decoder is now stopped when the video ends and the standby frame comes back at once.
+  forever for video that never came, and the stream kept showing the panel's last frame until restart. Once the
+  video has been gone for a second the decoder is stopped and the standby frame comes back (the grace covers
+  answering a ring, when the video looks gone for a moment).
 - **Choppy or frozen `/av` video on cloud plants** ([#87](../../issues/87)): the RTP forward reaches ffmpeg in arrival order, and with
   its default 0.1 s `max_delay` ffmpeg gave up on late packets ("max delay reached") and dropped frames. The
   input now waits up to 0.3 s (`-max_delay 300000 -reorder_queue_size 1024`). This can add up to 0.3 s of latency to `/av`.
 - **Passive stream load on Home Assistant** ([#87](../../issues/87)): the live decoder handed over all 25 fps of raw 640x480 video
-  (about 11 MB/s through a pipe on the event loop) while the encoder only uses 10. It now outputs 10 fps,
-  which also stops RTP packets from arriving late to the card and `/av`.
-- **`/audio_ws` initial state carries `ringing`**: a client that connects while the panel is ringing (an Echo
+  (about 11 MB/s through a pipe on the event loop) while the encoder only uses 10. It now outputs 10 fps.
+- An `/av` client leaving while ffmpeg was starting could leave that ffmpeg running with the UDP ports, and
+  the next call's ffmpeg failed with "bind failed". It is now killed.
+- **`/audio_ws` `state` messages carry `ringing`**: a client that connects while the panel is ringing (an Echo
   Show through Scrypted) now knows it and can watch instead of placing a call over the ring.
 - Live video froze for up to 3 s after each keyframe on cloud plants: packets the relay delivered a few milliseconds out of order were treated as lost. The reorder buffer now waits up to 80 ms for a gap.
 - **The door is opened with your plant's own command** ([#58](../../issues/58)): the lock, the *Open Door* button,
@@ -58,6 +67,14 @@ Italian and are kept as they were written.
   actuator" line is logged once per panel.
 ### Security
 
+- **Test ring button is admin only** ([#85](../../pull/85)): it starts the same fake ring as the admin-only
+  `simulate_ring` service (ring webhooks, announcements, automations), but any user could press it. Now a
+  non-admin user gets *Unauthorized*; automations and scripts (no user) can still press it, like they can call the
+  service.
+- **Away message upload never writes through a link** ([#91](../../pull/91)): the file is created with
+  `O_CREAT|O_EXCL|O_NOFOLLOW`, so a dangling symlink (or a file that appears in the meantime, including a
+  concurrent upload with the same name) is never written through or overwritten; the upload gets the next `-n`
+  name instead.
 - **`/av` key** ([#63](../../issues/63)): plain `/api/vimar_intercom/av` places a call to the panel, and
   until now any client that looked local got it (a port-forward with SNAT, a guest Wi-Fi device). It now
   also wants an authenticated Home Assistant user or the installation's key in `?auth=<key>`. The key is
@@ -79,10 +96,11 @@ Italian and are kept as they were written.
   User-Agent is cut at 256 characters before it is matched. Real headers match as before.
 - **SRTP replay window** ([#46](../../issues/46)): the receiving side of the call media had no replay protection, so one
   captured voice or video packet, sent again, was accepted every time. An index already received among the
-  last 128 per stream is now dropped after authentication. One older than that restarts the window instead of
-  being dropped: on a cloud ring a single packet numbered far ahead on the same SSRC otherwise had the rest of
-  the stream refused, so no ring photo, no preview and no voice. Packets that merely arrive out of order are
-  still accepted.
+  last 128 per stream is now dropped after authentication; packets merely out of order still pass. A lone
+  packet far from the window never moves it, and passes once if ahead (one stray on a cloud ring stalled the
+  stream). Three in a row move it (50 past half a wrap): a sender restarting lower loses 2. Known gaps: 3
+  captured old packets in a row move it back too, and far-ahead ones sent in turn, not in a row, pass every
+  time.
 
 ## [1.0.18] - 2026-10-02
 

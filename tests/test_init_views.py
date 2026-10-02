@@ -205,7 +205,7 @@ def test_status_reports_registration_and_call(views, monkeypatch):
     hub = ViewHub()
     hub.in_call = True
     assert _action(views, monkeypatch, hub, {"action": "status"}) == [
-        {"type": "state", "registered": True, "in_call": True}]
+        {"type": "state", "registered": True, "in_call": True, "ringing": False}]
 
 
 def test_call_success_is_broadcast(views, monkeypatch):
@@ -365,7 +365,8 @@ def test_reconnect_reports_its_outcome(views, monkeypatch):
         return r
     monkeypatch.setattr(sip, "reconnect", reconnect)
     hub = ViewHub()
-    assert _action(views, monkeypatch, hub, {"action": "reconnect"})[0]["msg"] == "Reconnected"
+    assert _action(views, monkeypatch, hub, {"action": "reconnect"}) == [
+        {"type": "state", "registered": True, "in_call": False, "ringing": False, "msg": "Reconnected"}]
     assert _action(views, monkeypatch, hub, {"action": "reconnect"})[0]["msg"] == "Reconnect failed"
     assert _action(views, monkeypatch, hub, {"action": "reconnect"}) == [{"type": "error", "msg": "dns"}]
 

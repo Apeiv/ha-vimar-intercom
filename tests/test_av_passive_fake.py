@@ -343,6 +343,46 @@ def test_the_end_of_the_video_brings_back_the_standby_even_with_a_stuck_decoder(
             raise
 
     monkeypatch.setattr(av_passive, "_decode", stuck_decode)
+    monkeypatch.setattr(av_passive, "_DEAD_GRACE", 0.2)
+    live = [True]
+
+    async def run():
+        task = asyncio.create_task(av_passive._run(enc, b"STANDBY", lambda: live[0], lambda: None, 1))
+        while b"LIVE" not in enc.stdin.writes:
+            await asyncio.sleep(0.01)
+        live[0] = False
+        n = len(enc.stdin.writes)
+        for _ in range(200):
+            if cancelled:
+                break
+            await asyncio.sleep(0.01)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        return n
+
+    asyncio.run(run())
+    assert enc.stdin.writes[-1] == b"STANDBY", "no frozen panel frame after the call"
+    assert cancelled == [1], "the stuck decoder is cancelled when the video ends"
+
+
+def test_answering_a_ring_does_not_restart_the_decoder(monkeypatch):
+    # Answering a cloud ring closes it before the 200 OK and sets in_call after:
+    # the video looks gone for a moment. Stopping the decoder there cost the
+    # 40515 a gap in the live picture.
+    _run_env(monkeypatch)
+    enc = _Proc()
+    started, cancelled = [], []
+
+    async def decode(is_live, on_live):
+        started.append(1)
+        av_passive._live = b"LIVE"
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.append(1)
+            raise
+
+    monkeypatch.setattr(av_passive, "_decode", decode)
     live = [True]
 
     async def run():
@@ -353,13 +393,18 @@ def test_the_end_of_the_video_brings_back_the_standby_even_with_a_stuck_decoder(
         n = len(enc.stdin.writes)
         while len(enc.stdin.writes) < n + 3:
             await asyncio.sleep(0.01)
+        live[0] = True
+        n = len(enc.stdin.writes)
+        while len(enc.stdin.writes) < n + 3:
+            await asyncio.sleep(0.01)
+        snapshot = (list(started), list(cancelled))
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
-        return n
+        return snapshot
 
-    n = asyncio.run(run())
-    assert set(enc.stdin.writes[n + 1:]) == {b"STANDBY"}, "no frozen panel frame after the call"
-    assert cancelled == [1], "the stuck decoder is cancelled when the video ends"
+    assert asyncio.run(run()) == ([1], []), "the same decoder goes on"
+    shown = enc.stdin.writes[enc.stdin.writes.index(b"LIVE"):]
+    assert b"STANDBY" not in shown, "no standby flash while the call is answered"
 
 
 def test_the_decoder_is_cancelled_once_so_its_cleanup_can_unsubscribe(monkeypatch):
@@ -388,6 +433,7 @@ def test_the_decoder_is_cancelled_once_so_its_cleanup_can_unsubscribe(monkeypatc
 
     monkeypatch.setattr(av_stream, "av_subscribe", av_subscribe)
     monkeypatch.setattr(av_stream, "av_unsubscribe", av_unsubscribe)
+    monkeypatch.setattr(av_passive, "_DEAD_GRACE", 0.1)
     live = [True]
 
     async def run():
@@ -397,7 +443,7 @@ def test_the_decoder_is_cancelled_once_so_its_cleanup_can_unsubscribe(monkeypatc
         async with av_lock:  # busy for a few ticks, as _av_lock can be
             live[0] = False
             n = len(enc.stdin.writes)
-            while len(enc.stdin.writes) < n + 4:
+            while len(enc.stdin.writes) < n + 6:
                 await asyncio.sleep(0.01)
         for _ in range(100):
             if not subscribed:
@@ -409,6 +455,47 @@ def test_the_decoder_is_cancelled_once_so_its_cleanup_can_unsubscribe(monkeypatc
         return left
 
     assert asyncio.run(run()) == set(), "the decoder's queue left the /av fan-out"
+
+
+def test_a_decoder_cancelled_twice_still_leaves_the_fan_out(monkeypatch):
+    # The encoder loop's own cancel lands while the decoder waits for av_stream's
+    # lock to unsubscribe: the queue must still leave /av's fan-out.
+    class _Hung(_Stdout):
+        async def readexactly(self, n):
+            await asyncio.Event().wait()
+
+    _spawner(monkeypatch, _Proc(stdout=_Hung()))
+    subscribed: set = set()
+    av_lock = asyncio.Lock()
+
+    async def av_subscribe():
+        q: asyncio.Queue = asyncio.Queue()
+        subscribed.add(q)
+        return q
+
+    async def av_unsubscribe(q):
+        async with av_lock:
+            subscribed.discard(q)
+
+    monkeypatch.setattr(av_stream, "av_subscribe", av_subscribe)
+    monkeypatch.setattr(av_stream, "av_unsubscribe", av_unsubscribe)
+
+    async def run():
+        task = asyncio.create_task(av_passive._decode(lambda: True, lambda: None))
+        while not subscribed:
+            await asyncio.sleep(0.01)
+        async with av_lock:
+            task.cancel()
+            await asyncio.sleep(0.05)  # now waiting for the lock
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        for _ in range(100):
+            if not subscribed:
+                break
+            await asyncio.sleep(0.01)
+        return set(subscribed)
+
+    assert asyncio.run(run()) == set()
 
 
 def test_a_cancelled_encoder_loop_leaves_the_clients_alone(monkeypatch):
@@ -498,7 +585,7 @@ def test_the_decoder_hands_over_only_the_frames_the_encoder_uses(monkeypatch):
     live = iter([True])
     asyncio.run(av_passive._decode(lambda: next(live, False), lambda: None))
     vf = dec.args[dec.args.index("-vf") + 1]
-    assert vf.endswith(f",fps={av_passive.FPS}")
+    assert vf.startswith(f"fps={av_passive.FPS},")  # dropped before they are scaled
 
 
 def test_a_stuck_decoder_does_not_hang_the_live_view(monkeypatch):

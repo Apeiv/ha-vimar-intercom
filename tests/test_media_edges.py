@@ -160,22 +160,25 @@ def _replay_logs(caplog):
 
 def test_a_sequence_restart_on_the_same_ssrc_keeps_the_video():
     """A panel or relay restarting its sequence lower on the same SSRC: #89 had
-    every packet after it dropped as a replay, the media stopped for minutes."""
+    every packet after it dropped as a replay, the media stopped for minutes.
+    Now the third in a row moves the window there: two packets lost."""
     tx, rx = _srtp_pair()
     vp = _video()
     vp.srtp_rx = rx
     addr = ("198.51.100.7", 5002)
     for seq in list(range(1000, 1010)) + list(range(1, 300)):
         vp.datagram_received(tx.protect(_rtp(P, pt=96, seq=seq)), addr)
-    assert vp.pkt_count == 309 and rx.replayed == 0 and vp._srtp_fail == 0
+    assert vp.pkt_count == 307 and rx.replayed == 2 and vp._srtp_fail == 0
 
 
 def test_a_window_jump_is_logged_once_per_call_with_its_size(caplog, monkeypatch):
     """The cloud ring that sent no media: the next one shows which it was, a lone
-    packet far ahead (info) or numbers going back (warning, the default level)."""
+    packet far ahead (info) or the window moved by a run (warning, the default
+    level). Each once per call and stream."""
     from custom_components.vimar_intercom import srtp
 
-    # the integration's own logger may drop INFO in a full run: use a plain one
+    # once a test has run log_buffer.install(), the package logger has
+    # propagate=False and caplog never sees its records: use a plain logger
     monkeypatch.setattr(srtp, "_LOGGER", logging.getLogger("test_srtp_window"))
     tx, rx = _srtp_pair()
     rx.name = "video"
@@ -183,12 +186,12 @@ def test_a_window_jump_is_logged_once_per_call_with_its_size(caplog, monkeypatch
     vp.srtp_rx = rx
     addr = ("198.51.100.7", 5002)
     with caplog.at_level(logging.INFO, logger="test_srtp_window"):
-        for seq in [1000, 1001, 5000] + list(range(1002, 1400)) + list(range(10, 20)):
+        for seq in [1000, 1001, 5000, *range(1002, 1400), 9000, *range(10, 20), *range(2000, 2010)]:
             vp.datagram_received(tx.protect(_rtp(P, pt=96, seq=seq)), addr)
     logged = [(r.levelno, r.getMessage()) for r in caplog.records if "SRTP video" in r.getMessage()]
     assert [lvl for lvl, _ in logged] == [logging.INFO, logging.WARNING]
-    assert "3999 ahead" in logged[0][1] and "went back 3998" in logged[1][1]
-    assert rx.resyncs == 2
+    assert "3999 ahead" in logged[0][1] and "went back 1387" in logged[1][1]
+    assert rx.resyncs == 2 and rx.replayed == 2
 
 
 def test_a_duplicate_srtp_audio_packet_is_a_replay_not_an_auth_failure(caplog):

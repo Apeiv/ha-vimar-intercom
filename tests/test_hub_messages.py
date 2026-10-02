@@ -205,6 +205,25 @@ def test_a_failing_ws_broadcast_is_logged_not_raised(plain_hub, caplog):
     assert plain_hub.stats["last_register_time"] is not None
 
 
+def test_the_state_broadcast_says_whether_it_rings(plain_hub, monkeypatch):
+    # The same fields as the /audio_ws replies (views._state).
+    sent = []
+
+    async def collect(payload):
+        sent.append(payload)
+
+    plain_hub.set_ws_broadcast(collect)
+    monkeypatch.setattr(sip, "ringing", lambda: True)
+
+    async def run():
+        plain_hub._on_sip_state_change()
+        for _ in range(5):
+            await asyncio.sleep(0)
+
+    asyncio.run(run())
+    assert {"type": "state", "registered": True, "in_call": False, "ringing": True} in sent
+
+
 def test_a_clip_without_video_leaves_the_last_clip_alone(plain_hub):
     plain_hub._clip_done(None)
     assert plain_hub.stats["last_clip"] is None

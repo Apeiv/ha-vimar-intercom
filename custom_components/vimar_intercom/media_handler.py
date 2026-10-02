@@ -152,8 +152,7 @@ def rms(pcm: bytes) -> float:
 # pacchetto: il banco di prova (tests/harness/rig.py) le sostituisce lì.
 
 def _replay_dropped(proto, kind: str) -> None:
-    """An authentic packet the SRTP context dropped as a duplicate: debug on the
-    call's first one. A sequence restart is not a replay (SRTPContext._is_fresh)."""
+    """An authentic packet the SRTP context refused as a replay: debug on the call's first one."""
     if proto.srtp_rx.replayed == 1:
         _LOGGER.debug("SRTP %s: dropped a packet already received (replay)", kind)
 

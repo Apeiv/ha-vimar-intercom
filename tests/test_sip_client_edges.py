@@ -15,6 +15,7 @@ from custom_components.vimar_intercom import const as C
 from custom_components.vimar_intercom import plant_state as S
 from custom_components.vimar_intercom import runtime as R
 from custom_components.vimar_intercom import sip_client as sip
+from custom_components.vimar_intercom import sip_message
 
 # The real one: the `net` fixture replaces it with a no-op for the calls.
 _KEYFRAME = sip.send_keyframe_request
@@ -929,7 +930,7 @@ class _Writer:
 
 def test_the_tls_reader_keeps_alive_and_reconnects_on_every_failure(monkeypatch):
     monkeypatch.setattr(R, "USE_LOCAL_UDP", False)
-    monkeypatch.setattr(sip, "MAX_SIP_BODY", 200)
+    monkeypatch.setattr(sip_message, "MAX_SIP_BODY", 200)
     good, bad = _Writer(), _Writer(fail=True)
     reasons, dispatched = [], []
     ok_msg = b"OPTIONS sip:7001@x SIP/2.0\r\nCall-ID: a\r\nContent-Length: 0\r\n\r\n"

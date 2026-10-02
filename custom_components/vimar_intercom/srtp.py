@@ -10,6 +10,7 @@ import hashlib
 import hmac
 import logging
 import struct
+from typing import NamedTuple
 
 from Crypto.Cipher import AES
 
@@ -71,6 +72,15 @@ def _truncated_hmac(base: hmac.HMAC, data: bytes, length: int) -> bytes:
     return h.digest()[:length]
 
 
+class _Window(NamedTuple):
+    """Replay window (RFC 3711 §3.3.2) of one SSRC."""
+
+    top: int  # highest index accepted
+    seen: int  # bitmap of the REPLAY_WINDOW indices below it, bit n = top - n
+    far: int | None = None  # last packet far from the window
+    run: int = 0  # consecutive far packets ending at it
+
+
 # Supported SDES crypto suites and their SRTP authentication tag length (bytes).
 SUITE_TAG_LEN = {
     "AES_CM_128_HMAC_SHA1_80": 10,
@@ -84,6 +94,11 @@ class SRTPContext:
     AUTH_TAG_LEN = 10  # 80-bit HMAC-SHA1
     #: Received indices remembered per SSRC for replay protection (libsrtp keeps 128).
     REPLAY_WINDOW = 128
+    #: Consecutive authentic packets far from the window that move it there.
+    RESYNC_RUN = 3
+    #: The same, half a wrap or more ahead (~1 s of audio); <= REPLAY_WINDOW, as
+    #: the run that went through is marked in the window.
+    RESYNC_RUN_PAST_HALF_WRAP = 50
 
     def __init__(self, master_key_b64: str, suite: str = "AES_CM_128_HMAC_SHA1_80", name: str = ""):
         """Initialize from base64-encoded inline key (30 bytes = 16 key + 14 salt).
@@ -113,68 +128,73 @@ class SRTPContext:
         # suo ROC e la sua sequenza. Con uno stato unico il primo pacchetto del
         # nuovo flusso poteva ricevere il ROC sbagliato, e da lì in poi ogni
         # pacchetto falliva l'autenticazione (lo stato si aggiorna solo sui buoni).
-        self._streams: dict[int, tuple[int, int]] = {}  # ssrc -> (roc, last_seq)
-        # Replay window (RFC 3711 §3.3.2) per SSRC: highest index accepted and a
-        # bitmap of the REPLAY_WINDOW indices below it (bit n = max - n received).
-        self._rx_window: dict[int, tuple[int, int]] = {}
+        # In ricezione lo stato è il top della replay window, in invio l'ultimo indice.
+        self._tx_index: dict[int, int] = {}
+        self._rx_window: dict[int, _Window] = {}
         self.replayed = 0  # authentic packets dropped as replays
-        # Window restarts from an older index: logged once per context, i.e. per
-        # call and stream, so the next cloud ring shows which hypothesis was right.
-        self.resyncs = 0
+        self.resyncs = 0  # window moved by a run far from it; logged once
         self._far_ahead_logged = False
 
-    def _estimate_index(self, ssrc: int, seq: int) -> tuple[int, int]:
+    @staticmethod
+    def _estimate_index(last_idx: int | None, seq: int) -> tuple[int, int]:
         """(ROC, indice) più vicino all'ultimo indice buono del flusso (RFC 3711 §3.3.1)."""
-        state = self._streams.get(ssrc)
-        if state is None:
+        if last_idx is None:
             return 0, seq
-        roc, last_seq = state
-        last_idx = (roc << 16) | last_seq
+        roc = last_idx >> 16
         _, r = min((abs(((r << 16) | seq) - last_idx), r)
                    for r in (roc, roc + 1, roc - 1) if r >= 0)
         return r, (r << 16) | seq
 
     def _is_fresh(self, ssrc: int, idx: int) -> bool:
-        """False for an index already received inside the window; records it
-        otherwise. Called after authentication, so a forged packet never moves
-        the window.
+        """False for a replay; records the index otherwise. Called after
+        authentication, so a forged packet never moves the window.
 
-        An authentic index older than the window restarts the window there
-        instead of being refused. On the same SSRC, one packet numbered far
-        ahead of the live stream moved the window there and every live packet
-        after it was "too old" (a cloud ring with no preview and no voice), and
-        a sender or relay can restart its numbers lower. The RTP layers above
-        already drop what is really late."""
-        state = self._rx_window.get(ssrc)
-        behind = state[0] - idx if state else 0
-        if state is None or behind >= self.REPLAY_WINDOW:
-            if state:
-                self.resyncs += 1
-                if self.resyncs == 1:
-                    _LOGGER.warning("SRTP %s: packet numbers went back %d, replay window restarted "
-                                    "(the sender restarted its sequence?)", self.name, behind)
-            self._rx_window[ssrc] = (idx, 1)
+        Inside the window: refused if already received. A whole window or more
+        away it stays put: a packet ahead goes through once, one behind is
+        refused, and RESYNC_RUN in a row move the window there (a real jump, or
+        a sender restarting lower, which loses RESYNC_RUN - 1 packets). One stray
+        far ahead on a cloud ring used to move it and stall the live stream."""
+        w = self._rx_window.get(ssrc)
+        if w is None:
+            self._rx_window[ssrc] = _Window(idx, 1)
             return True
-        top, seen = state
-        if behind < 0:
-            if -behind >= self.REPLAY_WINDOW and not self._far_ahead_logged:
-                self._far_ahead_logged = True  # info: a loss burst does this too
-                _LOGGER.info("SRTP %s: a packet arrived %d ahead of the previous highest",
-                             self.name, -behind)
-            seen = 1 if -behind >= self.REPLAY_WINDOW else (
-                ((seen << -behind) | 1) & ((1 << self.REPLAY_WINDOW) - 1))
-            self._rx_window[ssrc] = (idx, seen)
+        behind = w.top - idx
+        if abs(behind) < self.REPLAY_WINDOW:
+            if behind < 0:
+                w = w._replace(top=idx, seen=((w.seen << -behind) | 1) & ((1 << self.REPLAY_WINDOW) - 1))
+            elif w.seen >> behind & 1:
+                return False
+            else:
+                w = w._replace(seen=w.seen | 1 << behind)
+            self._rx_window[ssrc] = w._replace(run=0)  # the run is broken
             return True
-        if seen >> behind & 1:
-            return False
-        self._rx_window[ssrc] = (top, seen | 1 << behind)
+        # ponytail: only the last far packet is remembered per SSRC, so two
+        # strays ahead sent in turn go through every time. A small set of
+        # recent far indices if a resync log ever shows that.
+        if idx == w.far:
+            return False  # the same far packet again
+        # ponytail: RESYNC_RUN captured consecutive packets resync backwards,
+        # indistinguishable from a sender restarting with the same key. Make it
+        # forward-only if the resync warning only ever shows jumps ahead.
+        run = w.run + 1 if w.far is not None and idx == w.far + 1 else 1
+        # Half a wrap or more ahead only authenticates at ROC 0, where the
+        # estimate cannot try the ROC below. Once the window (and so the
+        # estimate) is there, the stream behind it no longer would: ask for a
+        # longer run: a real jump or a long loss goes on.
+        need = self.RESYNC_RUN if behind > -0x8000 else self.RESYNC_RUN_PAST_HALF_WRAP
+        if run < need:
+            self._rx_window[ssrc] = w._replace(far=idx, run=run)
+            if behind < 0 and not self._far_ahead_logged:
+                self._far_ahead_logged = True
+                _LOGGER.info("SRTP %s: let through one packet %d ahead of the stream", self.name, -behind)
+            return behind < 0
+        self.resyncs += 1
+        if self.resyncs == 1:
+            _LOGGER.warning("SRTP %s: packet numbers %s %d, replay window moved there after %d in a row",
+                            self.name, "jumped ahead" if behind < 0 else "went back", abs(behind), run)
+        # ahead, the run went through; behind, only this one
+        self._rx_window[ssrc] = _Window(idx, (1 << run) - 1 if behind < 0 else 1)
         return True
-
-    def _update_roc(self, ssrc: int, seq: int, roc: int):
-        """Dopo un pacchetto buono: avanza lo stato del flusso se l'indice è nuovo."""
-        state = self._streams.get(ssrc)
-        if state is None or (roc << 16) | seq > (state[0] << 16) | state[1]:
-            self._streams[ssrc] = (roc, seq)
 
     def _compute_iv(self, ssrc: int, packet_index: int) -> bytes:
         """Compute IV for AES-CM encryption (RFC 3711 §4.1)."""
@@ -207,7 +227,8 @@ class SRTPContext:
         seq = struct.unpack_from("!H", authenticated_portion, 2)[0]
         ssrc = struct.unpack_from("!I", authenticated_portion, 8)[0]
 
-        est_roc, idx = self._estimate_index(ssrc, seq)
+        w = self._rx_window.get(ssrc)
+        est_roc, idx = self._estimate_index(w.top if w else None, seq)
 
         # Verify auth tag with estimated ROC
         expected_tag = self._compute_auth_tag(authenticated_portion, est_roc)
@@ -218,9 +239,6 @@ class SRTPContext:
         if not self._is_fresh(ssrc, idx):
             self.replayed += 1
             return None
-
-        # Update ROC state
-        self._update_roc(ssrc, seq, est_roc)
 
         # Decrypt payload — single native AES-CTR call
         header = authenticated_portion[:hdr_len]
@@ -243,8 +261,10 @@ class SRTPContext:
         seq = struct.unpack_from("!H", rtp_packet, 2)[0]
         ssrc = struct.unpack_from("!I", rtp_packet, 8)[0]
 
-        est_roc, idx = self._estimate_index(ssrc, seq)
-        self._update_roc(ssrc, seq, est_roc)
+        last = self._tx_index.get(ssrc)
+        est_roc, idx = self._estimate_index(last, seq)
+        if last is None or idx > last:
+            self._tx_index[ssrc] = idx
 
         # Encrypt payload — single native AES-CTR call
         header = rtp_packet[:hdr_len]
