@@ -33,10 +33,9 @@ RTCP_SR_PROTECTED = "80c80006112233443db58e463007a6ff3e9bd6f1b1cd9e9b488a9e4b800
 
 def test_we_decrypt_what_libsrtp_encrypted_across_the_wrap():
     rx = srtp.SRTPContext(KEY_B64)
+    # the tag covers the rollover counter: 0 and 1 pass only if it moved on to 1
     for plain, protected in PACKETS:
         assert rx.unprotect(bytes.fromhex(protected)) == bytes.fromhex(plain)
-    roc, _last_seq = rx._streams[0x11223344]
-    assert roc == 1, "the rollover counter moved on at the wrap"
 
 
 def test_we_encrypt_exactly_what_libsrtp_does_across_the_wrap():

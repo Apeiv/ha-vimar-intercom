@@ -93,10 +93,11 @@ Italian and are kept as they were written.
   User-Agent is cut at 256 characters before it is matched. Real headers match as before.
 - **SRTP replay window** ([#46](../../issues/46)): the receiving side of the call media had no replay protection, so one
   captured voice or video packet, sent again, was accepted every time. An index already received among the
-  last 128 per stream is now dropped after authentication. One older than that restarts the window instead of
-  being dropped: on a cloud ring a single packet numbered far ahead on the same SSRC otherwise had the rest of
-  the stream refused, so no ring photo, no preview and no voice. Packets that merely arrive out of order are
-  still accepted.
+  last 128 per stream is now dropped after authentication; packets merely out of order still pass. A lone
+  packet far from the window never moves it, and passes once if ahead (one stray on a cloud ring stalled the
+  stream). Three in a row move it (50 past half a wrap): a sender restarting lower loses 2. Known gaps: 3
+  captured old packets in a row move it back too, and far-ahead ones sent in turn, not in a row, pass every
+  time.
 
 ## [1.0.18] - 2026-10-02
 
