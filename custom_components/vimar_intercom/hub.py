@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from . import away_tts, frame_grabber, log_redact, rest_client, ring_log, validate, webhook
 from . import const as C
 from . import media_handler as media
+from . import plant_state as S
 from . import runtime as R
 from . import sip_client as sip
 
@@ -462,7 +463,7 @@ class VimarIntercomHub:
     @property
     def detected_model(self) -> str:
         """Modello rilevato via SIP (stringa vuota se ancora sconosciuto)."""
-        return R.DETECTED_MODEL
+        return S.DETECTED_MODEL
 
     def register_model_callback(self, callback: Callable) -> None:
         """Callback(model, fw, user_agent, priority) sul rilevamento modello."""
@@ -480,7 +481,7 @@ class VimarIntercomHub:
         """Interroga gli interni con un OPTIONS finché qualcuno si identifica."""
         await asyncio.sleep(3)
         for target in MODEL_PROBE_TARGETS:
-            if R.DETECTED_MODEL:
+            if S.DETECTED_MODEL:
                 break
             uri = sip_uri(target)
             try:
@@ -489,8 +490,8 @@ class VimarIntercomHub:
                 _LOGGER.debug("Model probe %s fallito: %s", target, e)
             await asyncio.sleep(0.5)
 
-        if R.DETECTED_MODEL:
-            _LOGGER.info("Modello citofono: %s", R.DETECTED_MODEL)
+        if S.DETECTED_MODEL:
+            _LOGGER.info("Modello citofono: %s", S.DETECTED_MODEL)
         else:
             _LOGGER.info(
                 "Modello non rilevato — nessun peer SIP si è identificato. "
@@ -1595,9 +1596,9 @@ class VimarIntercomHub:
             st["apt_gid"] = pairs["GID"]
         if "media_enc" in pairs:
             st["media_enc"] = pairs["media_enc"]
-            if R.set_plant_media_enc(pairs["media_enc"]):
+            if S.set_plant_media_enc(pairs["media_enc"], R.MEDIA_ENC_OPTION):
                 _LOGGER.info("Cifratura del media dall'impianto: media_enc=%s → SRTP %s",
-                             pairs["media_enc"], "attivo" if R.MEDIA_ENC else "spento")
+                             pairs["media_enc"], "attivo" if S.MEDIA_ENC else "spento")
         # token / altri param restano in init_status per usi futuri (phonebook cloud)
         if "rubrica_ver" in pairs:
             self._update_rubrica_ver(pairs["rubrica_ver"])

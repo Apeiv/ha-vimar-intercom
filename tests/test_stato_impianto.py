@@ -13,6 +13,7 @@ import types
 
 import pytest
 
+from custom_components.vimar_intercom import plant_state as S
 from custom_components.vimar_intercom import runtime as R
 
 LUNGA = "GET_INIT_STATUS_REPLY;" + json.dumps([
@@ -34,9 +35,11 @@ CORTA = ('GET_INIT_STATUS_REPLY;[{"PARAM":"rubrica_ver","VALUE":"abc"},{"PARAM":
 
 @pytest.fixture(autouse=True)
 def _runtime_pulito(monkeypatch):
-    for k in ("MEDIA_ENC", "MEDIA_ENC_OPTION", "MEDIA_ENC_PLANT", "PICG_TARGET"):
+    for k in ("MEDIA_ENC_OPTION", "PICG_TARGET"):
         monkeypatch.setattr(R, k, getattr(R, k))
-    R.MEDIA_ENC_OPTION, R.MEDIA_ENC_PLANT, R.MEDIA_ENC = "auto", None, False
+    for k in ("MEDIA_ENC", "MEDIA_ENC_PLANT"):
+        monkeypatch.setattr(S, k, getattr(S, k))
+    R.MEDIA_ENC_OPTION, S.MEDIA_ENC_PLANT, S.MEDIA_ENC = "auto", None, False
     R.PICG_TARGET = "55001"
 
 
@@ -51,18 +54,19 @@ def test_opzione_media_enc_dalle_versioni_precedenti(salvato, modo):
 
 def test_configure_ricalcola_e_dimentica_l_impianto(monkeypatch):
     # configure() riscrive tutto il modulo: si rimette com'era alla fine del test.
-    for k, v in list(vars(R).items()):
-        if k.isupper():
-            monkeypatch.setattr(R, k, v)
+    for mod in (R, S):
+        for k, v in list(vars(mod).items()):
+            if k.isupper():
+                monkeypatch.setattr(mod, k, v)
     R.configure({"media_enc": True})
-    assert (R.MEDIA_ENC_OPTION, R.MEDIA_ENC) == ("on", True)
+    assert (R.MEDIA_ENC_OPTION, S.MEDIA_ENC) == ("on", True)
     R.configure({"media_enc": False})
-    assert (R.MEDIA_ENC_OPTION, R.MEDIA_ENC, R.MEDIA_ENC_PLANT) == ("auto", False, None)
+    assert (R.MEDIA_ENC_OPTION, S.MEDIA_ENC, S.MEDIA_ENC_PLANT) == ("auto", False, None)
 
 
 def test_risposta_lunga_accende_srtp_in_automatico(hub):
     hub._handle_incoming_message(LUNGA)
-    assert R.MEDIA_ENC is True
+    assert S.MEDIA_ENC is True
     assert hub.stats["media_enc"] == "srtp"
 
 
@@ -70,12 +74,12 @@ def test_risposta_lunga_accende_srtp_in_automatico(hub):
 def test_l_opzione_forzata_vince_sull_impianto(hub, opzione, atteso):
     R.MEDIA_ENC_OPTION = opzione
     hub._handle_incoming_message(LUNGA)
-    assert R.MEDIA_ENC is atteso
+    assert S.MEDIA_ENC is atteso
 
 
 def test_risposta_corta_non_tocca_la_cifratura_ne_i_parametri(hub):
     hub._handle_incoming_message(CORTA)
-    assert R.MEDIA_ENC is False and R.MEDIA_ENC_PLANT is None
+    assert S.MEDIA_ENC is False and S.MEDIA_ENC_PLANT is None
     assert hub.stats["voicemail"] is True and hub.stats["dnd"] is False
     for k in ("vm_timeout", "vm_timeout_values", "apt_names", "apt_gid", "media_enc"):
         assert hub.stats.get(k) is None, k

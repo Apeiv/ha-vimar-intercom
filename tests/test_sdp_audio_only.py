@@ -43,7 +43,7 @@ def test_an_audio_only_offer_gets_an_audio_only_answer():
 
 
 def test_an_audio_only_srtp_offer_adds_no_video(monkeypatch):
-    monkeypatch.setattr(sip.R, "MEDIA_ENC", True)
+    monkeypatch.setattr(sip.S, "MEDIA_ENC", True)
     offer = AUDIO_ONLY_OFFER.replace("RTP/AVP", "RTP/SAVP") + (
         "a=crypto:1 AES_CM_128_HMAC_SHA1_80 inline:WVNfX19zZW1jdGwgKCkgewkyMjA7fQp9CnVubGVz\r\n")
     answer = sip.build_sdp(sip.parse_sdp(offer))

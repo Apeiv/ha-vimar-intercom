@@ -14,6 +14,7 @@ import pytest
 hub_mod = pytest.importorskip("custom_components.vimar_intercom.hub")
 sip = hub_mod.sip
 R = hub_mod.R
+S = hub_mod.S
 C = hub_mod.C
 
 
@@ -60,7 +61,7 @@ def test_voicemail_dnd_and_model_read_the_announced_state(plain_hub, monkeypatch
     assert plain_hub.voicemail is None and plain_hub.dnd is None
     plain_hub.stats.update(voicemail=True, dnd=False)
     assert plain_hub.voicemail is True and plain_hub.dnd is False
-    monkeypatch.setattr(R, "DETECTED_MODEL", "Elvox Tab 7S")
+    monkeypatch.setattr(S, "DETECTED_MODEL", "Elvox Tab 7S")
     assert plain_hub.detected_model == "Elvox Tab 7S"
 
 

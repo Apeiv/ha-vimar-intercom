@@ -41,11 +41,12 @@ All in `custom_components/vimar_intercom/`.
   `options_flow.py`: the options flow (network, settings, HomeKit, /av key, phonebook
   fetch/import from intercom or cloud).
 - `runtime.py`: module-wide settings (`R.*`) filled by `configure(entry.data)` at setup;
+  `plant_state.py` holds what the plant tells us at runtime (detected model, media encryption);
   `const.py` holds only static, non-plant constants.
 - `profiles.py`: per-plant-family defaults (transport, media encryption). A starting point;
   the setup probe wins.
 - Pure modules, no HA/aiohttp imports (list `PURE` in `tests/test_smoke.py`): `const`,
-  `runtime`, `qr_decoder`, `discovery`, `rest_client`, `cloud_phonebook`, `rubrica_import`,
+  `runtime`, `plant_state`, `qr_decoder`, `discovery`, `rest_client`, `cloud_phonebook`, `rubrica_import`,
   `validate`, `log_redact`, `model_detect`, `srtp`. Keep them that way.
 - Entity platforms: `camera`, `event`, `lock`, `button`, `switch`, `sensor`, `binary_sensor`,
   `select`, `text`. Away message: `away_config.py`, `away_tts.py`. Ring webhook: `webhook.py`.

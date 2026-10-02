@@ -12,6 +12,7 @@ import types
 import pytest
 
 from custom_components.vimar_intercom import const as C
+from custom_components.vimar_intercom import plant_state as S
 from custom_components.vimar_intercom import runtime as R
 from custom_components.vimar_intercom import sip_client as sip
 
@@ -196,18 +197,18 @@ def test_a_broken_binding_list_does_not_break_the_registration(monkeypatch, capl
 
 def test_the_model_is_learned_once_and_a_less_specific_match_does_not_replace_it(monkeypatch, caplog):
     seen = []
-    monkeypatch.setattr(R, "DETECTED_MODEL", "")
-    monkeypatch.setattr(R, "DETECTED_FW", "")
-    monkeypatch.setattr(R, "DETECTED_PRIORITY", 999)
+    monkeypatch.setattr(S, "DETECTED_MODEL", "")
+    monkeypatch.setattr(S, "DETECTED_FW", "")
+    monkeypatch.setattr(S, "DETECTED_PRIORITY", 999)
     monkeypatch.setattr(sip, "_model_callback", None)
     sip._apply_ua("Elvox Tab IP")                # no callback yet: only remembered
-    assert R.DETECTED_MODEL == "Elvox Tab IP"
+    assert S.DETECTED_MODEL == "Elvox Tab IP"
     monkeypatch.setattr(sip, "_model_callback", lambda *a: seen.append(a))
     sip._apply_ua("Elvox Tab 7S/2.1.0")
     sip._apply_ua("Elvox Tab 7S/2.1.0")          # same model and firmware: nothing
     sip._apply_ua("Generic Tab")                 # less specific: ignored
     assert [s[0] for s in seen] == ["Elvox Tab 7S"]
-    assert R.DETECTED_FW == "2.1.0"
+    assert S.DETECTED_FW == "2.1.0"
 
     def _boom(*a):
         raise RuntimeError("registry gone")
@@ -215,7 +216,7 @@ def test_the_model_is_learned_once_and_a_less_specific_match_does_not_replace_it
     monkeypatch.setattr(sip, "_model_callback", _boom)
     with caplog.at_level(logging.ERROR, logger=sip.__name__):
         sip._apply_ua("Elvox Tab 7S Plus/3.0")
-    assert R.DETECTED_MODEL == "Elvox Tab 7S Plus"
+    assert S.DETECTED_MODEL == "Elvox Tab 7S Plus"
     assert "Model callback error" in caplog.text
 
 

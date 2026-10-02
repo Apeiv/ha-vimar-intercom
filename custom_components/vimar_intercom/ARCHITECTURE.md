@@ -22,6 +22,7 @@ vimar_intercom/
 ├── sip_client.py       Stack SIP asyncio: REGISTER/INVITE/MESSAGE/OPTIONS/BYE/INFO, digest, UDP+TLS, parsing (~1300 righe)
 ├── hub.py              VimarIntercomHub: orchestrazione, stats, callback entità, async_door/async_send_command, keepalive
 ├── runtime.py          R.*: credenziali/impostazioni dinamiche dalla config entry (SIP_USER, domain, ACTUATORS…)
+├── plant_state.py      Stato che arriva dall'impianto a runtime: modello rilevato, cifratura del media effettiva
 ├── config_flow.py      Config flow (QR o manuale)
 ├── options_flow.py     Options flow (rete SIP + attuatori dinamici)
 ├── qr_decoder.py       Decodifica QR di abbinamento Vimar (AES)

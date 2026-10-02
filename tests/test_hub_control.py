@@ -15,6 +15,7 @@ hub_mod = pytest.importorskip("custom_components.vimar_intercom.hub")
 sip = hub_mod.sip
 media = hub_mod.media
 R = hub_mod.R
+S = hub_mod.S
 
 
 @pytest.fixture
@@ -185,7 +186,7 @@ def test_a_startup_exception_is_logged(hub, monkeypatch, no_sleep, caplog):
 
 
 def test_the_model_probe_stops_at_the_first_panel_that_identifies(hub, monkeypatch, no_sleep):
-    monkeypatch.setattr(R, "DETECTED_MODEL", "")
+    monkeypatch.setattr(S, "DETECTED_MODEL", "")
     monkeypatch.setattr(R, "SIP_DOMAIN", "plant.example")
     asked = []
 
@@ -193,7 +194,7 @@ def test_the_model_probe_stops_at_the_first_panel_that_identifies(hub, monkeypat
         asked.append(target)
         if len(asked) == 1:
             raise OSError("no route")
-        R.DETECTED_MODEL = "Elvox Tab 7S"
+        S.DETECTED_MODEL = "Elvox Tab 7S"
         return True, "200 OK"
 
     monkeypatch.setattr(sip, "do_options", do_options)
@@ -203,7 +204,7 @@ def test_the_model_probe_stops_at_the_first_panel_that_identifies(hub, monkeypat
 
 def test_the_model_probe_asks_every_panel_when_none_identifies(hub, monkeypatch, no_sleep, caplog):
     caplog.set_level(logging.INFO, logger=hub_mod.__name__)
-    monkeypatch.setattr(R, "DETECTED_MODEL", "")
+    monkeypatch.setattr(S, "DETECTED_MODEL", "")
     monkeypatch.setattr(sip, "_seen_uas", set())
     asked = []
 
