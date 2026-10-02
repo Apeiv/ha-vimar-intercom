@@ -22,7 +22,7 @@ def _stub(name: str, **attrs) -> None:
 
 
 @pytest.fixture(scope="module")
-def cf():
+def of():
     # Moduli di HA che config_flow importa e che conftest.py non fornisce.
     _stub("homeassistant.components.file_upload", process_uploaded_file=None)
     _stub("homeassistant.data_entry_flow", FlowResult=dict)
@@ -37,7 +37,7 @@ def cf():
     ce = sys.modules["homeassistant.config_entries"]
     if getattr(sys.modules["homeassistant"], "_is_stub", False):
         ce.ConfigFlow = _ConfigFlow
-    return pytest.importorskip("custom_components.vimar_intercom.config_flow")
+    return pytest.importorskip("custom_components.vimar_intercom.options_flow")
 
 
 class _Entry:
@@ -46,8 +46,8 @@ class _Entry:
         self.options = options
 
 
-def _flow(cf, options: dict, picg_from_rest: str | None = None):
-    flow = cf.OptionsFlowHandler(_Entry(options))
+def _flow(of, options: dict, picg_from_rest: str | None = None):
+    flow = of.OptionsFlowHandler(_Entry(options))
     flow._imported = {
         "actuators": [{"name": "Serratura", "msg": "OPEN", "target": "55001", "icon": "door"}],
         "sga": "55001",
@@ -61,44 +61,44 @@ def _flow(cf, options: dict, picg_from_rest: str | None = None):
     return flow
 
 
-def _confirm(cf, options, picg_from_rest=None):
-    form = asyncio.run(_flow(cf, options, picg_from_rest).async_step_import_confirm(None))
-    saved = asyncio.run(_flow(cf, options, picg_from_rest).async_step_import_confirm({}))
+def _confirm(of, options, picg_from_rest=None):
+    form = asyncio.run(_flow(of, options, picg_from_rest).async_step_import_confirm(None))
+    saved = asyncio.run(_flow(of, options, picg_from_rest).async_step_import_confirm({}))
     return form["description_placeholders"]["picg_info"], saved["data"]["picg_target"]
 
 
-def test_da_file_il_picg_configurato_a_mano_resta(cf):
-    info, saved = _confirm(cf, {"sga_target": "55001", "picg_target": "60001"})
+def test_da_file_il_picg_configurato_a_mano_resta(of):
+    info, saved = _confirm(of, {"sga_target": "55001", "picg_target": "60001"})
     assert saved == "60001"
     assert "resta" in info and "60001" in info
 
 
-def test_da_file_senza_picg_configurato_prende_l_sga(cf):
+def test_da_file_senza_picg_configurato_prende_l_sga(of):
     """Comportamento storico dell'importer, che resta valido quando non c'è altro."""
-    info, saved = _confirm(cf, {"sga_target": "55001"})
+    info, saved = _confirm(of, {"sga_target": "55001"})
     assert saved == "55001"
     assert "uguale all'SGA" in info
 
 
-def test_dal_citofono_vince_il_picg_dichiarato(cf):
-    info, saved = _confirm(cf, {"sga_target": "55001", "picg_target": "60001"}, picg_from_rest="55009")
+def test_dal_citofono_vince_il_picg_dichiarato(of):
+    info, saved = _confirm(of, {"sga_target": "55001", "picg_target": "60001"}, picg_from_rest="55009")
     assert saved == "55009"
     assert "dichiarato dal citofono" in info
 
 
-def test_il_riepilogo_e_il_salvataggio_non_divergono_mai(cf):
+def test_il_riepilogo_e_il_salvataggio_non_divergono_mai(of):
     """Qualunque combinazione: il valore nel riepilogo è quello salvato."""
     for options in ({}, {"picg_target": "60001"}, {"sga_target": "55001"}):
         for rest in (None, "55001", "55009"):
-            info, saved = _confirm(cf, options, rest)
+            info, saved = _confirm(of, options, rest)
             assert saved in info, (options, rest, info, saved)
 
 
 # ─── camera_target dall'import rubrica — issue #3 ────────────────────────────
 
-def _confirm_camera(cf, options, camera):
+def _confirm_camera(of, options, camera):
     def mk():
-        f = _flow(cf, options)
+        f = _flow(of, options)
         f._imported = {**f._imported, "camera": camera}
         return f
     form = asyncio.run(mk().async_step_import_confirm(None))
@@ -106,21 +106,21 @@ def _confirm_camera(cf, options, camera):
     return form["description_placeholders"]["camera_info"], saved["data"]
 
 
-def test_import_imposta_la_targa_video_della_rubrica(cf):
-    info, data = _confirm_camera(cf, {}, "55001")
+def test_import_imposta_la_targa_video_della_rubrica(of):
+    info, data = _confirm_camera(of, {}, "55001")
     assert data["camera_target"] == "55001"
     assert "55001" in info
 
 
-def test_import_senza_pe_lascia_la_targa_configurata(cf):
-    info, data = _confirm_camera(cf, {"camera_target": "55100"}, None)
+def test_import_senza_pe_lascia_la_targa_configurata(of):
+    info, data = _confirm_camera(of, {"camera_target": "55100"}, None)
     assert data["camera_target"] == "55100"
     assert "resta" in info
 
 
-def test_import_non_tocca_il_pannello_interno(cf):
+def test_import_non_tocca_il_pannello_interno(of):
     """La rubrica non dice quale sia: il valore a mano deve sopravvivere."""
-    _, data = _confirm_camera(cf, {"internal_panel_target": "60001"}, "55001")
+    _, data = _confirm_camera(of, {"internal_panel_target": "60001"}, "55001")
     assert data["internal_panel_target"] == "60001"
 
 
@@ -131,14 +131,14 @@ FOREIGN = {"homekit_accessory": True, "homekit_video_smooth": False,
            "camera_target": "55001", "something_new": 1}
 
 
-def _save(cf, step, user_input, options):
-    flow = _flow(cf, dict(options))
+def _save(of, step, user_input, options):
+    flow = _flow(of, dict(options))
     return asyncio.run(getattr(flow, step)(user_input))
 
 
-def test_the_homekit_page_keeps_the_network_settings(cf):
+def test_the_homekit_page_keeps_the_network_settings(of):
     options = {**FOREIGN, "local_proxy": "192.0.2.1", "sga_target": "61000"}
-    out = _save(cf, "async_step_homekit",
+    out = _save(of, "async_step_homekit",
                 {"homekit_accessory": False, "homekit_video_smooth": True,
                  "homekit_answer": "talk"}, options)
     assert out["type"] == "create_entry"
@@ -149,10 +149,10 @@ def test_the_homekit_page_keeps_the_network_settings(cf):
     assert out["data"]["homekit_ring_button"] is False, "off unless ticked"
 
 
-def test_the_settings_page_keeps_homekit_and_unknown_keys(cf):
+def test_the_settings_page_keeps_homekit_and_unknown_keys(of):
     """Saving the network page used to drop the HomeKit options: HomeKit
     switched itself off after an unrelated change."""
-    out = _save(cf, "async_step_settings", {
+    out = _save(of, "async_step_settings", {
         "local_proxy": "192.0.2.1", "use_local_udp": False, "local_udp_port": 5060,
         "media_enc": False, "actuators": "", "sga_target": "61000",
         "picg_target": "61000", "camera_target": "55001", "door_target": "55001",
@@ -172,7 +172,7 @@ class _Hass:
         self.config = type("C", (), {"language": language})()
 
 
-def _homekit_form(cf, monkeypatch, data, language="en"):
+def _homekit_form(of, monkeypatch, data, language="en"):
     signed = []
 
     def sign(_hass, path, expiration):
@@ -181,29 +181,29 @@ def _homekit_form(cf, monkeypatch, data, language="en"):
 
     monkeypatch.setitem(sys.modules, "homeassistant.components.http.auth",
                         types.SimpleNamespace(async_sign_path=sign))
-    flow = _flow(cf, {"homekit_accessory": True})
+    flow = _flow(of, {"homekit_accessory": True})
     flow._entry.entry_id = "e1"
     flow.hass = _Hass(data, language)
     form = asyncio.run(flow.async_step_homekit(None))
     return form["description_placeholders"]["pairing"], signed
 
 
-def test_the_homekit_page_shows_the_code_and_a_signed_qr(cf, monkeypatch):
+def test_the_homekit_page_shows_the_code_and_a_signed_qr(of, monkeypatch):
     """The persistent notification is seen by every user; the options page
     only by administrators. The QR view needs an authenticated admin, so the
     image goes through a signed path."""
-    data = {cf.HOMEKIT_DATA: {"pairing": {"e1": {"pin": "123-45-678", "token": "tok",
+    data = {of.HOMEKIT_DATA: {"pairing": {"e1": {"pin": "123-45-678", "token": "tok",
                                                   "svg": b"<svg/>"}}}}
-    text, signed = _homekit_form(cf, monkeypatch, data)
+    text, signed = _homekit_form(of, monkeypatch, data)
     assert "123-45-678" in text
-    assert f"![QR]({cf.HOMEKIT_QR_URL}?t=tok&authSig=SIGNED)" in text
-    assert signed and signed[0][0] == f"{cf.HOMEKIT_QR_URL}?t=tok"
+    assert f"![QR]({of.HOMEKIT_QR_URL}?t=tok&authSig=SIGNED)" in text
+    assert signed and signed[0][0] == f"{of.HOMEKIT_QR_URL}?t=tok"
 
 
-def test_the_homekit_page_shows_nothing_once_paired(cf, monkeypatch):
-    text, signed = _homekit_form(cf, monkeypatch, {cf.HOMEKIT_DATA: {"pairing": {}}})
+def test_the_homekit_page_shows_nothing_once_paired(of, monkeypatch):
+    text, signed = _homekit_form(of, monkeypatch, {of.HOMEKIT_DATA: {"pairing": {}}})
     assert text == "" and signed == []
-    text, _ = _homekit_form(cf, monkeypatch, {})
+    text, _ = _homekit_form(of, monkeypatch, {})
     assert text == ""
 
 
