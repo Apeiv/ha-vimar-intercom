@@ -109,15 +109,34 @@ def test_nuovo_ssrc_con_sequenza_lontana_si_autentica():
 
 
 def test_a_captured_packet_sent_again_is_dropped():
-    """RFC 3711 §3.3.2: the same index twice, or one older than the window, is
-    refused, so one captured voice or video packet cannot be replayed."""
+    """RFC 3711 §3.3.2: the same index twice inside the window is refused, so a
+    captured voice or video packet cannot be replayed."""
     tx, rx = _ctx(), _ctx()
     first = tx.protect(_rtp(1))
     assert rx.unprotect(first) is not None
     assert rx.unprotect(first) is None
     for seq in range(2, 200):
         assert rx.unprotect(tx.protect(_rtp(seq))) is not None
-    assert rx.unprotect(first) is None  # now also older than the 128-packet window
+    again = tx.protect(_rtp(150))
+    assert rx.unprotect(again) is None
+
+
+def test_the_stream_goes_on_after_a_packet_far_ahead_or_a_jump_back():
+    """Cloud ring on a 40515 (2 Oct): one authentic packet numbered far ahead on
+    the same SSRC moved the window there, and the live stream after it was
+    refused as older than the window: no preview, no photo, no voice. The same
+    for a panel or relay that restarts its numbers lower on the same SSRC. An
+    index older than the window restarts the window instead."""
+    tx, rx = _ctx(), _ctx()
+    for seq in range(1000, 1010):
+        assert rx.unprotect(tx.protect(_rtp(seq))) is not None
+    assert rx.unprotect(tx.protect(_rtp(21000))) is not None
+    for seq in range(1010, 1300):
+        assert rx.unprotect(tx.protect(_rtp(seq))) is not None, seq
+    for seq in range(5, 300):  # numbers restarted lower, same SSRC
+        assert rx.unprotect(tx.protect(_rtp(seq))) is not None, seq
+    dup = tx.protect(_rtp(300))
+    assert rx.unprotect(dup) is not None and rx.unprotect(dup) is None, "still refuses a replay"
 
 
 def test_late_packets_inside_the_window_are_still_accepted():

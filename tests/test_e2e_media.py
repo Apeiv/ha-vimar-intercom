@@ -45,6 +45,26 @@ def test_cloud_srtp_rollover_e_foto_decodificabili(monkeypatch):
     run(s())
 
 
+def test_cloud_srtp_ring_preview_survives_a_packet_far_ahead(monkeypatch):
+    """Real ring on a cloud TLS+SRTP 40515 (2 Oct): the preview stopped after the
+    first packets, so no ring photo, a black card and no voice. One authentic
+    packet numbered far ahead on the same SSRC moved the replay window there,
+    and every packet of the live stream after it was refused as too old."""
+    from harness.media import PanelMedia
+
+    async def s():
+        async with Rig(monkeypatch, "tls", real_av=True, srtp=True) as rig:
+            await rig.register()
+            rig.ring()
+            r183 = await rig.peer.wait_for(is_(code=183))
+            rig.panel_media = PanelMedia(rig.peer.key, 1000, rig.peer.pt, stray=20000)
+            rig.start_media(r183.body)
+            jpeg = await frame_grabber.wait_frame(8)
+            assert jpeg and jpeg[:2] == b"\xff\xd8", "no ring photo: the preview stopped"
+            assert media.video_proto._srtp_fail == 0
+    run(s())
+
+
 def test_anteprima_poi_risposta_senza_riavviare_ffmpeg(monkeypatch):
     """Squillo con anteprima: la targa offre lei (PT 99, non il 96 dell'SDP di ffmpeg).
     /av mostra l'anteprima, si risponde: stesso ffmpeg, video che continua."""

@@ -158,32 +158,16 @@ def _replay_logs(caplog):
     return sorted({(r.levelno, r.getMessage()) for r in caplog.records if "replay" in r.getMessage()})
 
 
-def test_a_sequence_restart_on_the_same_ssrc_is_logged_not_silent(caplog):
-    """#89 follow-up: a panel restarting its sequence lower on the same SSRC has
-    every packet dropped as a replay. Debug on the first, then one warning per
-    REPLAY_WARN_RUN in a row, and a good packet ends the run."""
+def test_a_sequence_restart_on_the_same_ssrc_keeps_the_video():
+    """A panel or relay restarting its sequence lower on the same SSRC: #89 had
+    every packet after it dropped as a replay, the media stopped for minutes."""
     tx, rx = _srtp_pair()
     vp = _video()
     vp.srtp_rx = rx
     addr = ("198.51.100.7", 5002)
-    for seq in range(1000, 1010):
+    for seq in list(range(1000, 1010)) + list(range(1, 300)):
         vp.datagram_received(tx.protect(_rtp(P, pt=96, seq=seq)), addr)
-    restarted = [tx.protect(_rtp(P, pt=96, seq=seq)) for seq in range(1, 2 * mh.REPLAY_WARN_RUN + 1)]
-    with caplog.at_level(logging.DEBUG, logger=mh.__name__):
-        for packet in restarted[:mh.REPLAY_WARN_RUN - 1]:
-            vp.datagram_received(packet, addr)
-        assert _replay_logs(caplog) == [(logging.DEBUG, "SRTP video: dropped a packet already received (replay)")]
-        vp.datagram_received(restarted[mh.REPLAY_WARN_RUN - 1], addr)
-        warned = [m for lvl, m in _replay_logs(caplog) if lvl == logging.WARNING]
-        assert warned == [f"SRTP video: the last {mh.REPLAY_WARN_RUN} packets were all dropped as replays "
-                          f"({mh.REPLAY_WARN_RUN} this call): did the panel restart its sequence on the same SSRC?"]
-        vp.datagram_received(tx.protect(_rtp(P, pt=96, seq=1010)), addr)  # back in sequence
-        for packet in restarted[mh.REPLAY_WARN_RUN:2 * mh.REPLAY_WARN_RUN - 1]:
-            vp.datagram_received(packet, addr)
-    assert vp._replay_run == mh.REPLAY_WARN_RUN - 1, "the good packet restarted the count"
-    warned = [m for lvl, m in _replay_logs(caplog) if lvl == logging.WARNING]
-    assert len(warned) == 1, "no second warning: the run was cut short before 250"
-    assert rx.replayed == 2 * mh.REPLAY_WARN_RUN - 1 and vp._srtp_fail == 0
+    assert vp.pkt_count == 309 and rx.replayed == 0 and vp._srtp_fail == 0
 
 
 def test_a_duplicate_srtp_audio_packet_is_a_replay_not_an_auth_failure(caplog):
@@ -195,7 +179,7 @@ def test_a_duplicate_srtp_audio_packet_is_a_replay_not_an_auth_failure(caplog):
         ap.datagram_received(packet, ("198.51.100.7", 5000))
         ap.pkt_count = 0  # the auth warning fires only before the first packet
         ap.datagram_received(packet, ("198.51.100.7", 5000))
-    assert rx.replayed == 1 and ap._replay_run == 1
+    assert rx.replayed == 1
     assert not [r for r in caplog.records if "auth failed" in r.getMessage()]
     assert _replay_logs(caplog) == [(logging.DEBUG, "SRTP audio: dropped a packet already received (replay)")]
 

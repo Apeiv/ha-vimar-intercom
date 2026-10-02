@@ -51,8 +51,12 @@ class PanelMedia:
     """RTP della targa: video H.264 (FU-A oltre 1100 B) + PCMU a 15 fps, opzionalmente
     SRTP. `start()` di nuovo = encoder riavviato: SSRC, seq e timestamp nuovi."""
 
-    def __init__(self, key: str | None = None, seq0: int | None = None, pt: int = 96, gop: int = 15):
+    def __init__(self, key: str | None = None, seq0: int | None = None, pt: int = 96, gop: int = 15,
+                 stray: int = 0):
         self.key, self.seq0, self.pt = key, seq0, pt
+        # stray: after the first video packet, one more (a filler NAL) numbered this
+        # far ahead on the same SSRC, as a relay or a panel resending old packets does.
+        self.stray = stray
         self.aus = access_units(gop)
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setblocking(False)
@@ -102,6 +106,10 @@ class PanelMedia:
                     self.seq = (self.seq + 1) & 0xFFFF
                     self.sent += 1
                     if self.sent - 1 not in self.drop:
+                        self.sock.sendto(srtp_v.protect(rtp) if srtp_v else rtp, vaddr)
+                    if self.sent == 1 and self.stray:
+                        rtp = struct.pack("!BBHII", 0x80, self.pt, (self.seq + self.stray) & 0xFFFF,
+                                          ts, ssrc) + b"\x0c\x00"
                         self.sock.sendto(srtp_v.protect(rtp) if srtp_v else rtp, vaddr)
                 for _ in range(3):  # ~67 ms di PCMU a pacchetti da 20 ms (circa)
                     rtp = struct.pack("!BBHII", 0x80, 0, aseq, ats, assrc) + b"\xff" * 160

@@ -127,21 +127,28 @@ class SRTPContext:
         return r, (r << 16) | seq
 
     def _is_fresh(self, ssrc: int, idx: int) -> bool:
-        """False for an index already received, or older than the window; records
-        it otherwise. Called after authentication, so a forged packet never moves
-        the window."""
+        """False for an index already received inside the window; records it
+        otherwise. Called after authentication, so a forged packet never moves
+        the window.
+
+        An authentic index older than the window restarts the window there
+        instead of being refused. On the same SSRC, one packet numbered far
+        ahead of the live stream moved the window there and every live packet
+        after it was "too old" (a cloud ring with no preview and no voice), and
+        a sender or relay can restart its numbers lower. The RTP layers above
+        already drop what is really late."""
         state = self._rx_window.get(ssrc)
-        if state is None:
+        behind = state[0] - idx if state else 0
+        if state is None or behind >= self.REPLAY_WINDOW:
             self._rx_window[ssrc] = (idx, 1)
             return True
         top, seen = state
-        behind = top - idx
         if behind < 0:
             seen = 1 if -behind >= self.REPLAY_WINDOW else (
                 ((seen << -behind) | 1) & ((1 << self.REPLAY_WINDOW) - 1))
             self._rx_window[ssrc] = (idx, seen)
             return True
-        if behind >= self.REPLAY_WINDOW or seen >> behind & 1:
+        if seen >> behind & 1:
             return False
         self._rx_window[ssrc] = (top, seen | 1 << behind)
         return True
