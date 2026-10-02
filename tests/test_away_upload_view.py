@@ -64,7 +64,7 @@ def env(monkeypatch, tmp_path):
         data={DOMAIN: {"e1": {"hub": _Hub()}}},
         config=types.SimpleNamespace(media_dirs={"local": str(tmp_path)}),
         config_entries=types.SimpleNamespace(
-            async_update_entry=upd, async_loaded_entries=lambda d: [entry]
+            async_update_entry=upd, async_get_entry=lambda eid: entry if eid == "e1" else None
         ),
         async_add_executor_job=executor,
     )
@@ -148,7 +148,7 @@ def test_a_body_exactly_at_the_cap_is_accepted(env):
 
 
 def test_without_the_integration_loaded_it_is_503(env):
-    env.hass.config_entries.async_loaded_entries = lambda d: []
+    env.hass.data[DOMAIN].clear()  # unloaded: its hub is gone
     r = _post(env, _req("a.mp3"))
     assert r.status == 503 and not env.folder.exists()
 
@@ -157,7 +157,13 @@ def test_a_disk_error_is_500_and_changes_nothing(env, monkeypatch):
     def boom(*a):
         raise OSError("disk full")
 
-    monkeypatch.setattr(away_config.shutil, "copyfile", boom)
+    monkeypatch.setattr(away_config.shutil, "copyfileobj", boom)  # save_upload writes through its own fd (#105)
     r = _post(env, _req("a.mp3"))
     assert r.status == 500 and r.data == {"error": "upload_failed"}
     assert env.entry.options == {"x": 1}
+
+
+def test_it_works_without_async_loaded_entries(env):
+    """ConfigEntries.async_loaded_entries is HA 2025.x only; hacs.json says 2024.7."""
+    assert not hasattr(env.hass.config_entries, "async_loaded_entries")
+    assert _post(env, _req("a.mp3")).status == 200

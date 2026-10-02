@@ -390,6 +390,16 @@ def _save_body(body: bytes | bytearray, folder: str | None, name: str) -> str:
         return away_config.save_upload(src, folder, name)
 
 
+def _loaded_entry(hass):
+    """The config entry that is set up (its hub is in hass.data). Not
+    ConfigEntries.async_loaded_entries: that is HA 2025.x, and hacs.json still says 2024.7.
+    """
+    for entry_id in hass.data.get(DOMAIN, {}):
+        if (entry := hass.config_entries.async_get_entry(entry_id)) is not None:
+            return entry
+    return None
+
+
 class VimarAwayUploadView(HomeAssistantView):
     """File del messaggio di assenza caricato dalla card: POST col file come corpo e
     ?name=<nome del file>. Solo admin, come le entità del messaggio. Stesse regole
@@ -406,7 +416,7 @@ class VimarAwayUploadView(HomeAssistantView):
         user = request.get("hass_user")
         if user is None or not user.is_admin:
             raise Unauthorized()
-        entry = next(iter(self._hass.config_entries.async_loaded_entries(DOMAIN)), None)
+        entry = _loaded_entry(self._hass)
         if entry is None:
             return web.json_response({"error": "not_loaded"}, status=503)
         # Il limite vale mentre si legge: un corpo più grande non finisce mai in memoria.
