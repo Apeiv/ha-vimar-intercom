@@ -57,6 +57,7 @@ def rig():
         loop.run_until_complete(asyncio.sleep(0.05))
         rtp, rtcp = [], []
         phone.settimeout(0.2)
+        rx._rx_window.clear()  # a resend is the same packet again: this phone lost it
         while True:
             try:
                 data, _ = phone.recvfrom(2048)

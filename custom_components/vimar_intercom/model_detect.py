@@ -30,9 +30,9 @@ IGNORE_PATTERNS: tuple[str, ...] = (
 # solo a rendere il pattern leggibile.
 MODEL_PATTERNS: tuple[tuple[str, str], ...] = (
     # ── Posti interni serie Tab (touch) ──
-    (r"tab[\s_-]*7s[\s_-]*(?:up)?[\s_-]*plus",  "Elvox Tab 7S Plus"),
+    (r"tab[\s_-]*7s[\s_-]*(?:up[\s_-]*)?plus",  "Elvox Tab 7S Plus"),
     (r"tab[\s_-]*7s",                           "Elvox Tab 7S"),
-    (r"tab[\s_-]*5s[\s_-]*(?:up)?[\s_-]*plus",  "Elvox Tab 5S Plus"),
+    (r"tab[\s_-]*5s[\s_-]*(?:up[\s_-]*)?plus",  "Elvox Tab 5S Plus"),
     (r"tab[\s_-]*5s",                           "Elvox Tab 5S"),
     (r"tab[\s_-]*4s",                           "Elvox Tab 4S"),
     # ── Codici prodotto Vimar (compaiono in alcuni firmware) ──
@@ -54,6 +54,10 @@ _FW_PATTERNS: tuple[str, ...] = (
 )
 
 
+# Longest User-Agent looked at: real ones are under 100 characters.
+MAX_UA_LEN = 256
+
+
 def is_ignored(user_agent: str) -> bool:
     """True se lo User-Agent è di un proxy/app e non di un dispositivo."""
     ua = user_agent.lower()
@@ -70,7 +74,8 @@ def match(user_agent: str) -> tuple[str | None, str | None, int]:
     if not user_agent:
         return None, None, -1
 
-    ua = user_agent.strip()
+    # A User-Agent comes from any SIP peer: only the start of it can name a model.
+    ua = user_agent.strip()[:MAX_UA_LEN]
     if is_ignored(ua):
         return None, None, -1
 

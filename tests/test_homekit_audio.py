@@ -16,6 +16,7 @@ import pytest
 
 audio = pytest.importorskip("custom_components.vimar_intercom.homekit_audio")
 srtp = pytest.importorskip("custom_components.vimar_intercom.srtp")
+from harness.homekit import FakeVoiceFfmpeg  # noqa: E402
 
 KEY = base64.b64encode(bytes(range(30))).decode()
 
@@ -252,17 +253,6 @@ class TestTheVoiceDecoderComesAndGoes:
         assert len(bridge._test_starts) == 2
 
 
-class FakeFfmpeg:
-    """A voice decoder that exits at once (a broken ffmpeg, a bad build)."""
-
-    def __init__(self, returncode=1):
-        self.returncode = returncode
-        self.stdout = self.stderr = None
-
-    async def wait(self):
-        return self.returncode
-
-
 class TestABrokenVoiceDecoder:
     """ffmpeg that fails to start, or exits at once, was relaunched on every
     voice packet (fifty times a second) and an exception from the launch was
@@ -292,7 +282,7 @@ class TestABrokenVoiceDecoder:
 
         async def spawn(*args, **_kw):
             launches.append(args)
-            return FakeFfmpeg()
+            return FakeVoiceFfmpeg()
 
         loop, bridge, voice_for = self._talk(monkeypatch, spawn)
         try:
@@ -330,7 +320,7 @@ class TestABrokenVoiceDecoder:
             path = args[args.index("-i") + 1]
             with open(path) as f:
                 launches.append((args, f.read(), os.stat(path).st_mode & 0o777))
-            return FakeFfmpeg()
+            return FakeVoiceFfmpeg()
 
         loop, bridge, voice_for = self._talk(monkeypatch, spawn)
         try:
@@ -363,22 +353,6 @@ class TestReplayedVoice:
         talk.settimeout(0.1)
         with pytest.raises(socket.timeout):
             talk.recvfrom(2048)
-
-    def test_the_window_accepts_reordering_and_refuses_the_too_old(self):
-        f = audio.ReplayFilter()
-        assert [f.fresh(rtp(s, 0)) for s in (10, 12, 11)] == [True, True, True]
-        assert not f.fresh(rtp(11, 0))
-        assert f.fresh(rtp(10 + f.WINDOW + 5, 0))
-        assert not f.fresh(rtp(12, 0)), "never seen twice, but behind the window"
-
-    def test_the_sequence_may_wrap(self):
-        f = audio.ReplayFilter()
-        assert all(f.fresh(rtp(s, 0)) for s in (65534, 65535, 0, 1))
-        assert not f.fresh(rtp(65535, 0)) and not f.fresh(rtp(0, 0))
-
-    def test_each_ssrc_has_its_own_window(self):
-        f = audio.ReplayFilter()
-        assert f.fresh(rtp(7, 0, ssrc=1)) and f.fresh(rtp(7, 0, ssrc=2))
 
 
 class TestStopping:

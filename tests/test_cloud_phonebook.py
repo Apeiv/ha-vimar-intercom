@@ -97,7 +97,7 @@ def _stub(name, **attrs):
 
 
 @pytest.fixture(scope="module")
-def cf():
+def of():
     _stub("homeassistant.components.file_upload", process_uploaded_file=None)
     _stub("homeassistant.data_entry_flow", FlowResult=dict)
 
@@ -107,7 +107,7 @@ def cf():
 
     if getattr(sys.modules["homeassistant"], "_is_stub", False):
         sys.modules["homeassistant.config_entries"].ConfigFlow = _ConfigFlow
-    return pytest.importorskip("custom_components.vimar_intercom.config_flow")
+    return pytest.importorskip("custom_components.vimar_intercom.options_flow")
 
 
 class _Hub:
@@ -121,11 +121,11 @@ class _Hub:
         self.richieste += 1
 
 
-def _flow(cf, hub, data=None):
+def _flow(of, hub, data=None):
     entry = types.SimpleNamespace(entry_id="e1", options={}, data=data or {
         "sip_user": "60902", "sip_domain": CDOMAIN, "cloud_domain": CDOMAIN,
         "cloud_proxy": CPROXY, "gid": "101"})
-    flow = cf.OptionsFlowHandler(entry)
+    flow = of.OptionsFlowHandler(entry)
 
     async def job(fn, *a):
         return fn(*a)
@@ -136,19 +136,19 @@ def _flow(cf, hub, data=None):
     return flow
 
 
-def test_senza_token_lo_chiede_e_spiega(cf, monkeypatch):
+def test_senza_token_lo_chiede_e_spiega(of, monkeypatch):
     vero_sleep = asyncio.sleep
 
     async def niente(_s):
         await vero_sleep(0)
 
-    monkeypatch.setattr(cf.asyncio, "sleep", niente)
+    monkeypatch.setattr(of.asyncio, "sleep", niente)
     hub = _Hub({"init_status": {"dnd": "0"}, "rubrica_ver": VER})
-    r = asyncio.run(_flow(cf, hub).async_step_fetch_rubrica_cloud())
+    r = asyncio.run(_flow(of, hub).async_step_fetch_rubrica_cloud())
     assert r["errors"] == {"base": "no_cloud_token"} and hub.richieste == 1
 
 
-def test_con_token_scarica_e_passa_all_import(cf, monkeypatch):
+def test_con_token_scarica_e_passa_all_import(of, monkeypatch):
     hub = _Hub({"init_status": {"token": TOKEN}, "rubrica_ver": VER, "apt_gid": 7})
     visti = {}
 
@@ -162,9 +162,9 @@ def test_con_token_scarica_e_passa_all_import(cf, monkeypatch):
             visti["file"] = fh.read()
         return {"actuators": [{"name": "Porta", "msg": "OPEN_2F", "target": "AUTO", "icon": "door"}]}
 
-    monkeypatch.setattr(cf.cloud_phonebook, "download", fake_download)
-    monkeypatch.setattr(cf.rubrica_import, "parse_rubrica_file", fake_parse)
-    flow = _flow(cf, hub)
+    monkeypatch.setattr(of.cloud_phonebook, "download", fake_download)
+    monkeypatch.setattr(of.rubrica_import, "parse_rubrica_file", fake_parse)
+    flow = _flow(of, hub)
 
     async def confirm():
         return {"type": "confirm"}
@@ -178,14 +178,14 @@ def test_con_token_scarica_e_passa_all_import(cf, monkeypatch):
                      "gid": "7", "file": SQLITE}                  # GID dichiarato dall'impianto
 
 
-def test_token_rifiutato(cf, monkeypatch):
+def test_token_rifiutato(of, monkeypatch):
     hub = _Hub({"init_status": {"token": TOKEN}, "rubrica_ver": VER})
 
     def rifiuta(*a):
         raise cp.CloudAuthError("ipvdes.vimar.cloud ha rifiutato il token (HTTP 401)")
 
-    monkeypatch.setattr(cf.cloud_phonebook, "download", rifiuta)
-    r = asyncio.run(_flow(cf, hub).async_step_fetch_rubrica_cloud({"rubrica_gid": "101"}))
+    monkeypatch.setattr(of.cloud_phonebook, "download", rifiuta)
+    r = asyncio.run(_flow(of, hub).async_step_fetch_rubrica_cloud({"rubrica_gid": "101"}))
     assert r["errors"] == {"base": "cloud_auth_failed"}
     assert "401" in r["description_placeholders"]["rubrica_error"]
 

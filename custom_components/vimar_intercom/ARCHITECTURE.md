@@ -22,7 +22,8 @@ vimar_intercom/
 ├── sip_client.py       Stack SIP asyncio: REGISTER/INVITE/MESSAGE/OPTIONS/BYE/INFO, digest, UDP+TLS, parsing (~1300 righe)
 ├── hub.py              VimarIntercomHub: orchestrazione, stats, callback entità, async_door/async_send_command, keepalive
 ├── runtime.py          R.*: credenziali/impostazioni dinamiche dalla config entry (SIP_USER, domain, ACTUATORS…)
-├── config_flow.py      Config flow (QR o manuale) + options flow (rete SIP + attuatori dinamici)
+├── config_flow.py      Config flow (QR o manuale)
+├── options_flow.py     Options flow (rete SIP + attuatori dinamici)
 ├── qr_decoder.py       Decodifica QR di abbinamento Vimar (AES)
 ├── const.py            Costanti, comandi (OPEN_2F, VOICEMAIL/DND), SGA_TARGET, header, User-Agent
 ├── camera.py           Camera on-demand (STREAM su /av; foto dal frame grabber)
@@ -96,7 +97,7 @@ Tab/Cloud Flexisip ──SIP(UDP/TLS)──▶ sip_client (asyncio, stato di mod
 
 - **Config flow** (`config_flow.py`): step `user` con scelta `qr` / `manuale`; il QR viene decodificato
   e validato con un REGISTER di prova; l'entry salva `sip_user/password/domain/cloud_proxy/gid/mac/plant_type`.
-- **Options flow**: rete SIP (`local_proxy`, `use_local_udp`, `local_udp_port`) e **attuatori dinamici**
+- **Options flow** (`options_flow.py`): rete SIP (`local_proxy`, `use_local_udp`, `local_udp_port`) e **attuatori dinamici**
   (campo JSON validato da `_parse_actuators`, salvato in `options["actuators"]`; un update ricarica l'entry).
 
 ---

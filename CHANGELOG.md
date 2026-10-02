@@ -6,6 +6,12 @@ Italian and are kept as they were written.
 
 ## [Unreleased]
 
+### Added
+
+- **Test ring button** (diagnostic, on the device page): a 20 s test ring in one tap, the same as the
+  `simulate_ring` service, to try your ring automations and notifications without writing YAML. It reports an
+  error if a real call or ring is in progress.
+
 ### Changed
 
 - **README**: an *Open in HACS* button (My Home Assistant) and a last-commit badge; the release, downloads and
@@ -13,6 +19,8 @@ Italian and are kept as they were written.
 ### Fixed
 
 - Live video from the 40515 was soft and choppy (16 fps, ~14 KB keyframes) because we asked the panel for 256 kbit/s. We now ask for 2 Mbit/s: it sends 25 fps at about 1.5 Mbit/s, same 720x576 picture. A keyframe is now a burst of about 40 packets, which filled the 64-packet cap of the reorder buffer before the 80 ms wait ran out and dropped the picture until the next keyframe, so the cap is now 512.
+- Card video colours looked off (skin and sky tints): the panel's SD H.264 carries no colour info, so browsers assumed BT.709. The decoder is now configured with BT.601.
+- **A dashboard left open no longer calls the panel again ~10 s after a hang-up** ([#57](../../issues/57)): go2rtc and the stream worker reconnect to `/av` with a growing back-off, and each refused reconnect moved the 5 s quick-reopen window forward, so the first one more than 5 s apart placed a call. Now a reconnect from a viewer that was watching `/av` when the call ended waits the full 60 s pause. Opening the camera within the minute still calls if `/av` was not open at the end (for example after answering from the card), and HomeKit is unchanged.
 - Live video froze for up to 3 s after each keyframe on cloud plants: packets the relay delivered a few milliseconds out of order were treated as lost. The reorder buffer now waits up to 80 ms for a gap.
 - **The door is opened with your plant's own command** ([#58](../../issues/58)): the lock, the *Open Door* button,
   HomeKit's gate and `open_door` without `command` now send the `MSG` of the phonebook's door actuator for that
@@ -35,6 +43,18 @@ Italian and are kept as they were written.
   logs, and the integration masks it in its own. Options → *`/av` stream key* shows it and regenerates it.
   Passive URLs (`autocall=0`, go2rtc/Frigate/Scrypted) keep working without it for now; a wrong key is
   refused everywhere. See `docs/EXTERNAL.md`.
+- **Symlink in the snapshot folder** ([#46](../../issues/46)): a symlink or hard link left in the ring photo folder at
+  the name of `ultimo_squillo.jpg` (or of a ring photo) was followed, so the photo overwrote another file, and the
+  camera could show any file Home Assistant can read. Photos are now written to a new file and renamed over the
+  name, and the last photo is read only if it is a regular file. Clips, which ffmpeg writes, are not covered.
+- **Slow patterns on SIP headers** ([#46](../../issues/46)): the Tab 5S/7S Plus model patterns and the SIP user and host
+  patterns of the device inventory could take seconds on a crafted header (a long run of spaces, or `sip:`
+  repeated without an `@`), stalling Home Assistant. The patterns no longer backtrack that way, and the
+  User-Agent is cut at 256 characters before it is matched. Real headers match as before.
+- **SRTP replay window** ([#46](../../issues/46)): the receiving side of the call media had no replay protection, so one
+  captured voice or video packet, sent again, was accepted every time. An index already received, or older than
+  the last 128 per stream, is now dropped after authentication, as libsrtp does. Packets that merely arrive out
+  of order are still accepted.
 
 ## [1.0.18] - 2026-10-02
 

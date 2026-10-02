@@ -21,6 +21,11 @@ from .hub import VimarIntercomHub
 
 _LOGGER = logging.getLogger(__name__)
 
+# The request key HA's auth middleware sets on every request, True for a bearer token or
+# a signed path (homeassistant.helpers.http.KEY_AUTHENTICATED). Spelled out here because
+# the tests run without Home Assistant installed.
+KEY_AUTHENTICATED = "ha_authenticated"
+
 
 def _user_allowed(request: web.Request) -> bool:
     """Opzione `allowed_users`: chi può vedere squilli, foto, clip e media live. Admin
@@ -476,7 +481,7 @@ class VimarAVStreamView(HomeAssistantView):
         # Plain /av places a call: an authenticated HA user or the key, on top of
         # the local-network check. Passive /av never calls; the key stays optional
         # there for now (docs/EXTERNAL.md), so go2rtc/Frigate setups keep working.
-        if not passive and key is None and not request.get("hass_authenticated"):
+        if not passive and key is None and not request.get(KEY_AUTHENTICATED):
             _LOGGER.warning("AV stream refused: no key and no authenticated user")
             return web.Response(status=403, text="Forbidden (key required)")
         if passive and request.query.get("idle") == "image":

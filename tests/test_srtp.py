@@ -106,3 +106,41 @@ def test_nuovo_ssrc_con_sequenza_lontana_si_autentica():
     for seq in range(5, 15):
         pkt = _rtp_ssrc(seq, 2)
         assert rx.unprotect(tx_b.protect(pkt)) == pkt
+
+
+def test_a_captured_packet_sent_again_is_dropped():
+    """RFC 3711 §3.3.2: the same index twice, or one older than the window, is
+    refused, so one captured voice or video packet cannot be replayed."""
+    tx, rx = _ctx(), _ctx()
+    first = tx.protect(_rtp(1))
+    assert rx.unprotect(first) is not None
+    assert rx.unprotect(first) is None
+    for seq in range(2, 200):
+        assert rx.unprotect(tx.protect(_rtp(seq))) is not None
+    assert rx.unprotect(first) is None  # now also older than the 128-packet window
+
+
+def test_late_packets_inside_the_window_are_still_accepted():
+    tx, rx = _ctx(), _ctx()
+    early, late = tx.protect(_rtp(10)), tx.protect(_rtp(11))
+    assert rx.unprotect(late) is not None
+    assert rx.unprotect(early) is not None
+    # The reorder buffer holds up to 64 packets: one that late must still pass.
+    late = tx.protect(_rtp(200))
+    for seq in range(201, 301):
+        assert rx.unprotect(tx.protect(_rtp(seq))) is not None
+    assert rx.unprotect(late) is not None, "100 places late, inside the window"
+
+
+def test_the_replay_window_follows_the_sequence_wrap_and_each_ssrc():
+    tx, rx = _ctx(), _ctx()
+    sent = [tx.protect(_rtp(s)) for s in (65534, 65535, 0, 1)]
+    assert all(rx.unprotect(p) is not None for p in sent)
+    assert all(rx.unprotect(p) is None for p in sent) and rx.replayed == 4
+    tx2, rx2 = _ctx(), _ctx()
+    pkts = {s: tx2.protect(_rtp(s)) for s in (65533, 65534, 65535, 0, 1)}
+    for s in (65533, 65535, 0, 1, 65534):  # 65534 three places late, ROC 0 vs 1
+        assert rx2.unprotect(pkts[s]) is not None, s
+    assert rx2.unprotect(pkts[65534]) is None
+    other = _ctx()
+    assert rx.unprotect(other.protect(_rtp_ssrc(1, 2))) is not None

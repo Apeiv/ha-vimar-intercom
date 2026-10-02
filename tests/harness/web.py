@@ -12,9 +12,11 @@ import json
 import os
 import sys
 import types
+from urllib.parse import quote
 
 from custom_components.vimar_intercom import const as C
 from custom_components.vimar_intercom import media_handler as media
+from custom_components.vimar_intercom import runtime
 
 # ─── aiohttp minimo finto ──────────────────────────────────────────────────────
 
@@ -92,8 +94,9 @@ class Request:
         self._user = types.SimpleNamespace(is_admin=admin)
 
     def get(self, k, d=None):
-        # Like HA's auth middleware: a user means an authenticated request.
-        if k == "hass_authenticated":
+        # Like HA's auth middleware (homeassistant/components/http/auth.py): a user
+        # means an authenticated request, under the key HA really uses.
+        if k == "ha_authenticated":
             return self._user is not None
         return self._user if k == "hass_user" else d
 
@@ -186,8 +189,8 @@ async def start(rig):
     app.router.add_get(av.url, av_get)
     app.router.add_get(aws.url, aws.get)
     app.router.add_get(rings.url, rings.get)
-    async def page(r):
-        return web.Response(text=PAGE, content_type="text/html")
+    async def page(r):  # the fake picture entity opens /av as HA's camera does: with the key
+        return web.Response(text=PAGE.replace("__AV_URL__", av_url()), content_type="text/html")
 
     async def state(r):  # come i sensori: stato, e foto/clip dell'ultimo squillo (attributi)
         return web.json_response({"status": rig.state_override or hub.status, "last_ring": hub.ring_media()})
@@ -207,9 +210,19 @@ async def start(rig):
     rig.base = f"http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}"
 
 
+def av_url(path="/api/vimar_intercom/av") -> str:
+    """`path` with the installation's key (#63) when it places a call, as HA's camera
+    sends it to its stream worker. Passive paths (autocall=0) stay as given: the key
+    is optional there, and the tests for that case must keep working without it."""
+    if "autocall=0" in path or "mode=passive" in path or f"{runtime.AV_KEY_PARAM}=" in path:
+        return path
+    return f"{path}{'&' if '?' in path else '?'}{runtime.AV_KEY_PARAM}={quote(runtime.AV_KEY)}"
+
+
 class AvClient:
     """Legge /av come go2rtc: finito uno stream si riconnette dopo `retry` s
-    (`reconnect=False`: una volta sola, come l'iPhone che apre la camera)."""
+    (`reconnect=False`: una volta sola, come l'iPhone che apre la camera).
+    A calling path gets the key, like the integration's camera (av_url)."""
 
     def __init__(self, base, retry=0.3, reconnect=True, path="/api/vimar_intercom/av"):
         self.base, self.retry, self.reconnect, self.path = base, retry, reconnect, path
@@ -231,7 +244,7 @@ class AvClient:
             while True:
                 buf = bytearray()
                 try:
-                    async with s.get(self.base + self.path) as r:
+                    async with s.get(self.base + av_url(self.path)) as r:
                         self.statuses.append(r.status)
                         if r.status == 200:
                             self.segments.append(buf)

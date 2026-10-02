@@ -43,6 +43,7 @@ def test_rings_solo_agli_utenti_ammessi(monkeypatch, hub, allowed, admin, uid, o
             asyncio.run(run())
 
 
+@pytest.mark.slow  # 25 s: /av waits for a call that never comes
 def test_audio_ws_e_av_chiusi_a_chi_non_e_ammesso(monkeypatch, hub):
     views = load_views(monkeypatch)
     monkeypatch.setattr(runtime, "ALLOWED_USERS", ["u1"])

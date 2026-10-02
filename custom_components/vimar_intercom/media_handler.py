@@ -479,8 +479,11 @@ class RTPVideoProtocol(asyncio.DatagramProtocol):
 
         # Decrypt SRTP → plain RTP
         if self.srtp_rx:
+            replayed = self.srtp_rx.replayed
             rtp = self.srtp_rx.unprotect(data)
             if rtp is None:
+                if self.srtp_rx.replayed != replayed:
+                    return  # a duplicate of a packet already received, not an auth failure
                 self._srtp_fail += 1
                 if self._srtp_fail <= 5 or self._srtp_fail % 100 == 0:
                     _LOGGER.warning("SRTP video auth FAIL #%d (pkt %dB)", self._srtp_fail, len(data))

@@ -14,6 +14,7 @@
 | Answer / Hang up | `button` | Answer (200 OK) / end the call (BYE) |
 | Decline | `button` | Only while it rings: refuses the call with `603 Decline`, so the whole house stops ringing, as in the app. Also the `vimar_intercom.decline` service |
 | Open Door | `button` | Same as the lock: the phonebook's door command (else `OPEN_2F`) to `door_target` |
+| Test ring | `button` (diagnostic) | A whole ring without the panel, as `vimar_intercom.simulate_ring` with its default 20 s: try your ring automations and notifications. Fails while a real call or ring is in progress |
 | *Dynamic actuators* | `button` | One per entry in `options["actuators"]` (F1/F2, stair lights, relays…); sends `MSG` with `Panda: command` |
 | Voicemail | `switch` | `VOICEMAIL;ON/OFF` (Panda: blue) to the SGA; state read from the Tab's announcements and from `GET_INIT_STATUS`, asked after every command. The commanded value is shown for 10 s at most: with no confirmation the state becomes *unknown* ([#9](https://github.com/lollox80/ha-vimar-intercom/issues/9)) |
 | Do Not Disturb | `switch` | `DND;ON/OFF` (Panda: blue) to the SGA; same rules as Voicemail |

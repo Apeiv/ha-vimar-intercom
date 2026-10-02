@@ -44,7 +44,7 @@ the phonebook: [Configuration](https://github.com/lollox80/ha-vimar-intercom/blo
 ## What you get
 
 - **Doorbell**: an event entity and ring sensors for your automations; optionally a photo and a short
-  clip of every visitor, and webhooks for Alexa or Scrypted. → [Entities, services and automations](https://github.com/lollox80/ha-vimar-intercom/blob/main/docs/ENTITIES.md)
+  clip of every visitor, and webhooks for Alexa or Scrypted; a *Test ring* button to try your automations. → [Entities, services and automations](https://github.com/lollox80/ha-vimar-intercom/blob/main/docs/ENTITIES.md)
 - **Door, gate and actuators**: a lock, an *Open Door* button, and one button per actuator in your
   phonebook (F1/F2, stair lights, relays). → [Configuration](https://github.com/lollox80/ha-vimar-intercom/blob/main/docs/CONFIGURATION.md)
 - **Video and voice**: the camera calls the panel only when you open it, and shows the visitor while it
