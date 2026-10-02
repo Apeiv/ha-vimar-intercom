@@ -31,6 +31,11 @@ def init(broadcast_fn):
 
 
 RING_MAX_S = 90    # squillo senza CANCEL (UDP perso, PBX riavviato): chiuso dopo 90 s
+# A panel that gives up an unanswered ring stops its preview, but on local UDP
+# it sends no CANCEL (#60): no RTP for this long ends the ring. Local UDP only:
+# seen on the 40507, and the cloud relay sends CANCEL and may have preview gaps.
+RING_MEDIA_GAP_S = 3.0
+RING_MEDIA_POLL_S = 0.5
 
 _suppress_broadcast = False
 
@@ -2340,6 +2345,8 @@ async def handle_incoming_invite(raw):
         if not ringing(cid) and not in_call:
             await media.stop_media()  # CANCEL arrivato mentre il video partiva
             return
+        if pending_incoming["early"] and R.USE_LOCAL_UDP:
+            _spawn(_watch_ring_media(cid))
     else:
         resp = f"SIP/2.0 180 Ringing\r\n{head}Content-Length: 0\r\n\r\n"
         pending_incoming["resp"] = resp
@@ -2396,6 +2403,26 @@ async def _ring_timeout(cid) -> None:
     if ringing(cid) and not in_call:
         # Risposta finale anche qui: se il CANCEL si è solo perso, la targa smette.
         await do_decline_incoming("480 Temporarily Unavailable", msg="Squillo scaduto")
+
+
+def _rx_packets() -> int:
+    return sum(p.pkt_count for p in (media.audio_proto, media.video_proto) if p is not None)
+
+
+async def _watch_ring_media(cid) -> None:
+    """End the ring when the panel's preview stops: that is the panel giving up.
+    Armed only once some RTP arrived, so a panel that sends no preview keeps
+    RING_MAX_S. The 480 is for a CANCEL that got lost while the panel still rings."""
+    last, quiet = _rx_packets(), 0.0
+    while ringing(cid) and early_media() and not in_call:
+        await asyncio.sleep(RING_MEDIA_POLL_S)
+        n = _rx_packets()
+        quiet = quiet + RING_MEDIA_POLL_S if n == last and n else 0.0
+        last = n
+        if quiet >= RING_MEDIA_GAP_S and ringing(cid) and not in_call:
+            _LOGGER.info("Ring preview stopped for %.0f s: the panel gave up", quiet)
+            await do_decline_incoming("480 Temporarily Unavailable", msg="Squillo terminato dalla targa")
+            return
 
 
 async def do_answer_incoming():
