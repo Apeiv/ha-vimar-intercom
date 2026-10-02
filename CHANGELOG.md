@@ -18,6 +18,9 @@ Italian and are kept as they were written.
 
 ### Changed
 
+- **Debug logs**: the plant message parsing now logs under `custom_components.vimar_intercom.plant_messages` and
+  the ring media under `custom_components.vimar_intercom.ring_media`, no longer under `...hub`. Adjust your
+  `logger:` entry if you filter on the old name.
 - **README**: an *Open in HACS* button (My Home Assistant) and a last-commit badge; the release, downloads and
   stars badges are gone, since HACS already shows them at the top of the page.
 ### Fixed

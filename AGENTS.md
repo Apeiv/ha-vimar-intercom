@@ -29,7 +29,9 @@ All in `custom_components/vimar_intercom/`.
   (`_make_auth`). No sockets, no call state.
 - `hub.py`: `VimarIntercomHub`, the orchestrator. Call lifecycle, ring/state/event callbacks
   for entities, stats, keepalive, keyframe requests (a burst at call start, one per lost
-  packet, never periodic), camera target learning, device inventory.
+  packet, never periodic), camera target learning, device inventory. Two mixins it inherits:
+  `plant_messages.py` (`PlantMessages`) parses the SIP MESSAGEs the plant sends (status,
+  phonebook, notifications) and `ring_media.py` (`RingMedia`) saves the ring photo, clip and log.
 - `media_handler.py`: RTP/SRTP transports, STUN, G.711 codec, H.264 depacketising, talk
   queue, PCM taps, audio WebSocket broadcast. `srtp.py` is the AES-CM crypto, `rtcp.py` a
   debug-only RTCP probe.

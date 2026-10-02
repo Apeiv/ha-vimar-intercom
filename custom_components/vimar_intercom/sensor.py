@@ -21,7 +21,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from . import plant_state as S
 from .const import DOMAIN
 from .device import device_info
-from .hub import sip_id_name
+from .plant_messages import sip_id_name
 
 _LOGGER = logging.getLogger(__name__)
 

@@ -23,6 +23,8 @@ vimar_intercom/
 ├── sdp.py              SDP: offerta/risposta (build_sdp), parser (parse_sdp), chiavi SRTP locali
 ├── sip_message.py      Messaggi SIP: parsing (_parse), header, framing dello stream TLS, risposta Digest
 ├── hub.py              VimarIntercomHub: orchestrazione, stats, callback entità, async_door/async_send_command, keepalive
+├── plant_messages.py   PlantMessages (mixin dell'hub): parsing dei SIP MESSAGE dall'impianto (stato, rubrica, notifiche)
+├── ring_media.py       RingMedia (mixin dell'hub): foto, clip e registro dello squillo
 ├── runtime.py          R.*: credenziali/impostazioni dinamiche dalla config entry (SIP_USER, domain, ACTUATORS…)
 ├── plant_state.py      Stato che arriva dall'impianto a runtime: modello rilevato, cifratura del media effettiva
 ├── config_flow.py      Config flow (QR o manuale)
