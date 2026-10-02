@@ -17,123 +17,22 @@ hk = pytest.importorskip("custom_components.vimar_intercom.homekit_accessory")
 from custom_components.vimar_intercom import homekit_files as hkf  # noqa: E402
 
 media = hk.media
-
-
-class FakeVideo:
-    instances: list = []
-
-    def __init__(self, *_a):
-        self.stopped = 0
-        FakeVideo.instances.append(self)
-
-    async def open(self):
-        pass
-
-    def begin(self, *_a):
-        pass
-
-    def on_live(self, *_a):
-        pass
-
-    def send_bye(self):
-        pass
-
-    async def stop(self):
-        self.stopped += 1
-
-
-class FakeBridge:
-    instances: list = []
-    encoder_port = 9
-
-    def __init__(self, *_a, on_first_voice=None):
-        self.stopped = 0
-        self.on_first_voice = on_first_voice
-        self.on_first_audio = None
-        FakeBridge.instances.append(self)
-
-    async def start(self):
-        pass
-
-    def send_bye(self):
-        pass
-
-    async def stop(self):
-        self.stopped += 1
-
-
-class FakeProc:
-    def __init__(self):
-        self.returncode = None
-        self.pid = 4242
-        self._done = asyncio.Event()
-        self.stderr = None
-
-    def terminate(self):
-        self.returncode = -15
-        self._done.set()
-
-    def kill(self):
-        self.terminate()
-
-    async def wait(self):
-        await self._done.wait()
-        return self.returncode
-
-
-class Hub:
-    """The parts of v1.0.9's hub the accessory uses."""
-
-    def __init__(self, gate):
-        self.gate = gate
-        self.call_coming = True
-        self.in_call = True
-        self.calling = False
-        self.video_active = True
-        self._stream_viewers = 0
-        self._auto_called = False
-        self._busy_now = True
-        self.log = []
-
-    async def stream_opened(self, reflex_guard=True):
-        assert reflex_guard is False, "a HomeKit view is a person, not a reflex reopen"
-        # Like the real hub: the viewer counts on the first line, before any await.
-        self._stream_viewers += 1
-        self.log.append("opened")
-        await self.gate["open"].wait()
-        return getattr(self, "open_result", True)
-
-    async def stream_closed(self):
-        self._stream_viewers -= 1
-        self.log.append("closed")
-
-    async def async_answer(self):
-        self.log.append("answer")
-        self.in_call = True
-        return True, "ok"
-
-    def should_hang_up_for_viewers(self, answered_for_them=False):
-        # The real hub's rule (hub.should_hang_up_for_viewers).
-        if self._stream_viewers:
-            return False
-        return answered_for_them or (self._auto_called and self._busy_now)
-
-    async def async_hangup(self):
-        self.log.append("hangup")
-
-
-class FakeTap:
-    instances: list = []
-
-    def __init__(self):
-        self.sdp_path, self.attached, self.closed = "/tmp/x.sdp", False, False
-        FakeTap.instances.append(self)
-
-    def attach(self):
-        self.attached = True
-
-    def close(self):
-        self.closed = True
+from harness.homekit import (  # noqa: E402
+    FakeBridge,
+    FakeHass,
+    FakeProc,
+    FakeState,
+    FakeTap,
+    FakeTranscoder,
+    FakeVideo,
+    Hub,
+    Notes,
+    QRAcc,
+    Req,
+    Response,
+    SetupHass,
+    SetupHub,
+)
 
 
 def session():
@@ -820,47 +719,6 @@ def test_the_views_ffmpeg_reads_the_tap_on_loopback_only(acc, monkeypatch):
 
 # ─── the shared encoder follows the call ──────────────────────────────────────
 
-class FakeTranscoder:
-    instances: list = []
-    gate: asyncio.Event | None = None
-
-    def __init__(self, *_a):
-        self.video_proto = None
-        self.stopped = False
-        self.gop = type("G", (), {"has_keyframe": True, "packets": []})()
-        FakeTranscoder.instances.append(self)
-
-    @property
-    def running(self):
-        return not self.stopped
-
-    async def start(self, _backlog, on_ready=None, defer=False):
-        if FakeTranscoder.gate:
-            await FakeTranscoder.gate.wait()
-        self._on_ready, self.begun, self.begins = on_ready, False, 0
-        if not defer:
-            self.begin()
-        return True
-
-    def begin(self):
-        if not self.begun:
-            self.begun = True
-            self.begins += 1
-            self._on_ready()
-
-    def feed(self, _p):
-        pass
-
-    def add_sink(self, _s):
-        pass
-
-    def remove_sink(self, _s):
-        pass
-
-    async def stop(self):
-        self.stopped = True
-
-
 @pytest.fixture
 def transcoding(acc, monkeypatch):
     a, procs, gate = acc
@@ -1015,20 +873,6 @@ def test_the_setup_code_never_goes_to_stdout(capsys):
     assert "123-45-678" not in out.out + out.err
 
 
-class FakeHass:
-    def __init__(self, tmp_path):
-        self.data = {}
-        self.tasks = []
-        self.config = type("C", (), {"language": "en",
-                                     "path": lambda _self, *p: str(tmp_path.joinpath(*p))})()
-
-    def async_create_task(self, coro):
-        self.tasks.append(asyncio.ensure_future(coro))
-
-    async def async_add_executor_job(self, fn, *args):
-        return fn(*args)
-
-
 def test_unpairing_rotates_the_setup_code(tmp_path, monkeypatch):
     """The old code was in the notification, maybe in a screenshot or with a
     previous owner. After the last controller removes the intercom, only a
@@ -1081,25 +925,6 @@ def test_deleting_the_entry_deletes_its_pairing(tmp_path):
 
 # ─── pairing stays with administrators ─────────────────────────────────────────
 
-class Notes:
-    """persistent_notification: what was shown and dismissed."""
-
-    def __init__(self):
-        self.shown, self.dismissed = {}, []
-
-    def async_create(self, _hass, text, title=None, notification_id=None):
-        self.shown[notification_id] = (title, text)
-
-    def async_dismiss(self, _hass, notification_id):
-        self.dismissed.append(notification_id)
-        self.shown.pop(notification_id, None)
-
-
-class QRAcc:
-    def xhm_uri(self):
-        return "X-HM://0023ISYWYABCD"
-
-
 @pytest.fixture
 def notes(monkeypatch):
     n = Notes()
@@ -1122,19 +947,8 @@ def test_the_setup_code_is_not_in_the_notification(tmp_path, notes):
     assert notes.shown == {} and hass.data[hk.HOMEKIT_DATA]["pairing"] == {}
 
 
-class Req(dict):
-    def __init__(self, user, token):
-        super().__init__(hass_user=user)
-        self.query = {"t": token}
-
-
 def _user(admin):
     return type("U", (), {"is_admin": admin})()
-
-
-class Response:
-    def __init__(self, status=200, body=b"", content_type=None, headers=None):
-        self.status, self.body = status, body
 
 
 def test_the_qr_is_for_administrators_only(tmp_path, notes, monkeypatch):
@@ -1155,19 +969,6 @@ def test_the_qr_is_for_administrators_only(tmp_path, notes, monkeypatch):
     assert ok.status == 200 and ok.body.startswith(b"<svg>")
     hk._hide_pairing(hass, "e1")
     assert get(_user(True), token).status == 404, "paired or turned off: gone"
-
-
-class FakeState:
-    def __init__(self, clients=1):
-        self.clients = clients
-        self.pincode = b"111-22-333"
-
-    @property
-    def paired(self):
-        return self.clients > 0
-
-    def remove_paired_client(self, _uuid):
-        self.clients -= 1
 
 
 def _driver(**callbacks):
@@ -1266,37 +1067,6 @@ def test_a_code_that_cannot_be_saved_is_logged(tmp_path, caplog):
 
 
 # ─── publishing and turning off ─────────────────────────────────────────────────
-
-class SetupHass(FakeHass):
-    def __init__(self, tmp_path):
-        super().__init__(tmp_path)
-        self.in_executor = False
-        self.views = []
-        self.http = type("H", (), {"register_view": lambda _s, v: self.views.append(v)})()
-        self.loop = None
-
-    async def async_add_executor_job(self, fn, *args):
-        self.in_executor = True
-        try:
-            return fn(*args)
-        finally:
-            self.in_executor = False
-
-
-class SetupHub:
-    def __init__(self):
-        self.rings, self.ends = [], []
-
-    def register_ring_callback(self, cb):
-        self.rings.append(cb)
-
-    def unregister_ring_callback(self, cb):
-        self.rings.remove(cb)
-
-    def register_video_end_callback(self, cb):
-        self.ends.append(cb)
-        return lambda: self.ends.remove(cb)
-
 
 @pytest.fixture
 def setup_rig(tmp_path, monkeypatch, notes):

@@ -12,24 +12,9 @@ import uuid
 import pytest
 
 hk = pytest.importorskip("custom_components.vimar_intercom.homekit_accessory")
+from harness.homekit import _Mgmt  # noqa: E402
 from pyhap import tlv  # noqa: E402
 from pyhap.camera import SETUP_ADDR_INFO, SETUP_SRTP_PARAM, SETUP_TYPES  # noqa: E402
-
-
-class _Char:
-    def __init__(self):
-        self.value = None
-
-    def set_value(self, value):
-        self.value = value
-
-
-class _Mgmt:
-    def __init__(self):
-        self.char = _Char()
-
-    def get_characteristic(self, _name):
-        return self.char
 
 
 def phone_request(session_id, v_port=50000, a_port=50002):

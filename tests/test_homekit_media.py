@@ -9,24 +9,11 @@ import pytest
 
 hkm = pytest.importorskip("custom_components.vimar_intercom.homekit_media")
 media = hkm.media
-
-SPS = b"\x67\x42\xc0\x1f\x8d\x68\x14\x1f\x90"
-PPS = b"\x68\xee\x01\x44\x44\x80"
+from harness.homekit import PPS, SPS, FakeVideoProto, Recorder  # noqa: E402
 
 
 def rtp(seq, payload, ts=1000, ssrc=0x1234):
     return struct.pack("!BBHII", 0x80, 96, seq, ts, ssrc) + payload
-
-
-class FakeVideoProto:
-    def __init__(self, gop, ps=(SPS, PPS)):
-        self._gop = gop
-        self._ps = ps
-        self.rtp_sinks = []
-        self.pkt_count = len(gop)
-
-    def sps_pps(self, own_only=False):
-        return self._ps
 
 
 def test_a_group_without_sps_gets_it_prepended(monkeypatch):
@@ -187,19 +174,6 @@ def test_without_panel_audio_the_tap_sends_silence(monkeypatch):
 
 
 # ─── the audio tap's clock ──────────────────────────────────────────────────
-
-class Recorder:
-    """Stands in for the tap's socket: what left, and when."""
-
-    def __init__(self):
-        self.sent = []
-
-    def sendto(self, data, _addr):
-        self.sent.append((time.monotonic(), data))
-
-    def close(self):
-        pass
-
 
 def _tap(monkeypatch):
     class Proto:
