@@ -370,11 +370,11 @@ class RTPVideoProtocol(asyncio.DatagramProtocol):
     # _ps_by_panel nello storage di HA.
     on_sps_pps = None
 
-    # A keyframe arrives as a burst of ~12 packets that the cloud relay reorders
-    # by up to 12 places and 26 ms (40515, measured): counting 5 packets gave up
-    # on packets that were still coming. A gap waits REORDER_WAIT, or until the
-    # buffer holds REORDER_BUF_SIZE packets.
-    REORDER_BUF_SIZE = 64
+    # A keyframe arrives as a burst of ~40 packets (30-58 KB at 1.5 Mbit/s) that the
+    # cloud relay reorders by up to 15 places and 34 ms (40515, measured): counting 5
+    # packets gave up on packets that were still coming, and a cap of 64 filled in
+    # 34 ms. A gap waits REORDER_WAIT, or until the buffer holds REORDER_BUF_SIZE packets.
+    REORDER_BUF_SIZE = 512
     REORDER_WAIT = 0.08
 
     def __init__(self):

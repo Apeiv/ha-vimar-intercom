@@ -37,6 +37,11 @@ DOOR_COMMAND = "OPEN_2F"
 # ─── RTP / Media ──────────────────────────────────────────────────────────────
 RTP_AUDIO_PORT     = 7200
 RTP_VIDEO_PORT     = 9200
+# Bandwidth we declare in the SDP (b=AS, kbit/s). The 40515 panel's encoder honours it:
+# 256 gave ~14 KB keyframes at 16 fps, 2048 gives 30-58 KB at 25 fps (~1.5 Mbit/s, its
+# ceiling: 4096 is the same), same 720x576, no loss over the cloud. Session = video + audio.
+SDP_VIDEO_BANDWIDTH = 2048
+SDP_SESSION_BANDWIDTH = 2200
 # Porte locali dell'ffmpeg AV (/api/vimar_intercom/av). Devono essere PARI e
 # distanti almeno 2: per ogni riga m= dell'SDP ffmpeg apre la porta RTP **e** la
 # RTCP (= RTP + 1). Fino alla 1.0.7 erano 19201/19202: l'RTCP del video cadeva
