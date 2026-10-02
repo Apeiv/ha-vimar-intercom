@@ -79,7 +79,7 @@ class TestEncodedGop:
         assert not g.has_keyframe
 
 
-def test_the_panel_video_is_read_on_loopback_from_a_private_sdp(monkeypatch):
+def test_the_panel_video_is_read_on_loopback_from_a_private_sdp(monkeypatch, assert_private_mode):
     """ffmpeg 8.1 bound the RTCP port of an SDP input on 0.0.0.0, and the SDP
     had a guessable name in /tmp that open() would follow as a symlink."""
     import asyncio
@@ -113,7 +113,8 @@ def test_the_panel_video_is_read_on_loopback_from_a_private_sdp(monkeypatch):
     # ~340 ms behind the panel on a 40517 (#56).
     j = seen["args"].index("-threads")
     assert j < i and seen["args"][j + 1] == "1"
-    assert seen["mode"] == 0o600 and f"/vimar_intercom_transcode_{t._in_port}.sdp" not in path
+    assert_private_mode(seen["mode"])
+    assert f"/vimar_intercom_transcode_{t._in_port}.sdp" not in path
     assert f"m=video {t._in_port} " in seen["sdp"]
     assert not os.path.exists(path)
 

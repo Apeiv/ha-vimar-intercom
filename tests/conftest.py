@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
+import os
 import shutil
 import sys
 import types
@@ -204,6 +205,21 @@ def _fresh_sip_state(monkeypatch):
     for name in ("reader", "writer", "_udp_sock", "_state_change_callback", "MY_IP"):
         setattr(sip, name, None)
     sip.reset_state()
+
+
+@pytest.fixture
+def assert_private_mode():
+    """Check that a file is readable and writable by its owner only (0600).
+
+    Takes a path, or a mode read earlier for a file that is gone by now. On
+    Windows it checks nothing: there are no POSIX permissions there, os.stat()
+    reports 0o666 whatever os.open asked for."""
+    def check(path_or_mode) -> None:
+        if sys.platform == "win32":
+            return
+        mode = path_or_mode if isinstance(path_or_mode, int) else os.stat(path_or_mode).st_mode
+        assert oct(mode & 0o777) == "0o600"
+    return check
 
 
 @pytest.fixture

@@ -873,7 +873,7 @@ def test_the_setup_code_never_goes_to_stdout(capsys):
     assert "123-45-678" not in out.out + out.err
 
 
-def test_unpairing_rotates_the_setup_code(tmp_path, monkeypatch):
+def test_unpairing_rotates_the_setup_code(tmp_path, monkeypatch, assert_private_mode):
     """The old code was in the notification, maybe in a screenshot or with a
     previous owner. After the last controller removes the intercom, only a
     new code pairs it again."""
@@ -897,7 +897,7 @@ def test_unpairing_rotates_the_setup_code(tmp_path, monkeypatch):
     new = asyncio.run(scenario())
     assert new != old and shown == [new]
     assert hk._load_or_create_pin(pin_path) == new, "and it survives a restart"
-    assert oct((tmp_path / ".storage" / "vimar_intercom.e1.homekit.pin").stat().st_mode & 0o777) == "0o600"
+    assert_private_mode(tmp_path / ".storage" / "vimar_intercom.e1.homekit.pin")
 
 
 def test_the_qr_follows_the_new_code(tmp_path, monkeypatch):
@@ -1044,7 +1044,7 @@ def test_too_many_wrong_codes_rotate_it_and_warn(tmp_path, notes, caplog):
                for r in caplog.records)
 
 
-def test_the_code_file_is_private_and_replaced_whole(tmp_path):
+def test_the_code_file_is_private_and_replaced_whole(tmp_path, assert_private_mode):
     path = str(tmp_path / "x.homekit.pin")
     with open(path, "w") as f:
         f.write("{}")
@@ -1055,7 +1055,7 @@ def test_the_code_file_is_private_and_replaced_whole(tmp_path):
         hk._save_pin(path, "123-45-678")
     finally:
         os.umask(old_umask)
-    assert oct(os.stat(path).st_mode & 0o777) == "0o600"
+    assert_private_mode(path)
     assert hk._load_or_create_pin(path) == "123-45-678"
     assert sorted(p.name for p in tmp_path.iterdir()) == ["x.homekit.pin"], "no temp file left"
 
@@ -1325,7 +1325,7 @@ def test_a_view_without_a_cached_keyframe_asks_the_panel_for_one(acc, monkeypatc
     assert len(sent) == requests
 
 
-def test_the_state_file_with_the_long_term_key_is_0600(monkeypatch, tmp_path):
+def test_the_state_file_with_the_long_term_key_is_0600(monkeypatch, tmp_path, assert_private_mode):
     """The state file holds the accessory's key and the paired controllers:
     0600 like the pin file, whatever mode pyhap's own write leaves."""
     path = tmp_path / "vimar_intercom.e1.homekit.state"
@@ -1339,7 +1339,7 @@ def test_the_state_file_with_the_long_term_key_is_0600(monkeypatch, tmp_path):
     driver.persist_file = str(path)
     driver.persist()
     assert path.read_text() == "{}"
-    assert os.stat(path).st_mode & 0o777 == 0o600
+    assert_private_mode(path)
 
 
 def test_the_audio_does_not_wait_for_the_picture(acc, monkeypatch):
