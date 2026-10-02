@@ -122,10 +122,19 @@ def test_audio_ws_sends_the_state_and_replays_the_current_video(views, monkeypat
     monkeypatch.setattr(media, "ws_send_bytes", lambda data, only=None: None)
     clients: set = set()
     ws, got = _talk(views, monkeypatch, ViewHub(), [], clients=clients)
-    assert got == [{"type": "state", "registered": True, "in_call": False}]
+    assert got == [{"type": "state", "registered": True, "in_call": False, "ringing": False}]
     # Through the client's own queue, not straight to its socket.
     assert replayed[0].func is media.ws_send_bytes and replayed[0].keywords == {"only": ws}
     assert clients == set()  # removed when it left
+
+
+def test_audio_ws_tells_a_new_client_that_the_panel_is_ringing(views, monkeypatch):
+    # A client joining mid-ring (an Echo through Scrypted) watches instead of
+    # placing a call over the ring.
+    hub = ViewHub()
+    hub.is_ringing = True
+    _, got = _talk(views, monkeypatch, hub, [])
+    assert got[0]["type"] == "state" and got[0]["ringing"] is True
 
 
 def test_audio_ws_mic_audio_goes_to_the_panel_only_in_call(views, monkeypatch):

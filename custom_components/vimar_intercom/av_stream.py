@@ -220,6 +220,10 @@ async def _start_av_ffmpeg_locked():
         # on loopback, and with the default buffer packets were lost ("RTP:
         # missed N packets"), which broke the H.264 stream (fork, 0287148).
         "-buffer_size", "655360",
+        # The forward reaches ffmpeg in arrival order. With the default 0.1 s
+        # max_delay ffmpeg gave late packets up ("max delay reached") and
+        # +discardcorrupt dropped the frame.
+        "-max_delay", "300000", "-reorder_queue_size", "1024",
         "-i", sdp_path,
         "-c:v", "copy",
         # G.711 non è un codec valido in MPEG-TS: con «copy» finiva come dati

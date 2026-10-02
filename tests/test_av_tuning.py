@@ -95,6 +95,26 @@ def test_the_input_has_a_large_receive_buffer_and_no_mux_preload(monkeypatch, fr
     assert cmd[cmd.index("-muxdelay") + 1] == "0"
 
 
+def test_the_input_waits_for_out_of_order_packets(monkeypatch, fresh):
+    # The forward reaches ffmpeg in arrival order; with the default 0.1 s max_delay
+    # ffmpeg logged "max delay reached" and dropped frames (frozen video on Alexa).
+    async def listening(proc, timeout=0.5):
+        return True
+
+    monkeypatch.setattr(av, "_wait_until_ffmpeg_listens", listening)
+    monkeypatch.setattr(media, "video_proto", None)
+
+    async def run():
+        await av._start_av_ffmpeg_locked()
+        await av._stop_av_ffmpeg_locked()
+
+    asyncio.run(run())
+    cmd = fresh[0].cmd
+    i = cmd.index("-i")
+    assert cmd[cmd.index("-max_delay") + 1] == "300000" and cmd.index("-max_delay") < i
+    assert cmd[cmd.index("-reorder_queue_size") + 1] == "1024" and cmd.index("-reorder_queue_size") < i
+
+
 # ─── waiting for ffmpeg's ports ──────────────────────────────────────────────
 
 def test_bound_ports_are_read_from_proc_net_udp(monkeypatch, tmp_path):

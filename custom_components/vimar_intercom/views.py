@@ -96,7 +96,7 @@ class VimarAudioWSView(HomeAssistantView):
 
     Text messages (JSON):
       Client → Server: {"action": "call"|"hangup"|"door"|"register"|"status"}
-      Server → Client: {"type": "state"|"call_started"|"call_ended"|"ring"|"door"|"error", ...}
+      Server → Client: {"type": "state" (the first one also has "ringing")|"call_started"|"call_ended"|"ring"|"door"|"error", ...}
     """
 
     url = "/api/vimar_intercom/audio_ws"
@@ -156,6 +156,9 @@ class VimarAudioWSView(HomeAssistantView):
             "type": "state",
             "registered": hub.registered,
             "in_call": hub.in_call,
+            # A client joining mid-ring (an Echo through Scrypted) can watch
+            # instead of placing a call over the ring.
+            "ringing": hub.is_ringing,
         }))
 
         loud_ms = 0.0  # voce di fila sopra soglia mentre squilla
