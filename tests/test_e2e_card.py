@@ -769,6 +769,8 @@ def test_decoder_gets_avc_description_and_length_prefixed_nals(monkeypatch, engi
                 sps_len = d[6] << 8 | d[7]
                 assert d[8] & 0x1F == 7 and d[8 + sps_len] == 1 and d[11 + sps_len] & 0x1F == 8, cfg
                 assert cfg["latency"] is (not ios), cfg
+                # SD H.264 without VUI colour info: browsers would assume BT.709
+                assert cfg["cs"] == {"primaries": "smpte170m", "transfer": "smpte170m", "matrix": "smpte170m", "fullRange": False}, cfg
                 kind, *head = t["chunk"]
                 assert kind == "key" and head[:4] != [0, 0, 0, 1] and head[4] & 0x1F == 5, t["chunk"]
                 assert t["av"] == [] and not t["errors"], t

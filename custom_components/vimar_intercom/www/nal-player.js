@@ -110,7 +110,10 @@ class NalPlayer {
     // a reference the picture smears until the next keyframe. Elsewhere latency wins.
     // Codec non supportato: arriva da `error`.
     const ios = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-    this._dec.configure({ codec, description, optimizeForLatency: !ios });
+    // The panel's SD (PAL) H.264 has no colour info in its VUI and browsers then assume BT.709,
+    // which tints skin and sky. Say BT.601 explicitly.
+    const colorSpace = { primaries: "smpte170m", transfer: "smpte170m", matrix: "smpte170m", fullRange: false };
+    this._dec.configure({ codec, description, colorSpace, optimizeForLatency: !ios });
     this._cfgSps = this._sps;
     this._cfgPps = this._pps;
   }

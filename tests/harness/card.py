@@ -35,7 +35,7 @@ if (window.VideoDecoder) {  // sonda di latenza (il primo fotogramma dipinto), c
   const VD = window.VideoDecoder;
   window.VideoDecoder = class extends VD {
     constructor(init) { super({ ...init, output: (f) => { T.firstFrameAt ||= Date.now(); init.output(f); } }); }
-    configure(c) { (T.vdCfg ||= []).push({ codec: c.codec, desc: [...new Uint8Array(c.description || [])], latency: c.optimizeForLatency }); super.configure(c); }
+    configure(c) { (T.vdCfg ||= []).push({ codec: c.codec, desc: [...new Uint8Array(c.description || [])], latency: c.optimizeForLatency, cs: c.colorSpace }); super.configure(c); }
     decode(c) { if (!T.chunk) { const b = new Uint8Array(c.byteLength); c.copyTo(b); T.chunk = [c.type, ...b.slice(0, 5)]; } super.decode(c); }
   };
 }

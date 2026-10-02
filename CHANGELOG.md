@@ -12,6 +12,7 @@ Italian and are kept as they were written.
   stars badges are gone, since HACS already shows them at the top of the page.
 ### Fixed
 
+- Card video colours looked off (skin and sky tints): the panel's SD H.264 carries no colour info, so browsers assumed BT.709. The decoder is now configured with BT.601.
 - Live video froze for up to 3 s after each keyframe on cloud plants: packets the relay delivered a few milliseconds out of order were treated as lost. The reorder buffer now waits up to 80 ms for a gap.
 - **The door is opened with your plant's own command** ([#58](../../issues/58)): the lock, the *Open Door* button,
   HomeKit's gate and `open_door` without `command` now send the `MSG` of the phonebook's door actuator for that
