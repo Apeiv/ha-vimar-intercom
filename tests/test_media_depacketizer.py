@@ -160,11 +160,47 @@ def test_nuovo_ssrc_risincronizza():
 
 def test_buco_nella_sequenza_si_salta():
     p, got, _ = _video_rx()
+    p.REORDER_WAIT = 0                 # il tempo d'attesa del buco è nel test sotto
     p.datagram_received(_pkt(20), p.remote_addr)
     for seq in range(30, 40):          # 21..29 persi; IDR: i P dopo un buco si scartano
         p.datagram_received(_pkt(seq, nal=0x65), p.remote_addr)
     assert got == [20] + list(range(30, 40))[:len(got) - 1]
     assert got[-1] >= 34               # al più REORDER_BUF_SIZE pacchetti trattenuti
+
+
+def _fua(seq: int, first=False, last=False) -> bytes:
+    hdr = 0x65 & 0x1F | (0x80 if first else 0) | (0x40 if last else 0)
+    return (struct.pack("!BBHII", 0x80, 96, seq, 0, 0x1234)
+            + bytes([0x7C, hdr]) + seq.to_bytes(2, "big") + b"\xaa" * 20)
+
+
+def test_idr_burst_reordered_by_the_relay_is_not_lost(monkeypatch):
+    """40515 over the cloud: a keyframe's packets arrive up to 12 places late, ms later."""
+    now = [100.0]
+    monkeypatch.setattr(mh.time, "monotonic", lambda: now[0])
+    p, _, calls = _video_rx()
+    nals = []
+    p.frame_sink = nals.append
+    p._lost = lambda why: pytest.fail(why)
+    order = [0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 1]  # seq 1 arrives 10 places late
+    for i in order:
+        now[0] += 0.001
+        p.datagram_received(_fua(500 + i, first=i == 0, last=i == 11), p.remote_addr)
+    assert not p._drop_until_idr
+    assert calls == list(range(500, 512))
+    assert len(nals) == 1 and len(nals[0]) > 12 * 20
+
+
+def test_a_real_gap_is_declared_lost_after_the_reorder_wait(monkeypatch):
+    now = [100.0]
+    monkeypatch.setattr(mh.time, "monotonic", lambda: now[0])
+    p, _, _ = _video_rx()
+    p.datagram_received(_pkt(20), p.remote_addr)
+    p.datagram_received(_pkt(22), p.remote_addr)   # 21 never comes
+    assert not p._drop_until_idr
+    now[0] += p.REORDER_WAIT + 0.01
+    p.datagram_received(_pkt(23), p.remote_addr)
+    assert p._drop_until_idr
 
 
 @pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg non installato")
@@ -340,6 +376,7 @@ def test_pacchetto_singolo_perso_fra_due_nal_scarta_i_p_fino_all_idr(monkeypatch
     """Perso un pacchetto intero (NAL singolo, non FU-A): il depacketizer da solo non se
     ne accorge, ma il buco in uscita dal riordino sì: P via fino al prossimo IDR."""
     p, got, _ = _video_rx()
+    p.REORDER_WAIT = 0
     asked: list[int] = []
     monkeypatch.setattr(mh, "request_keyframe", lambda: asked.append(1))
     for seq in (20, 21, 23, 24, 25, 26, 27, 28, 29):        # 22 perso
