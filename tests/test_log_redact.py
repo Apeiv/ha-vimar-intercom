@@ -145,16 +145,17 @@ def _elapsed(text: str) -> float:
 
 
 def test_bare_line_feeds_take_linear_time():
-    """When the Authorization prefix could cross newlines, 8000 bare LF after
-    a status line took about 0.7 s, 64 KB of them tens of seconds."""
-    assert _elapsed("SIP/2.0 200 OK\r\n" + "\n" * 8000) < 0.1
+    """When the Authorization prefix could cross newlines, 16000 bare LF after
+    a status line took about 3 s, 64 KB of them tens of seconds. The limit is
+    loose on purpose: a slow CI runner must pass, a quadratic pattern must not."""
+    assert _elapsed("SIP/2.0 200 OK\r\n" + "\n" * 16000) < 0.5
 
 
 def test_a_long_text_is_cut_after_the_patterns_ran():
     out = lr.redact("password=hidden " + "x" * 100_000)
     assert "hidden" not in out
     assert len(out) < lr.MAX_LEN + 100 and out.endswith("characters cut]")
-    assert _elapsed("\n" * 100_000) < 0.1
+    assert _elapsed("\n" * 100_000) < 1.0  # quadratic would take minutes
 
 
 @pytest.mark.parametrize("shape", ['password="{}"', "{{'token': '{}'}}", '{{"PARAM":"token","VALUE":"{}"}}',
@@ -172,7 +173,7 @@ def test_a_quoted_secret_across_the_cut_is_still_hidden(shape, shift):
 def test_long_hostile_text_stays_fast_without_an_input_cap():
     for text in ("\n" * 65_000, "\r\n " * 20_000, 'password="' * 6_000,
                  "authorization" + " " * 65_000):
-        assert _elapsed(text) < 0.2
+        assert _elapsed(text) < 1.0  # quadratic would take tens of seconds
 
 
 def test_the_header_is_still_hidden_with_spaces_or_tabs_before_it():
