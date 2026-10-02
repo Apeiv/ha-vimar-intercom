@@ -12,6 +12,7 @@ Italian and are kept as they were written.
   stars badges are gone, since HACS already shows them at the top of the page.
 ### Fixed
 
+- Live video froze for up to 3 s after each keyframe on cloud plants: packets the relay delivered a few milliseconds out of order were treated as lost. The reorder buffer now waits up to 80 ms for a gap.
 - **The door is opened with your plant's own command** ([#58](../../issues/58)): the lock, the *Open Door* button,
   HomeKit's gate and `open_door` without `command` now send the `MSG` of the phonebook's door actuator for that
   panel, as the VIEW app does, instead of a fixed `OPEN_2F`. The body is taken only together with its panel, since

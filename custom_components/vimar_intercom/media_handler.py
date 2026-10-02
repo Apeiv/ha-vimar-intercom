@@ -370,7 +370,12 @@ class RTPVideoProtocol(asyncio.DatagramProtocol):
     # _ps_by_panel nello storage di HA.
     on_sps_pps = None
 
-    REORDER_BUF_SIZE = 5  # Hold up to 5 packets for reordering (~30ms at 15fps)
+    # A keyframe arrives as a burst of ~12 packets that the cloud relay reorders
+    # by up to 12 places and 26 ms (40515, measured): counting 5 packets gave up
+    # on packets that were still coming. A gap waits REORDER_WAIT, or until the
+    # buffer holds REORDER_BUF_SIZE packets.
+    REORDER_BUF_SIZE = 64
+    REORDER_WAIT = 0.08
 
     def __init__(self):
         self.transport = None
@@ -422,6 +427,7 @@ class RTPVideoProtocol(asyncio.DatagramProtocol):
         self._keyframe_at = 0.0           # ultimo keyframe chiesto per un pacchetto perso
         # RTP reorder buffer — fixes out-of-order UDP packets
         self._reorder_buf = {}  # seq -> payload
+        self._gap_at = None     # when the gap the buffer waits for appeared
         self._next_seq = None   # next expected sequence number
         self._ssrc = None       # SSRC del flusso che stiamo riordinando
         # Diagnostics
@@ -603,11 +609,19 @@ class RTPVideoProtocol(asyncio.DatagramProtocol):
         self._reorder_buf[seq] = payload
 
         while True:
+            if self._next_seq in self._reorder_buf:
+                self._gap_at = None
             while self._next_seq in self._reorder_buf:
                 self._depacketize(self._reorder_buf.pop(self._next_seq), self._next_seq)
                 self._next_seq = (self._next_seq + 1) & 0xFFFF
-            if len(self._reorder_buf) <= self.REORDER_BUF_SIZE:
+            if not self._reorder_buf:
                 return
+            now = time.monotonic()
+            if self._gap_at is None:
+                self._gap_at = now
+            if len(self._reorder_buf) <= self.REORDER_BUF_SIZE and now - self._gap_at < self.REORDER_WAIT:
+                return
+            self._gap_at = None
             # Buco che non si riempie più: salta al primo pacchetto disponibile.
             lost = self._next_seq
             self._next_seq = min(self._reorder_buf,
@@ -1006,6 +1020,7 @@ async def setup_media(remote_sdp, local_crypto_key=None, local_video_crypto_key=
         video_proto._gop_msgs, video_proto._gop_hdr = [], []
         video_proto._drop_until_idr = False
         video_proto._reorder_buf = {}
+        video_proto._gap_at = None
         video_proto._next_seq = None
         video_proto._gop = video_proto._gop_ts = None
         video_proto._srtp_fail = 0
