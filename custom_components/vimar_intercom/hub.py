@@ -380,6 +380,13 @@ class VimarIntercomHub(PlantMessages, RingMedia):
         """A ring is on: a real one, or the simulate_ring test ring."""
         return sip.ringing() or self._sim_ring is not None
 
+    def state_message(self, **extra) -> dict:
+        """/audio_ws "state", the same fields in every reply and broadcast. "ringing"
+        lets a client joining mid-ring (an Echo through Scrypted) watch instead of
+        calling over it."""
+        return {"type": "state", "registered": self.registered, "in_call": self.in_call,
+                "ringing": self.is_ringing, **extra}
+
     def _spawn(self, coro, name: str) -> asyncio.Task:
         """Run `coro` in the background, holding the task until it is done.
 
@@ -516,12 +523,7 @@ class VimarIntercomHub(PlantMessages, RingMedia):
         self._touch()
         # Notify WS clients of state change
         if self._ws_broadcast_fn:
-            self._spawn(self._ws_broadcast_fn({
-                "type": "state",
-                "registered": sip.registered,
-                "in_call": sip.in_call,
-                "ringing": self.is_ringing,  # as views._state
-            }), "WS state broadcast")
+            self._spawn(self._ws_broadcast_fn(self.state_message()), "WS state broadcast")
 
     async def stream_opened(self, reflex_guard: bool = True) -> bool:
         """Uno spettatore apre /av. False = niente chiamata in vista, inutile aspettare.

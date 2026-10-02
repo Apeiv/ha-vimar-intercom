@@ -169,7 +169,7 @@ async def _run(enc, standby: bytes, is_live, on_live, port: int) -> None:
     audio = None
     loop = asyncio.get_running_loop()
     t0, n = loop.time(), 0
-    dead_since: float | None = None
+    last_live = t0  # last tick with the video, for _DEAD_GRACE
     cancelled = False
     _pcm.clear()
     # Un tap fra tanti (media.pcm_taps): non sostituisce quelli già agganciati, es. il
@@ -180,13 +180,11 @@ async def _run(enc, standby: bytes, is_live, on_live, port: int) -> None:
         while not pump.done():
             live = is_live()
             if live:
-                dead_since = None
-            elif dead_since is None:
-                dead_since = loop.time()
+                last_live = loop.time()
+            gone = loop.time() - last_live >= _DEAD_GRACE
             if live and (decoder is None or decoder.done()):
                 decoder = asyncio.create_task(_decode(is_live, on_live))
-            elif (not live and loop.time() - dead_since >= _DEAD_GRACE
-                  and decoder and not decoder.done() and not decoder.cancelling()):
+            elif gone and decoder and not decoder.done() and not decoder.cancelling():
                 # At call end the decoder can attach to /av again after the media
                 # stopped but before in_call drops, then wait forever on an ffmpeg
                 # with no RTP while _live keeps the panel's last frame. Cancelled
@@ -196,8 +194,7 @@ async def _run(enc, standby: bytes, is_live, on_live, port: int) -> None:
             del _pcm[:_CHUNK]
             audio.write(chunk + _SILENCE[len(chunk):])  # mancante = silenzio, mai un buco
             # The panel frame within the grace too: no standby flash while answering.
-            showing = live or loop.time() - dead_since < _DEAD_GRACE
-            enc.stdin.write((showing and _live) or standby)
+            enc.stdin.write((not gone and _live) or standby)
             await audio.drain()
             await enc.stdin.drain()
             n += 1

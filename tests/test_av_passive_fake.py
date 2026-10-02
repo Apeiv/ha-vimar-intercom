@@ -327,14 +327,10 @@ def test_while_live_the_encoder_gets_the_panel_frame_and_its_audio(monkeypatch):
     assert enc.killed and media.pcm_taps == []
 
 
-def test_the_end_of_the_video_brings_back_the_standby_even_with_a_stuck_decoder(monkeypatch):
-    # The decoder can reattach to /av right as the call ends and then wait forever on
-    # an ffmpeg with no RTP: it must be cancelled, and its last frame not shown.
-    _run_env(monkeypatch)
-    enc = _Proc()
-    cancelled = []
-
-    async def stuck_decode(is_live, on_live):
+def _stuck_decoder(started: list, cancelled: list):
+    """A decoder that shows b"LIVE" and then waits until it is cancelled."""
+    async def decode(is_live, on_live):
+        started.append(1)
         av_passive._live = b"LIVE"
         try:
             await asyncio.Event().wait()
@@ -342,7 +338,16 @@ def test_the_end_of_the_video_brings_back_the_standby_even_with_a_stuck_decoder(
             cancelled.append(1)
             raise
 
-    monkeypatch.setattr(av_passive, "_decode", stuck_decode)
+    return decode
+
+
+def test_the_end_of_the_video_brings_back_the_standby_even_with_a_stuck_decoder(monkeypatch):
+    # The decoder can reattach to /av right as the call ends and then wait forever on
+    # an ffmpeg with no RTP: it must be cancelled, and its last frame not shown.
+    _run_env(monkeypatch)
+    enc = _Proc()
+    cancelled = []
+    monkeypatch.setattr(av_passive, "_decode", _stuck_decoder([], cancelled))
     monkeypatch.setattr(av_passive, "_DEAD_GRACE", 0.2)
     live = [True]
 
@@ -351,17 +356,19 @@ def test_the_end_of_the_video_brings_back_the_standby_even_with_a_stuck_decoder(
         while b"LIVE" not in enc.stdin.writes:
             await asyncio.sleep(0.01)
         live[0] = False
-        n = len(enc.stdin.writes)
         for _ in range(200):
             if cancelled:
                 break
             await asyncio.sleep(0.01)
+        n = len(enc.stdin.writes)
+        while len(enc.stdin.writes) < n + 3:
+            await asyncio.sleep(0.01)
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
-        return n
 
     asyncio.run(run())
-    assert enc.stdin.writes[-1] == b"STANDBY", "no frozen panel frame after the call"
+    # #87: the panel frame stayed until restart.
+    assert enc.stdin.writes[-3:] == [b"STANDBY"] * 3, "no frozen panel frame after the call"
     assert cancelled == [1], "the stuck decoder is cancelled when the video ends"
 
 
@@ -372,17 +379,8 @@ def test_answering_a_ring_does_not_restart_the_decoder(monkeypatch):
     _run_env(monkeypatch)
     enc = _Proc()
     started, cancelled = [], []
-
-    async def decode(is_live, on_live):
-        started.append(1)
-        av_passive._live = b"LIVE"
-        try:
-            await asyncio.Event().wait()
-        except asyncio.CancelledError:
-            cancelled.append(1)
-            raise
-
-    monkeypatch.setattr(av_passive, "_decode", decode)
+    monkeypatch.setattr(av_passive, "_decode", _stuck_decoder(started, cancelled))
+    monkeypatch.setattr(av_passive, "_DEAD_GRACE", 60)  # a slow CI tick must not end it
     live = [True]
 
     async def run():
