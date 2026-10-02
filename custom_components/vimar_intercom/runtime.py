@@ -18,6 +18,7 @@ import secrets as _secrets
 import uuid as _uuid
 
 from . import const as _const
+from . import plant_state as _plant_state
 
 _LOGGER = _logging.getLogger(__name__)
 
@@ -53,12 +54,10 @@ VIDEO_ENABLED: bool = True
 # Dalla 1.0.11 l'opzione ha tre valori (issue #4): "auto" (default) segue il
 # `media_enc` che l'impianto dichiara nel GET_INIT_STATUS_REPLY lungo ("srtp" su
 # un 40515/2FV2 in cloud); senza dichiarazione (risposta corta, come sul 40507)
-# resta in chiaro. "on" / "off" forzano. MEDIA_ENC è il valore effettivo, quello
-# che legge sip_client.build_sdp.
+# resta in chiaro. "on" / "off" forzano. Il valore effettivo, quello che legge
+# sip_client.build_sdp, è plant_state.MEDIA_ENC.
 MEDIA_ENC_MODES = ("auto", "on", "off")
 MEDIA_ENC_OPTION: str = "auto"
-MEDIA_ENC_PLANT: bool | None = None   # None = l'impianto non l'ha dichiarato
-MEDIA_ENC: bool = False
 
 # Risposta a voce su /audio_ws: "declared" (default) solo chi manda ?voice_answer=1,
 # "off" mai, "any" qualsiasi connessione con microfono.
@@ -83,25 +82,6 @@ def media_enc_mode(value) -> str:
         return value.strip().lower()
     return "auto"
 
-
-def _recompute_media_enc() -> None:
-    global MEDIA_ENC
-    if MEDIA_ENC_OPTION == "on":
-        MEDIA_ENC = True
-    elif MEDIA_ENC_OPTION == "off":
-        MEDIA_ENC = False
-    else:
-        MEDIA_ENC = bool(MEDIA_ENC_PLANT)
-
-
-def set_plant_media_enc(value) -> bool:
-    """`media_enc` dal GET_INIT_STATUS_REPLY ("srtp", "none", ...). Restituisce True
-    se il valore effettivo è cambiato."""
-    global MEDIA_ENC_PLANT
-    before = MEDIA_ENC
-    MEDIA_ENC_PLANT = None if value is None else str(value).strip().lower() == "srtp"
-    _recompute_media_enc()
-    return MEDIA_ENC != before
 
 # ─── Attuatori dinamici (da options flow, ricavati dalla rubrica) ────────────
 # Lista di dict {"name","msg","target","icon"} prodotta da tools/parse_rubrica.py
@@ -191,15 +171,6 @@ AV_KEY_PARAM = "auth"
 # and refuses any change with a 503, so it is stored rather than hard-coded.
 DEVICE_NAME: str = _const.MY_NAME
 
-# ─── Modello rilevato via SIP (vedi model_detect.py) ─────────────────────────
-# Popolato all'avvio dal config entry (ultimo valore rilevato) e aggiornato a
-# runtime appena il citofono si presenta con il suo User-Agent SIP.
-DETECTED_MODEL:    str = ""   # es. "Elvox Tab 7S"
-DETECTED_FW:       str = ""   # versione firmware, se presente nello User-Agent
-DETECTED_UA:       str = ""   # User-Agent grezzo, per diagnostica
-DETECTED_PRIORITY: int = 99   # indice del pattern che ha rilevato il modello
-
-
 def new_device_identity() -> dict[str, str]:
     """Genera l'identità dispositivo di questa installazione.
 
@@ -280,9 +251,8 @@ def configure(data: dict) -> None:
     global LOCAL_DOMAIN, CLOUD_DOMAIN
     global SIP_PROXY, LOCAL_PROXY
     global GID, PLANT_TYPE, MAC_CITOFONO
-    global USE_LOCAL_UDP, LOCAL_UDP_PORT, MEDIA_ENC_OPTION, MEDIA_ENC_PLANT, VIDEO_ENABLED
+    global USE_LOCAL_UDP, LOCAL_UDP_PORT, MEDIA_ENC_OPTION, VIDEO_ENABLED
     global INTERCOM, DOOR_ESTERNO, VOICE_ANSWER
-    global DETECTED_MODEL, DETECTED_FW, DETECTED_UA, DETECTED_PRIORITY
     global ACTUATORS
     global SGA_TARGET, PICG_TARGET
     global CAMERA_TARGET, INTERNAL_PANEL_TARGET, DOOR_TARGET, CAMERA_TARGET_CONFIGURED
@@ -306,8 +276,6 @@ def configure(data: dict) -> None:
     VIDEO_ENABLED  = bool(data.get("video_enabled", True))
     MEDIA_ENC_OPTION = media_enc_mode(data.get("media_enc"))
     VOICE_ANSWER = voice_answer_mode(data.get("voice_answer"))
-    MEDIA_ENC_PLANT  = None   # lo ridice l'impianto al prossimo GET_INIT_STATUS_REPLY
-    _recompute_media_enc()
 
     # ─── Scelta del dominio SIP attivo ───────────────────────────────────────
     # Il QR porta due domini: «domain» (locale del Tab) e «cdomain» (cloud).
@@ -405,10 +373,7 @@ def configure(data: dict) -> None:
     # shared or empty one (empty would make every key "valid").
     AV_KEY = str(data.get("av_key") or "").strip() or new_av_key()
 
-    # Modello rilevato in una sessione precedente: riparte da lì, così le
-    # entità mostrano subito il valore giusto anche prima del primo dialogo SIP.
-    DETECTED_MODEL    = data.get("detected_model", "") or ""
-    DETECTED_FW       = data.get("detected_fw", "") or ""
-    DETECTED_UA       = data.get("detected_ua", "") or ""
-    DETECTED_PRIORITY = 99 if not DETECTED_MODEL else int(data.get("detected_priority", 98))
+    # What the plant said in the previous session: media encryption is forgotten,
+    # the detected model starts again from the entry.
+    _plant_state.reset(data, MEDIA_ENC_OPTION)
 

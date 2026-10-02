@@ -15,6 +15,7 @@ import time
 from . import const as C
 from . import log_redact, model_detect, validate
 from . import media_handler as media
+from . import plant_state as S
 from . import runtime as R
 from .inventory import DeviceInventory
 
@@ -717,17 +718,17 @@ def _apply_ua(ua: str) -> None:
     if not model:
         return
     # Un match più specifico (priorità più bassa) sovrascrive quello corrente
-    if model == R.DETECTED_MODEL and (fw or "") == R.DETECTED_FW:
+    if model == S.DETECTED_MODEL and (fw or "") == S.DETECTED_FW:
         return
-    if priority > R.DETECTED_PRIORITY:
+    if priority > S.DETECTED_PRIORITY:
         return
 
     _LOGGER.info("Modello citofono rilevato: %s (fw=%s) da User-Agent «%s»",
                  model, fw or "n/d", ua)
-    R.DETECTED_MODEL    = model
-    R.DETECTED_FW       = fw or ""
-    R.DETECTED_UA       = ua
-    R.DETECTED_PRIORITY = priority
+    S.DETECTED_MODEL    = model
+    S.DETECTED_FW       = fw or ""
+    S.DETECTED_UA       = ua
+    S.DETECTED_PRIORITY = priority
 
     if _model_callback:
         try:
@@ -1217,11 +1218,11 @@ def _line_security(offer: dict | None, kind: str) -> tuple[bool, dict | None]:
     cannot be used and is refused (port 0, RFC 4568 section 7.1.2). A line the
     offer declined (port 0) stays declined, and a line the offer lacks is not
     answered at all (build_sdp leaves it out). Only when we make the offer does
-    the plant setting (R.MEDIA_ENC) decide.
+    the plant setting (S.MEDIA_ENC) decide.
     """
     offered = [m for m in (_offered_line(offer, "audio"), _offered_line(offer, "video")) if m]
     if not offered:
-        return True, (dict(_DEFAULT_CRYPTO) if getattr(R, "MEDIA_ENC", False) else None)
+        return True, (dict(_DEFAULT_CRYPTO) if getattr(S, "MEDIA_ENC", False) else None)
     line = _offered_line(offer, kind)
     if line is None or not line.get("port"):
         return False, None
@@ -1242,7 +1243,7 @@ def build_sdp(offer: dict | None = None, reuse_keys: bool = False):
     Su questo impianto (verificato sul campo 20/08/2026 verso la targa 55100)
     il media viaggia in RTP IN CHIARO: se si offre SRTP (RTP/SAVP + a=crypto)
     la targa baresip non risponde e tutto il media fallisce. Perciò il default
-    è RTP/AVP senza a=crypto. SRTP resta disponibile via R.MEDIA_ENC=True per
+    è RTP/AVP senza a=crypto. SRTP resta disponibile via S.MEDIA_ENC=True per
     impianti che negoziano media_enc. As an answer, each m-line mirrors the
     offer's profile and crypto suite for that line (see _line_security).
 

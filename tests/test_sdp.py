@@ -6,19 +6,19 @@ SRTP, quindi build_sdp deve offrire RTP/AVP senza a=crypto quando MEDIA_ENC=Fals
 import pytest
 
 sip = pytest.importorskip("custom_components.vimar_intercom.sip_client")
-from custom_components.vimar_intercom import runtime as R  # noqa: E402
+from custom_components.vimar_intercom import plant_state as S  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
 def _restore_media_enc():
-    prev = getattr(R, "MEDIA_ENC", False)
+    prev = getattr(S, "MEDIA_ENC", False)
     yield
-    R.MEDIA_ENC = prev
+    S.MEDIA_ENC = prev
 
 
 def test_build_sdp_plain_rtp_default():
     """MEDIA_ENC=False → RTP/AVP, nessuna riga a=crypto, chiavi locali None."""
-    R.MEDIA_ENC = False
+    S.MEDIA_ENC = False
     sdp = sip.build_sdp()
     assert "m=audio" in sdp and "RTP/AVP" in sdp
     assert "m=video" in sdp
@@ -35,7 +35,7 @@ def test_build_sdp_plain_rtp_default():
 
 def test_build_sdp_srtp_when_enabled():
     """MEDIA_ENC=True → RTP/SAVP con a=crypto e chiavi base64 generate."""
-    R.MEDIA_ENC = True
+    S.MEDIA_ENC = True
     sdp = sip.build_sdp()
     assert "RTP/SAVP 0 8 101" in sdp
     assert "RTP/SAVP 96" in sdp

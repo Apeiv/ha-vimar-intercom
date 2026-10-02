@@ -9,6 +9,7 @@ import types
 import pytest
 
 from custom_components.vimar_intercom import button, camera, device, select, sensor, switch, text
+from custom_components.vimar_intercom import plant_state as S
 from custom_components.vimar_intercom import runtime as R
 from custom_components.vimar_intercom.const import DOMAIN, MODEL
 
@@ -99,13 +100,13 @@ def _ids(entities):
 # ─── device ──────────────────────────────────────────────────────────────────
 
 def test_device_info_uses_the_detected_model_and_firmware(monkeypatch):
-    monkeypatch.setattr(R, "DETECTED_MODEL", None)
-    monkeypatch.setattr(R, "DETECTED_FW", None)
+    monkeypatch.setattr(S, "DETECTED_MODEL", None)
+    monkeypatch.setattr(S, "DETECTED_FW", None)
     info = device.device_info("e1")
     assert info["model"] == MODEL and "sw_version" not in info
     assert info["identifiers"] == {(DOMAIN, "e1")}
-    monkeypatch.setattr(R, "DETECTED_MODEL", "Elvox Tab 7S")
-    monkeypatch.setattr(R, "DETECTED_FW", "1.2.3")
+    monkeypatch.setattr(S, "DETECTED_MODEL", "Elvox Tab 7S")
+    monkeypatch.setattr(S, "DETECTED_FW", "1.2.3")
     info = device.device_info("e1")
     assert info["model"] == "Elvox Tab 7S" and info["sw_version"] == "1.2.3"
 

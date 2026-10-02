@@ -173,12 +173,15 @@ def pytest_collection_modifyitems(config, items):
 
 @pytest.fixture(autouse=True)
 def _keep_runtime(monkeypatch):
-    """runtime.configure() rewrites module globals (SIP_USER, SIP_DOMAIN, ...):
-    restore every uppercase attribute after each test so none leaks into the next."""
+    """runtime.configure() rewrites module globals (SIP_USER, SIP_DOMAIN, ...) and
+    resets plant_state's: restore every uppercase attribute of both after each
+    test so none leaks into the next."""
+    from custom_components.vimar_intercom import plant_state as S
     from custom_components.vimar_intercom import runtime as R
-    for name in dir(R):
-        if name.isupper():
-            monkeypatch.setattr(R, name, getattr(R, name))
+    for mod in (R, S):
+        for name in dir(mod):
+            if name.isupper():
+                monkeypatch.setattr(mod, name, getattr(mod, name))
 
 
 @pytest.fixture(autouse=True)
