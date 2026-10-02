@@ -151,24 +151,11 @@ def rms(pcm: bytes) -> float:
 # Le porte dell'ffmpeg di /av si leggono da av_stream (non da const) a ogni
 # pacchetto: il banco di prova (tests/harness/rig.py) le sostituisce lì.
 
-#: Replays in a row before a warning, and again every this many (~2-5 s of media).
-REPLAY_WARN_RUN = 250
-
-
 def _replay_dropped(proto, kind: str) -> None:
-    """Count an authentic packet the SRTP context dropped as a replay.
-
-    A stray duplicate is normal. A panel that restarts its sequence lower on the
-    same SSRC is not: every packet after that is a "replay" and the media stops
-    with nothing in the log. Debug on the call's first one, a warning for a long run.
-    """
-    proto._replay_run += 1
+    """An authentic packet the SRTP context dropped as a duplicate: debug on the
+    call's first one. A sequence restart is not a replay (SRTPContext._is_fresh)."""
     if proto.srtp_rx.replayed == 1:
         _LOGGER.debug("SRTP %s: dropped a packet already received (replay)", kind)
-    if proto._replay_run % REPLAY_WARN_RUN == 0:
-        _LOGGER.warning("SRTP %s: the last %d packets were all dropped as replays (%d this call): "
-                        "did the panel restart its sequence on the same SSRC?",
-                        kind, proto._replay_run, proto.srtp_rx.replayed)
 
 
 def _from_the_call(proto, addr) -> bool:
@@ -227,7 +214,6 @@ class RTPAudioProtocol(asyncio.DatagramProtocol):
         self.pkt_count = 0
         self.srtp_rx: SRTPContext | None = None
         self.srtp_tx: SRTPContext | None = None
-        self._replay_run = 0  # SRTP replays in a row
         # Voce in uscita: μ-law in attesa del pacer (_tx_loop, 160 B ogni 20 ms).
         self.tx_buf = bytearray()
         self.tx_enabled = False   # False durante l'anteprima dello squillo
@@ -265,7 +251,6 @@ class RTPAudioProtocol(asyncio.DatagramProtocol):
                 if self.pkt_count == 0:
                     _LOGGER.warning("SRTP audio auth failed from %s (%dB)", addr, len(data))
                 return
-            self._replay_run = 0
         elif _from_the_call(self, addr):
             rtp = data
         else:
@@ -408,7 +393,6 @@ class RTPVideoProtocol(asyncio.DatagramProtocol):
         self.remote_addr = None
         self.pkt_count = 0
         self.srtp_rx: SRTPContext | None = None
-        self._replay_run = 0  # SRTP replays in a row
         # Forward plain RTP (H.264) to the AV ffmpeg only while it's running.
         # Enabled by av_stream.av_subscribe(), disabled by stop_av_ffmpeg() so we
         # never blast packets at a closed/absent socket.
@@ -517,7 +501,6 @@ class RTPVideoProtocol(asyncio.DatagramProtocol):
                     _LOGGER.warning("SRTP video auth FAIL #%d (pkt %dB)", self._srtp_fail, len(data))
                 return
             self._srtp_ok += 1
-            self._replay_run = 0
         elif _from_the_call(self, addr):
             rtp = data
         else:
@@ -1015,7 +998,7 @@ async def setup_media(remote_sdp, local_crypto_key=None, local_video_crypto_key=
         audio_proto.srtp_rx = None
         audio_proto.srtp_tx = None
         if remote_audio_key:
-            audio_proto.srtp_rx = SRTPContext(remote_audio_key, audio_suite)
+            audio_proto.srtp_rx = SRTPContext(remote_audio_key, audio_suite, "audio")
             _LOGGER.info("SRTP Audio RX context created")
         if local_crypto_key and remote_audio_key:
             audio_proto.srtp_tx = SRTPContext(local_crypto_key, audio_suite)
@@ -1061,7 +1044,7 @@ async def setup_media(remote_sdp, local_crypto_key=None, local_video_crypto_key=
         video_proto._nal_types = {}
         video_proto.srtp_rx = None
         if remote_video_key:
-            video_proto.srtp_rx = SRTPContext(remote_video_key, video_suite)
+            video_proto.srtp_rx = SRTPContext(remote_video_key, video_suite, "video")
             _LOGGER.info("SRTP Video RX — direct H.264 depacketization (no ffmpeg)")
         frame_grabber.start(video_proto)
         video_proto.send_stun()

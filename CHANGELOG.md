@@ -61,9 +61,11 @@ Italian and are kept as they were written.
   repeated without an `@`), stalling Home Assistant. The patterns no longer backtrack that way, and the
   User-Agent is cut at 256 characters before it is matched. Real headers match as before.
 - **SRTP replay window** ([#46](../../issues/46)): the receiving side of the call media had no replay protection, so one
-  captured voice or video packet, sent again, was accepted every time. An index already received, or older than
-  the last 128 per stream, is now dropped after authentication, as libsrtp does. Packets that merely arrive out
-  of order are still accepted.
+  captured voice or video packet, sent again, was accepted every time. An index already received among the
+  last 128 per stream is now dropped after authentication. One older than that restarts the window instead of
+  being dropped: on a cloud ring a single packet numbered far ahead on the same SSRC otherwise had the rest of
+  the stream refused, so no ring photo, no preview and no voice. Packets that merely arrive out of order are
+  still accepted.
 
 ## [1.0.18] - 2026-10-02
 
