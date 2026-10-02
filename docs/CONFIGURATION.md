@@ -152,6 +152,9 @@ everything just worked are as useful as the ones where something broke.
   Assistant authentication (the card loads them through signed paths). The second serves only
   `squillo_YYYYMMDD_HHMMSS[_mmm].jpg` / `.mp4` files inside `snapshot_dir`, nothing else (not
   even a clip still being written); the folder is never exposed under `/local`.
+- Away message upload from the card: `POST /api/vimar_intercom/away_upload?name=<file name>` with the
+  file as the body. Administrators only (others get 401); same rules as the settings upload (file name
+  only, mp3/wav/m4a, max 5 MB, checked while the body is read, never overwrites another file).
 - In local UDP mode, SIP packets from any host other than the intercom are dropped, so another
   device on the LAN can't fake a ring.
 - Plain RTP (no SRTP) is accepted only from the other end of the current call.

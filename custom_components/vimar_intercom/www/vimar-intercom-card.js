@@ -569,7 +569,22 @@ class VimarIntercomCard extends CardAudio(HTMLElement) {
         el.onchange = () => call("text", "set_value", { entity_id: ids.text, value: el.value });
         rows.push(row("text", "Testo del messaggio", el, true));
       }
-      if (ids.file) select("file", "File audio del messaggio", true);
+      if (ids.file) {  // il select, e sotto "Carica"/"Sostituisci" (solo admin: ids.file c'è solo per loro)
+        select("file", "File audio del messaggio", true);
+        const sel = rows.at(-1).querySelector("select"), wrap = document.createElement("div");
+        const up = document.createElement("button"), inp = document.createElement("input");
+        wrap.className = "set-up";
+        up.className = "set-ub";
+        inp.type = "file";
+        inp.accept = ".mp3,.wav,.m4a,audio/*";
+        inp.hidden = true;
+        up.onclick = () => inp.click();
+        // Il click della scelta file sale fino a .card, il cui onclick dà false (= preventDefault) e la chiuderebbe.
+        inp.onclick = (e) => e.stopPropagation();
+        inp.onchange = () => { const f = inp.files[0]; inp.value = ""; if (f) this._uploadAway(f, ids.file, up); };
+        sel.replaceWith(wrap);
+        wrap.append(sel, up, inp);
+      }
       body.replaceChildren(...rows);
     }
     for (const r of body.children) {
@@ -578,13 +593,46 @@ class VimarIntercomCard extends CardAudio(HTMLElement) {
       if (ctl.matches("button")) ctl.setAttribute("aria-checked", s?.state === "on");
       else if (ctl.matches("select")) {
         const opts = s?.attributes?.options || [];
-        if (ctl.options.length !== opts.length || opts.some((o, i) => ctl.options[i].value !== o)) ctl.replaceChildren(...opts.map((o) => new Option(o, o)));
+        // L'etichetta tradotta dall'entità ("none" → "Nessuno (usa il testo)"), il valore resta l'opzione.
+        if (ctl.options.length !== opts.length || opts.some((o, i) => ctl.options[i].value !== o))
+          ctl.replaceChildren(...opts.map((o) => new Option(this._hass.formatEntityState?.(s, o) ?? o, o)));
         if (this._root.activeElement !== ctl) ctl.value = s?.state;
+        const up = r.querySelector(".set-ub");
+        if (up) {
+          up.textContent = s?.state && s.state !== "none" ? "Sostituisci" : "Carica";
+          up.disabled = off || !!up._busy;  // _busy: upload in progress
+        }
       } else if (this._root.activeElement !== ctl) ctl.value = s && s.state !== "unknown" ? s.state : "";
       if (k === "vm") {  // da dove viene il messaggio: dall'attributo `modo` dello switch, se c'è
         const modo = s?.attributes?.modo, small = r.querySelector("small") || r.querySelector(".set-l").appendChild(document.createElement("small"));
         small.textContent = modo === "Home Assistant" ? "Messaggio di Home Assistant" : modo === "Tab" ? "Segreteria del Tab" : "";
       }
+    }
+  }
+
+  // Il file scelto va a /api/vimar_intercom/away_upload (solo admin) con l'utente di HA; salvato,
+  // diventa il messaggio e il select si rilegge subito invece che al prossimo giro (ogni minuto).
+  async _uploadAway(f, id, b) {
+    const e = this._set.querySelector(".set-e"), small = b.closest(".set-r").querySelector(".set-l small")
+      || b.closest(".set-r").querySelector(".set-l").appendChild(document.createElement("small"));
+    const ERR = {
+      upload_bad_type: "serve un file .mp3, .wav o .m4a con un nome semplice",
+      upload_too_big: "file troppo grande, massimo 5 MB",
+    };
+    e.textContent = small.textContent = "";
+    b.disabled = b._busy = true;
+    try {
+      if (f.size > 5 * 1024 * 1024) throw new Error(ERR.upload_too_big);
+      const r = await this._hass.fetchWithAuth(`/api/vimar_intercom/away_upload?name=${encodeURIComponent(f.name)}`, { method: "POST", body: f });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(ERR[j.error] || "file non salvato, guarda il log di Home Assistant");
+      await this._hass.callService("homeassistant", "update_entity", { entity_id: id });
+      small.textContent = `Caricato: ${j.file}`;
+    } catch (err) {
+      e.textContent = `Non riuscito: ${err.message || err}`;
+    } finally {
+      b._busy = false;
+      b.disabled = false;
     }
   }
 

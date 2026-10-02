@@ -68,8 +68,8 @@ class _Response:
 
 
 class _JSONResponse(_Response):
-    def __init__(self, data):
-        super().__init__(text=json.dumps(data), content_type="application/json")
+    def __init__(self, data, status=200):
+        super().__init__(status=status, text=json.dumps(data), content_type="application/json")
         self.data = data
 
 
@@ -182,6 +182,7 @@ async def start(rig):
 
     av, aws = views.VimarAVStreamView(hass), views.VimarAudioWSView(hass)
     rings, photo = views.VimarRingsView(hass), views.VimarRingPhotoView(hass)
+    upload = views.VimarAwayUploadView(hass)  # hass.config / config_entries: li mette il test
     app = web.Application(middlewares=[auth])
     async def av_get(r):  # stato imposto alla card: niente stream (farebbe un auto-call)
         return web.Response(status=503) if rig.state_override else await av.get(r)
@@ -189,6 +190,7 @@ async def start(rig):
     app.router.add_get(av.url, av_get)
     app.router.add_get(aws.url, aws.get)
     app.router.add_get(rings.url, rings.get)
+    app.router.add_post(upload.url, upload.post)
     async def page(r):  # the fake picture entity opens /av as HA's camera does: with the key
         return web.Response(text=PAGE.replace("__AV_URL__", av_url()), content_type="text/html")
 

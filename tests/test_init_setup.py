@@ -231,7 +231,8 @@ def test_setup_wires_the_hub_views_services_card_and_platforms(init, tmp_path):
     assert hass.forwarded == [init.PLATFORMS]
     assert entry.listeners == [init._async_update_listener] and entry.unloads == ["remove-listener"]
     assert {type(v).__name__ for v in hass.views} == {
-        "VimarAVStreamView", "VimarAudioWSView", "VimarDebugView", "VimarRingsView", "VimarRingPhotoView"}
+        "VimarAVStreamView", "VimarAudioWSView", "VimarDebugView", "VimarRingsView", "VimarRingPhotoView",
+        "VimarAwayUploadView"}
     # The card: www/ served as a folder twice, plain (CARD_URL stays valid) and under a version
     # segment, which the frontend loads so every module of the card is fetched fresh.
     www = os.path.join(os.path.dirname(init.__file__), "www")
