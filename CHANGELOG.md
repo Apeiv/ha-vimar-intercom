@@ -22,6 +22,10 @@ Italian and are kept as they were written.
   stars badges are gone, since HACS already shows them at the top of the page.
 ### Fixed
 
+- **Away message upload errors** ([#91](../../pull/91)): an expired upload showed the raw text
+  "File does not exist" in the form; any failure other than a wrong type or a too big file now shows the
+  translated *File not saved* error. An empty file or a name over 200 bytes is refused as a wrong file instead of
+  failing with an error in the log.
 - Live video from the 40515 was soft and choppy (16 fps, ~14 KB keyframes) because we asked the panel for 256 kbit/s. We now ask for 2 Mbit/s: it sends 25 fps at about 1.5 Mbit/s, same 720x576 picture. A keyframe is now a burst of about 40 packets, which filled the 64-packet cap of the reorder buffer before the 80 ms wait ran out and dropped the picture until the next keyframe, so the cap is now 512.
 - Card video colours looked off (skin and sky tints): the panel's SD H.264 carries no colour info, so browsers assumed BT.709. The decoder is now configured with BT.601.
 - **A dashboard left open no longer calls the panel again ~10 s after a hang-up** ([#57](../../issues/57)): go2rtc and the stream worker reconnect to `/av` with a growing back-off, and each refused reconnect moved the 5 s quick-reopen window forward, so the first one more than 5 s apart placed a call. Now a reconnect from a viewer that was watching `/av` when the call ended waits the full 60 s pause. Opening the camera within the minute still calls if `/av` was not open at the end (for example after answering from the card), and HomeKit is unchanged. So a viewer that was watching `/av` when the call ended now gets 503 for up to 60 s instead of about 5 s, for example when reopening the camera right after the panel closes a view at 120 s. That is intended.
@@ -43,6 +47,14 @@ Italian and are kept as they were written.
   actuator" line is logged once per panel.
 ### Security
 
+- **Test ring button is admin only** ([#85](../../pull/85)): it starts the same fake ring as the admin-only
+  `simulate_ring` service (ring webhooks, announcements, automations), but any user could press it. Now a
+  non-admin user gets *Unauthorized*; automations and scripts (no user) can still press it, like they can call the
+  service.
+- **Away message upload never writes through a link** ([#91](../../pull/91)): the file is created with
+  `O_CREAT|O_EXCL|O_NOFOLLOW`, so a dangling symlink (or a file that appears in the meantime, including a
+  concurrent upload with the same name) is never written through or overwritten; the upload gets the next `-n`
+  name instead.
 - **`/av` key** ([#63](../../issues/63)): plain `/api/vimar_intercom/av` places a call to the panel, and
   until now any client that looked local got it (a port-forward with SNAT, a guest Wi-Fi device). It now
   also wants an authenticated Home Assistant user or the installation's key in `?auth=<key>`. The key is

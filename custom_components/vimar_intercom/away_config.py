@@ -11,6 +11,7 @@ import filecmp
 import os
 import re
 import shutil
+import stat
 
 from homeassistant.exceptions import Unauthorized
 
@@ -51,22 +52,33 @@ def save_upload(src, folder: str | None) -> str:
     Del nome conta solo l'ultimo pezzo: niente ../ fuori dalla cartella. Un file
     diverso con lo stesso nome non si sovrascrive: si aggiunge -2, -3..."""
     name = os.path.basename(str(src).replace("\\", "/"))
-    if not _PLAIN_NAME.fullmatch(name) or not name.lower().endswith(AUDIO_EXT):
+    # 200 byte: c'è posto per il suffisso -n entro il limite di 255 dei filesystem.
+    if not _PLAIN_NAME.fullmatch(name) or not name.lower().endswith(AUDIO_EXT) or len(name.encode()) > 200:
         raise ValueError("upload_bad_type")
-    if os.path.getsize(src) > UPLOAD_MAX:
+    size = os.path.getsize(src)
+    if size > UPLOAD_MAX:
         raise ValueError("upload_too_big")
+    if not size:
+        raise ValueError("upload_bad_type")  # un file vuoto non è un messaggio
     if not folder:
         raise ValueError("upload_failed")
     ensure_dir(folder)
     stem, ext = os.path.splitext(name)
     dest, n = os.path.join(folder, name), 1
-    while os.path.exists(dest):
-        if filecmp.cmp(src, dest, shallow=False):
-            return dest  # lo stesso file, già lì
-        n += 1
-        dest = os.path.join(folder, f"{stem}-{n}{ext}")
-    shutil.copyfile(src, dest)
-    return dest
+    while True:
+        # O_EXCL: solo un file nuovo. Un symlink (anche rotto) o un file comparso dopo
+        # un controllo non viene mai scritto attraverso: si passa al nome dopo.
+        try:
+            fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o666)
+        except FileExistsError:
+            if stat.S_ISREG(os.lstat(dest).st_mode) and filecmp.cmp(src, dest, shallow=False):
+                return dest  # lo stesso file, già lì
+            n += 1
+            dest = os.path.join(folder, f"{stem}-{n}{ext}")
+            continue
+        with os.fdopen(fd, "wb") as out, open(src, "rb") as inp:
+            shutil.copyfileobj(inp, out)
+        return dest
 
 
 def apply_options(data: dict, options) -> bool:
