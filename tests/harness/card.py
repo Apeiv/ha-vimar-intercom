@@ -153,7 +153,7 @@ setInterval(async () => {
 }, 100);
 document.querySelector("home-assistant").hass = mkHass("unknown");
 </script><script type="module">
-await import("/card.js");
+await import("/vimar_intercom/vimar-intercom-card.js");
 await customElements.whenDefined("vimar-intercom-card");
 const c = document.createElement("vimar-intercom-card");
 const qs = new URLSearchParams(location.search), layout = qs.get("layout");

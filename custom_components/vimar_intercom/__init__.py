@@ -3,7 +3,6 @@
 import asyncio
 import json
 import logging
-import os
 from pathlib import Path
 
 from aiohttp import web
@@ -58,6 +57,7 @@ PLATFORMS = ["camera", "lock", "button", "event", "binary_sensor", "sensor", "sw
 
 
 CARD_URL = "/vimar_intercom/vimar-intercom-card.js"
+CARD_DIR = CARD_URL.rpartition("/")[0]
 
 
 async def _register_card(hass: HomeAssistant) -> None:
@@ -65,11 +65,18 @@ async def _register_card(hass: HomeAssistant) -> None:
     frontend da sola, una volta sola anche dopo un reload dell'entry."""
     if hass.data.get(f"{DOMAIN}_card"):
         return
-    path = str(Path(__file__).parent / "www" / "vimar-intercom-card.js")
-    await hass.http.async_register_static_paths([StaticPathConfig(CARD_URL, path, False)])
-    # ?v= cambia a ogni modifica del file, così browser e app non tengono la versione vecchia.
-    mtime = int(await hass.async_add_executor_job(os.path.getmtime, path))
-    add_extra_js_url(hass, f"{CARD_URL}?v={mtime}")
+    www = Path(__file__).parent / "www"
+    # The card is ES modules importing each other ("./nal-player.js"), so www/ is served as
+    # a folder. A ?v= on the entry would not reach those imports, so the version is a path
+    # segment instead: /vimar_intercom/<v>/... changes whenever any card file changes, and
+    # browsers and the app fetch every module again. The plain folder keeps CARD_URL valid.
+    v = int(await hass.async_add_executor_job(
+        lambda: max(f.stat().st_mtime for f in www.glob("*.js"))))
+    await hass.http.async_register_static_paths([
+        StaticPathConfig(CARD_DIR, str(www), False),
+        StaticPathConfig(f"{CARD_DIR}/{v}", str(www), False),
+    ])
+    add_extra_js_url(hass, f"{CARD_DIR}/{v}/vimar-intercom-card.js")
     hass.data[f"{DOMAIN}_card"] = True
 
 
