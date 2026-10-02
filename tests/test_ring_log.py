@@ -163,3 +163,34 @@ def test_squillo_registrato_poi_rifiutato(tmp_path, monkeypatch):
         assert rl.read_ring_log(str(tmp_path))[0]["outcome"] == "declined"
 
     asyncio.run(scenario())
+
+
+def test_a_link_planted_at_the_photo_name_is_replaced_not_written_through(tmp_path):
+    """A hard link (or a symlink) at ultimo_squillo.jpg pointing at another file:
+    the photo goes to a new file, the other file keeps its content."""
+    victim = tmp_path / "victim.txt"
+    victim.write_bytes(b"keep me")
+    folder = tmp_path / "foto"
+    folder.mkdir()
+    try:
+        os.link(victim, folder / rl.LAST_PHOTO)
+    except OSError:
+        pytest.skip("cannot create a link here")
+    rl.write_photo(str(folder), "squillo_20260927_101500.jpg", b"NEW")
+    assert victim.read_bytes() == b"keep me"
+    assert (folder / rl.LAST_PHOTO).read_bytes() == b"NEW"
+
+
+def test_a_symlink_as_the_last_photo_is_not_served(tmp_path):
+    victim = tmp_path / "secret.txt"
+    victim.write_bytes(b"not a photo")
+    folder = tmp_path / "foto"
+    folder.mkdir()
+    try:
+        os.symlink(victim, folder / rl.LAST_PHOTO)
+    except OSError:
+        pytest.skip("cannot create a symlink here")
+    assert rl.read_last_photo(None, str(folder)) is None
+    assert rl.read_last_photo(str(folder / rl.LAST_PHOTO), None) is None
+    (tmp_path / "real.jpg").write_bytes(b"jpg")
+    assert rl.read_last_photo(str(tmp_path / "real.jpg"), None) == b"jpg"
