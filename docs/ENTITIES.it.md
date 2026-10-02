@@ -14,6 +14,7 @@
 | Rispondi / Riaggancia | `button` | Rispondi (200 OK) / termina (BYE) |
 | Rifiuta | `button` | Solo mentre suona: rifiuta con `603 Decline`, così smette di suonare tutta la casa, come nell'app. Anche il servizio `vimar_intercom.decline` |
 | Apri Porta | `button` | Come la serratura: il comando porta della rubrica (altrimenti `OPEN_2F`) verso `door_target` |
+| Squillo di prova | `button` (diagnostica) | Uno squillo completo senza la targa, come `vimar_intercom.simulate_ring` con i 20 s predefiniti: per provare automazioni e notifiche. Non parte durante una chiamata o uno squillo veri |
 | *Attuatori dinamici* | `button` | Uno per voce in `options["actuators"]` (F1/F2, luci scala, relè…); invia `MSG` con `Panda: command` |
 | Segreteria | `switch` | `VOICEMAIL;ON/OFF` (Panda: blue) verso l'SGA; stato letto dagli annunci del Tab e da `GET_INIT_STATUS`, chiesto dopo ogni comando. Il valore comandato si vede per 10 s al massimo: senza conferma lo stato diventa *sconosciuto* ([#9](https://github.com/lollox80/ha-vimar-intercom/issues/9)) |
 | Non Disturbare | `switch` | `DND;ON/OFF` (Panda: blue) verso l'SGA; stesse regole della Segreteria |
