@@ -1148,7 +1148,7 @@ def test_impostazioni_citofono_non_admin_e_righe_mancanti(monkeypatch, engine): 
 
 @pytest.mark.parametrize("engine", ["chromium"], indirect=True)
 @pytest.mark.parametrize("layout,query,label", [("overlay", "&nofile", "Carica"), ("overlay", "", "Sostituisci"),
-                                                ("popup", "&nofile&lang=en", "Upload")])
+                                                ("popup", "&nofile", "Carica")])
 def test_impostazioni_carica_il_file_audio(monkeypatch, engine, tmp_path, layout, query, label):  # noqa: F811
     """Sotto "File audio del messaggio": "Carica" se non c'è un file, "Sostituisci" se c'è. Il tasto apre la
     scelta del file, che va a /api/vimar_intercom/away_upload (la view vera), diventa il file del messaggio e il
@@ -1162,7 +1162,7 @@ def test_impostazioni_carica_il_file_audio(monkeypatch, engine, tmp_path, layout
             entry = types.SimpleNamespace(entry_id="e1", options={})
             rig.hass.config = types.SimpleNamespace(media_dirs={"local": str(tmp_path)})
             rig.hass.config_entries = types.SimpleNamespace(
-                async_get_entry=lambda i: entry, async_update_entry=lambda e, options: setattr(e, "options", options))
+                async_loaded_entries=lambda d: [entry], async_update_entry=lambda e, options: setattr(e, "options", options))
             monkeypatch.setattr(R, "AWAY_MESSAGE_FILE", "")
             await rig.register()
             async with Card(rig, engine, layout=layout, query=query) as c:
@@ -1179,8 +1179,7 @@ def test_impostazioni_carica_il_file_audio(monkeypatch, engine, tmp_path, layout
                 assert entry.options == {} and not (tmp_path / "citofono" / "messaggi").exists()
                 await c.page.locator("dialog.set [data-k=file] input[type=file]").set_input_files(
                     files=[{"name": "Benvenuti.mp3", "mimeType": "audio/mpeg", "buffer": b"ID3audio"}])
-                done = "Uploaded: Benvenuti.mp3" if "lang=en" in query else "Caricato: Benvenuti.mp3"
-                await c.until(f"{file_row}.querySelector('small')?.textContent === {done!r}")
+                await c.until(f"{file_row}.querySelector('small')?.textContent === 'Caricato: Benvenuti.mp3'")
                 saved = tmp_path / "citofono" / "messaggi" / "Benvenuti.mp3"
                 assert saved.read_bytes() == b"ID3audio"
                 assert entry.options == {"away_message_file": str(saved)} and R.AWAY_MESSAGE_FILE == str(saved)
@@ -1188,6 +1187,10 @@ def test_impostazioni_carica_il_file_audio(monkeypatch, engine, tmp_path, layout
                 assert await c.page.evaluate("card.shadowRoot.querySelector('dialog.set .set-e').textContent") == ""
                 assert not (await c.T())["errors"] and not (await c.info())["pop"]
                 assert not [s for s in (await c.T())["calls"] if s.startswith("vimar_intercom.")]  # mai la targa
+                await c.page.evaluate("""(() => { const st = {...card._hass.states};
+                    st["select.vimar_intercom_segreteria_file_audio"] = {...st["select.vimar_intercom_segreteria_file_audio"], state: "unavailable"};
+                    card.hass = {...card._hass, states: st}; })()""")
+                assert await c.page.evaluate(f"{file_row}.querySelector('.set-ub').disabled")  # select non disponibile: niente carica
     run(s())
 
 

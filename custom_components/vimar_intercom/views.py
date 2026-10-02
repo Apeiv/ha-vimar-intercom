@@ -387,7 +387,7 @@ class VimarDebugView(HomeAssistantView):
         return web.Response(text=text, content_type="text/plain")
 
 
-def _save_body(body: bytes, folder: str | None, name: str) -> str:
+def _save_body(body: bytes | bytearray, folder: str | None, name: str) -> str:
     """Il corpo della richiesta in un file temporaneo, poi save_upload come dalle opzioni."""
     with tempfile.TemporaryDirectory() as tmp:
         src = os.path.join(tmp, "upload")
@@ -412,10 +412,8 @@ class VimarAwayUploadView(HomeAssistantView):
         user = request.get("hass_user")
         if user is None or not user.is_admin:
             raise Unauthorized()
-        entry_id = next((k for k, v in self._hass.data.get(DOMAIN, {}).items()
-                         if isinstance(v, dict) and "hub" in v), None)
-        entry = entry_id and self._hass.config_entries.async_get_entry(entry_id)
-        if not entry:
+        entry = next(iter(self._hass.config_entries.async_loaded_entries(DOMAIN)), None)
+        if entry is None:
             return web.json_response({"error": "not_loaded"}, status=503)
         # Il limite vale mentre si legge: un corpo più grande non finisce mai in memoria.
         too_big = web.json_response({"error": "upload_too_big"}, status=413)
@@ -428,7 +426,7 @@ class VimarAwayUploadView(HomeAssistantView):
                 return too_big
         try:
             path = await self._hass.async_add_executor_job(
-                _save_body, bytes(body), away_config.messages_dir(self._hass),
+                _save_body, body, away_config.messages_dir(self._hass),
                 request.query.get("name", ""))
         except ValueError as exc:
             return web.json_response({"error": str(exc)}, status=400)

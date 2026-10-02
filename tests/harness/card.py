@@ -113,7 +113,7 @@ window.WebSocket = class extends WS {
   close() { T.wsClosed++; super.close(); }
 };
 // Le impostazioni del citofono (stesso dispositivo della camera): `?ents=dnd,vm` ne tiene solo alcune, `?noadmin` toglie is_admin,
-// `?nofile` lascia il file audio su "none" (nessuno), `?lang=en` la lingua di HA.
+// `?nofile` lascia il file audio su "none" (nessuno).
 const QS = new URLSearchParams(location.search), WANT = QS.get("ents")?.split(",");
 const SET = {
   "switch.vimar_intercom_non_disturbare": { k: "dnd", state: "off", attributes: { friendly_name: "Non disturbare" } },
@@ -125,7 +125,6 @@ const SET = {
 const setEnts = Object.entries(SET).filter(([, v]) => !WANT || WANT.includes(v.k));
 const mkHass = (status, lastRing = {}) => ({
   user: { is_admin: !QS.has("noadmin") },
-  language: QS.get("lang") || "it",
   formatEntityState: (s, v) => (v === "none" ? "Nessuno (usa il testo)" : v),  // come la traduzione dello stato del select
   fetchWithAuth: (p, init) => fetch(p, init),
   entities: Object.fromEntries([["camera.vimar_intercom_intercom", 0], ...setEnts].map(([id]) => [id, { entity_id: id, device_id: "dev1", platform: "vimar_intercom" }])),

@@ -64,7 +64,7 @@ def env(monkeypatch, tmp_path):
         data={DOMAIN: {"e1": {"hub": _Hub()}}},
         config=types.SimpleNamespace(media_dirs={"local": str(tmp_path)}),
         config_entries=types.SimpleNamespace(
-            async_update_entry=upd, async_get_entry=lambda i: entry if i == "e1" else None
+            async_update_entry=upd, async_loaded_entries=lambda d: [entry]
         ),
         async_add_executor_job=executor,
     )
@@ -148,7 +148,7 @@ def test_a_body_exactly_at_the_cap_is_accepted(env):
 
 
 def test_without_the_integration_loaded_it_is_503(env):
-    env.hass.data = {}
+    env.hass.config_entries.async_loaded_entries = lambda d: []
     r = _post(env, _req("a.mp3"))
     assert r.status == 503 and not env.folder.exists()
 

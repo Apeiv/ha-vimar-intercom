@@ -579,7 +579,10 @@ class VimarIntercomCard extends CardAudio(HTMLElement) {
           ctl.replaceChildren(...opts.map((o) => new Option(this._hass.formatEntityState?.(s, o) ?? o, o)));
         if (this._root.activeElement !== ctl) ctl.value = s?.state;
         const up = r.querySelector(".set-ub");
-        if (up) up.textContent = s?.state && s.state !== "none" ? this._t("Sostituisci", "Replace") : this._t("Carica", "Upload");
+        if (up) {
+          up.textContent = s?.state && s.state !== "none" ? "Sostituisci" : "Carica";
+          up.disabled = off || !!up._busy;  // _busy: upload in progress
+        }
       } else if (this._root.activeElement !== ctl) ctl.value = s && s.state !== "unknown" ? s.state : "";
       if (k === "vm") {  // da dove viene il messaggio: dall'attributo `modo` dello switch, se c'è
         const modo = s?.attributes?.modo, small = r.querySelector("small") || r.querySelector(".set-l").appendChild(document.createElement("small"));
@@ -588,32 +591,28 @@ class VimarIntercomCard extends CardAudio(HTMLElement) {
     }
   }
 
-  // Italiano o inglese secondo la lingua di HA (solo per le scritte del caricamento).
-  _t(it, en) {
-    return (this._hass.locale?.language || this._hass.language || "it").startsWith("it") ? it : en;
-  }
-
   // Il file scelto va a /api/vimar_intercom/away_upload (solo admin) con l'utente di HA; salvato,
   // diventa il messaggio e il select si rilegge subito invece che al prossimo giro (ogni minuto).
   async _uploadAway(f, id, b) {
     const e = this._set.querySelector(".set-e"), small = b.closest(".set-r").querySelector(".set-l small")
       || b.closest(".set-r").querySelector(".set-l").appendChild(document.createElement("small"));
     const ERR = {
-      upload_bad_type: this._t("serve un file .mp3, .wav o .m4a con un nome semplice", "use an .mp3, .wav or .m4a file with a plain name"),
-      upload_too_big: this._t("file troppo grande, massimo 5 MB", "file too big, max 5 MB"),
+      upload_bad_type: "serve un file .mp3, .wav o .m4a con un nome semplice",
+      upload_too_big: "file troppo grande, massimo 5 MB",
     };
     e.textContent = small.textContent = "";
-    b.disabled = true;
+    b.disabled = b._busy = true;
     try {
       if (f.size > 5 * 1024 * 1024) throw new Error(ERR.upload_too_big);
       const r = await this._hass.fetchWithAuth(`/api/vimar_intercom/away_upload?name=${encodeURIComponent(f.name)}`, { method: "POST", body: f });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(ERR[j.error] || this._t("file non salvato, guarda il log di Home Assistant", "file not saved, see the Home Assistant log"));
+      if (!r.ok) throw new Error(ERR[j.error] || "file non salvato, guarda il log di Home Assistant");
       await this._hass.callService("homeassistant", "update_entity", { entity_id: id });
-      small.textContent = this._t(`Caricato: ${j.file}`, `Uploaded: ${j.file}`);
+      small.textContent = `Caricato: ${j.file}`;
     } catch (err) {
-      e.textContent = `${this._t("Non riuscito", "Failed")}: ${err.message || err}`;
+      e.textContent = `Non riuscito: ${err.message || err}`;
     } finally {
+      b._busy = false;
       b.disabled = false;
     }
   }
