@@ -35,6 +35,11 @@ def _ctx() -> SRTPContext:
     return SRTPContext(base64.b64encode(MASTER_KEY + MASTER_SALT).decode())
 
 
+def _lost(tx: SRTPContext, rx: SRTPContext, seqs) -> list[int]:
+    """The packets of ``seqs`` (indices, the sequence number is the low 16 bits) rx refused."""
+    return [seq for seq in seqs if rx.unprotect(tx.protect(_rtp(seq & 0xFFFF))) is None]
+
+
 def test_context_derives_the_three_session_keys():
     ctx = _ctx()
     assert ctx.cipher_key == EXPECTED_CIPHER_KEY
@@ -109,35 +114,86 @@ def test_nuovo_ssrc_con_sequenza_lontana_si_autentica():
 
 
 def test_a_captured_packet_sent_again_is_dropped():
-    """RFC 3711 §3.3.2: the same index twice inside the window is refused, so a
-    captured voice or video packet cannot be replayed."""
+    """RFC 3711 §3.3.2: the same index twice, or one older than the window, is
+    refused, so a captured voice or video packet cannot be replayed. Old ones
+    sent again and again between live packets too: none of them reaches the
+    media, which is forwarded before any RTP reordering."""
     tx, rx = _ctx(), _ctx()
-    first = tx.protect(_rtp(1))
-    assert rx.unprotect(first) is not None
-    assert rx.unprotect(first) is None
-    for seq in range(2, 200):
-        assert rx.unprotect(tx.protect(_rtp(seq))) is not None
-    again = tx.protect(_rtp(150))
-    assert rx.unprotect(again) is None
+    sent = {seq: tx.protect(_rtp(seq)) for seq in range(1, 200)}
+    for seq in range(1, 200):
+        assert rx.unprotect(sent[seq]) is not None
+    assert rx.unprotect(sent[150]) is None
+    for seq in range(200, 210):
+        assert rx.unprotect(sent[1]) is None and rx.unprotect(sent[2]) is None
+        assert rx.unprotect(tx.protect(_rtp(seq))) is not None, seq
+    assert rx.resyncs == 0
 
 
-def test_the_stream_goes_on_after_a_packet_far_ahead_or_a_jump_back():
+def test_a_stray_packet_far_ahead_does_not_stall_the_stream():
     """Cloud ring on a 40515 (2 Oct): one authentic packet numbered far ahead on
     the same SSRC moved the window there, and the live stream after it was
-    refused as older than the window: no preview, no photo, no voice. The same
-    for a panel or relay that restarts its numbers lower on the same SSRC. An
-    index older than the window restarts the window instead."""
-    tx, rx = _ctx(), _ctx()
+    refused as too old: no preview, no photo, no voice. The stray goes through
+    once, sent again it is a replay, and it moves neither the window nor the
+    rollover estimate (41000 is more than half a wrap from the live numbers)."""
+    tx, far, rx = _ctx(), _ctx(), _ctx()  # far: the stray's own sender state
+    assert _lost(tx, rx, range(1000, 1100)) == []
+    stray = far.protect(_rtp(41000))
+    assert rx.unprotect(stray) is not None
+    assert _lost(tx, rx, range(1100, 1200)) == []
+    assert rx.unprotect(stray) is None
+    assert _lost(tx, rx, range(1200, 1300)) == [] and rx.resyncs == 0
+    assert _lost(tx, rx, range(1500, 1600)) == [] and rx.resyncs == 1  # a real jump (a loss burst)
+
+
+def test_strays_in_a_row_half_a_wrap_ahead_do_not_move_the_window():
+    """Moving the window there would move the rollover estimate too, and the
+    live stream would fail authentication from then on."""
+    tx, far, rx = _ctx(), _ctx(), _ctx()
     for seq in range(1000, 1010):
         assert rx.unprotect(tx.protect(_rtp(seq))) is not None
-    assert rx.unprotect(tx.protect(_rtp(21000))) is not None
-    for seq in range(1010, 1300):
+    for seq in range(41000, 41003):
+        assert rx.unprotect(far.protect(_rtp(seq))) is not None
+    for seq in range(1010, 1100):
         assert rx.unprotect(tx.protect(_rtp(seq))) is not None, seq
-    for seq in range(5, 300):  # numbers restarted lower, same SSRC
-        assert rx.unprotect(tx.protect(_rtp(seq))) is not None, seq
+    assert rx.resyncs == 0
+
+
+def test_a_jump_past_half_a_wrap_at_roc_0_moves_the_window_after_a_longer_run():
+    """A real jump of 40000 (or a loss burst that long) at ROC 0: the packets go
+    through as strays until the window follows, then the sender wraps."""
+    tx, rx = _ctx(), _ctx()
+    assert _lost(tx, rx, [*range(1000, 1100), *range(41100, 41100 + 30000)]) == []
+    assert rx.resyncs == 1
+
+
+def test_a_stray_and_a_jump_after_the_first_wrap_lose_nothing():
+    tx, far, rx = _ctx(), _ctx(), _ctx()
+    for seq in (30000, 60000, 0, 10000):  # the stray's sender, at ROC 1
+        far.protect(_rtp(seq))
+    assert _lost(tx, rx, range(65000, 66600)) == []  # across the wrap
+    stray = far.protect(_rtp(21000))
+    assert rx.unprotect(stray) is not None and rx.unprotect(stray) is None
+    assert _lost(tx, rx, range(66600, 66700)) == [] and rx.resyncs == 0
+    assert _lost(tx, rx, range(86700, 86800)) == [] and rx.resyncs == 1
+
+
+def test_a_stray_as_the_first_packet_of_the_call_costs_two_packets():
+    tx, far, rx = _ctx(), _ctx(), _ctx()
+    assert rx.unprotect(far.protect(_rtp(21000))) is not None
+    refused = _lost(tx, rx, range(1000, 1100))
+    assert refused == [1000, 1001] and rx.resyncs == 1
+
+
+def test_a_sequence_restarted_lower_resyncs_after_three_in_a_row():
+    """A panel or relay restarting its numbers lower on the same SSRC: the window
+    moves there on the third packet in a row, the first two are lost."""
+    tx, rx = _ctx(), _ctx()
+    for seq in range(1000, 1300):
+        assert rx.unprotect(tx.protect(_rtp(seq))) is not None
+    refused = _lost(tx, rx, range(5, 300))
+    assert refused == [5, 6] and rx.resyncs == 1
     dup = tx.protect(_rtp(300))
     assert rx.unprotect(dup) is not None and rx.unprotect(dup) is None, "still refuses a replay"
-    assert rx.resyncs == 2
 
 
 def test_late_packets_inside_the_window_are_still_accepted():

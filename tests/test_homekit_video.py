@@ -47,7 +47,6 @@ def rig():
     ours.setblocking(False)
     dv = video.DirectVideo(ours, phone.getsockname(), KEY, SSRC, PT)
     loop.run_until_complete(dv.open())
-    rx = srtp.SRTPContext(KEY)
     rtcp_rx = srtp.SRTCPContext(KEY)
     # The phone's own RTCP sender: its index grows with every packet.
     phone_rtcp = srtp.SRTCPContext(KEY)
@@ -57,7 +56,7 @@ def rig():
         loop.run_until_complete(asyncio.sleep(0.05))
         rtp, rtcp = [], []
         phone.settimeout(0.2)
-        rx._rx_window.clear()  # a resend is the same packet again: this phone lost it
+        rx = srtp.SRTPContext(KEY)  # a resend is the same packet again: this phone lost it
         while True:
             try:
                 data, _ = phone.recvfrom(2048)
