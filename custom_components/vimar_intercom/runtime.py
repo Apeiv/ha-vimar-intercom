@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib as _hashlib
 import hmac as _hmac
 import logging as _logging
+import re as _re
 import secrets as _secrets
 import uuid as _uuid
 
@@ -238,6 +239,35 @@ def door_from_actuators(actuators) -> str:
         if (act or {}).get("icon") == "door" and target.isdigit():
             return target
     return ""
+
+
+# A door command body from the phonebook's MSG column: upper-case letters, digits
+# and underscores only (OPEN, OPEN_2F, ...). Anything else falls back to the
+# default rather than going on the wire.
+_DOOR_BODY = _re.compile(r"[A-Z0-9_]{1,32}")
+
+
+def door_command_for(target) -> tuple[str, str]:
+    """The body that opens the door at panel `target`, and where it came from.
+
+    The phonebook's door actuator (icon "door") pairs a body (MSG) with the
+    panel that owns the relay (GID_PE); both come from the same row, because
+    the body alone does not identify a door (a relay module can use the same
+    body towards another panel, #58). "AUTO" as a target means DOOR_TARGET,
+    and only counts after the rows naming the panel itself: [{AUTO, OPEN},
+    {55002, OPEN_X}] sends OPEN_X to 55002 even when DOOR_TARGET is 55002.
+    Returns (MSG, "phonebook") for a match, else (OPEN_2F, "default").
+    """
+    target = str(target or "")
+    doors = [a for a in (act or {} for act in ACTUATORS or []) if a.get("icon") == "door"]
+    exact = [a for a in doors if str(a.get("target") or "").upper() != "AUTO"
+             and str(a.get("target") or "") == target]
+    auto = [a for a in doors if str(a.get("target") or "").upper() == "AUTO" and DOOR_TARGET == target]
+    for a in exact + auto:
+        msg = str(a.get("msg") or "").strip()
+        if _DOOR_BODY.fullmatch(msg):
+            return msg, "phonebook"
+    return _const.DOOR_COMMAND, "default"
 
 
 def configure(data: dict) -> None:

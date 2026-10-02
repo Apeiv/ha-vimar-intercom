@@ -7,7 +7,6 @@ import types
 
 import pytest
 
-from custom_components.vimar_intercom import const as C
 from custom_components.vimar_intercom import lock as lock_mod
 from custom_components.vimar_intercom.const import DOMAIN
 
@@ -66,8 +65,9 @@ def test_unlock_opens_the_default_door_then_relocks_after_five_seconds(relock):
         await lock._relock_task
 
     asyncio.run(run())
-    # target None: hub.async_door picks the door panel from the phonebook.
-    assert hub.doors == [(None, C.DOOR_COMMAND)]
+    # target and command None: hub.async_door picks the door panel and its body
+    # from the phonebook (#58), not a fixed OPEN_2F.
+    assert hub.doors == [(None, None)]
     assert relock == [5]
     assert lock.states == [False, True] and lock.is_locked is True
 

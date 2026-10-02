@@ -69,7 +69,7 @@ hangup:
 
 open_door:
   name: Apri porta
-  description: Invia il comando di apertura (OPEN_2F) alla targa indicata. Senza targa usa quella che apre la porta (opzione «Targa che apre la porta», compilata dall'import rubrica).
+  description: Invia il comando di apertura alla targa indicata (quello dell'attuatore porta della rubrica, altrimenti OPEN_2F). Senza targa usa quella che apre la porta (opzione «Targa che apre la porta», compilata dall'import rubrica).
   fields:
     target:
       name: Targa
@@ -83,8 +83,7 @@ open_door:
           custom_value: true
     command:
       name: Comando
-      description: Solo comandi di apertura (OPEN, OPEN_2F, ...).
-      default: OPEN_2F
+      description: Solo comandi di apertura (OPEN, OPEN_2F, ...). Vuoto = il comando dell'attuatore porta della rubrica per quella targa, altrimenti OPEN_2F.
       selector:
         text:
 
