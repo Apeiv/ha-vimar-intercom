@@ -53,6 +53,7 @@ la rubrica: [Configurazione](https://github.com/lollox80/ha-vimar-intercom/blob/
   vocale) quando nessuno risponde. → [Configurazione](https://github.com/lollox80/ha-vimar-intercom/blob/main/docs/CONFIGURATION.it.md#segreteria)
 - **Casa di Apple**: un videocitofono HomeKit nativo, facoltativo. → [HomeKit](https://github.com/lollox80/ha-vimar-intercom/blob/main/docs/HOMEKIT.it.md)
 - **Scrypted, go2rtc, Frigate**: uno stream continuo che non fa mai suonare la targa. → [Sistemi esterni](https://github.com/lollox80/ha-vimar-intercom/blob/main/docs/EXTERNAL.md) (in inglese)
+- **Echo Show come citofono**: video e voce nei due sensi da Alexa, passando per Scrypted. → [Echo Show (Scrypted)](https://github.com/lollox80/ha-vimar-intercom/blob/main/docs/SCRYPTED-ALEXA.it.md)
 
 ## Documentazione
 
@@ -63,6 +64,7 @@ la rubrica: [Configurazione](https://github.com/lollox80/ha-vimar-intercom/blob/
 | [La card del citofono](https://github.com/lollox80/ha-vimar-intercom/blob/main/docs/CARD.it.md) | Layout, pulsanti, video e voce, storico degli squilli |
 | [HomeKit](https://github.com/lollox80/ha-vimar-intercom/blob/main/docs/HOMEKIT.it.md) | Il videocitofono nativo per la Casa di Apple |
 | [Sistemi esterni](https://github.com/lollox80/ha-vimar-intercom/blob/main/docs/EXTERNAL.md) | Scrypted, Alexa, Echo Show, go2rtc, Frigate (in inglese) |
+| [Echo Show come citofono](https://github.com/lollox80/ha-vimar-intercom/blob/main/docs/SCRYPTED-ALEXA.it.md) | Passo per passo: l'Echo Show guarda, chiama e parla con la targa tramite Scrypted |
 | [Rubrica](https://github.com/lollox80/ha-vimar-intercom/blob/main/docs/RUBRICA.md) | Da dove viene `rubrica.db` e cosa contiene (in inglese) |
 | [Problemi e log](https://github.com/lollox80/ha-vimar-intercom/blob/main/docs/TROUBLESHOOTING.it.md) | Limiti noti e come leggere i log |
 | [Changelog](https://github.com/lollox80/ha-vimar-intercom/blob/main/CHANGELOG.md) | Cosa è cambiato in ogni versione (in inglese) |

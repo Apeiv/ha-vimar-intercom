@@ -62,6 +62,9 @@ is needed on the HA side: an automation on its state change forwards the ring wh
 
 ## Scrypted (Alexa chime + Echo Show live view)
 
+For two-way talk on the Echo Show (call the panel, answer by speaking), use the script in
+[Echo Show as an intercom](SCRYPTED-ALEXA.md) as the camera instead of the FFmpeg Camera below.
+
 1. **Camera**: add a device with the *FFmpeg Camera* plugin. Stream URL
    `http://<ha>:8123/api/vimar_intercom/av?autocall=0&idle=image`. Leave the stream "as is"
    (H.264 baseline + AAC). Snapshots come from the stream: the standby frame while
