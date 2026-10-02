@@ -28,7 +28,8 @@ from .const import (
 from .const import (
     SIP_PORT as CLOUD_SIP_PORT,
 )
-from .sip_client import _challenge_params, _resolve_sip_targets
+from .sip_client import _resolve_sip_targets
+from .sip_message import _challenge_params
 
 if TYPE_CHECKING:
     from .options_flow import OptionsFlowHandler

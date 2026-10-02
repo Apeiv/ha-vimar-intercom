@@ -801,6 +801,7 @@ async def reader_task():
                 buf = b""
                 continue
             buf += chunk
+            # SM.: looked up live, so tests patch sip_message.MAX_SIP_BODY
             if len(buf) > SM.MAX_SIP_BODY:  # guard: 1 MB max — evita OOM su messaggi malformati
                 _LOGGER.error("SIP TCP buffer overflow (>1 MB); reset connessione")
                 await _reconnect_from_reader()
