@@ -34,6 +34,10 @@ Italian and are kept as they were written.
   logs, and the integration masks it in its own. Options → *`/av` stream key* shows it and regenerates it.
   Passive URLs (`autocall=0`, go2rtc/Frigate/Scrypted) keep working without it for now; a wrong key is
   refused everywhere. See `docs/EXTERNAL.md`.
+- **Slow patterns on SIP headers** ([#46](../../issues/46)): the Tab 5S/7S Plus model patterns and the SIP user and host
+  patterns of the device inventory could take seconds on a crafted header (a long run of spaces, or `sip:`
+  repeated without an `@`), stalling Home Assistant. The patterns no longer backtrack that way, and the
+  User-Agent is cut at 256 characters before it is matched. Real headers match as before.
 - **SRTP replay window** ([#46](../../issues/46)): the receiving side of the call media had no replay protection, so one
   captured voice or video packet, sent again, was accepted every time. An index already received, or older than
   the last 128 per stream, is now dropped after authentication, as libsrtp does. Packets that merely arrive out

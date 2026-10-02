@@ -43,3 +43,14 @@ def test_proxies_apps_and_unknown_devices_give_no_model(ua):
 def test_is_ignored_is_case_insensitive():
     assert md.is_ignored("FLEXISIP")
     assert not md.is_ignored("Elvox Tab 7S")
+
+
+def test_a_crafted_user_agent_cannot_stall_the_match():
+    """The model patterns used to backtrack quadratically on a long run of
+    spaces; the User-Agent comes from any SIP peer, and this runs on the loop."""
+    import time
+
+    start = time.perf_counter()
+    assert md.match("tab 7s" + " " * 60_000 + "x")[0] == "Elvox Tab 7S"
+    assert time.perf_counter() - start < 0.5
+    assert md.match("Tab 5S Up Plus")[0] == "Elvox Tab 5S Plus"

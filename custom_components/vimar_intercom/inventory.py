@@ -23,8 +23,10 @@ import time
 from dataclasses import asdict, dataclass, field
 
 # "<sip:60901@127.0.0.1:5060;transport=tls>;tag=abc" → "60901"
-_SIP_ID = re.compile(r"sips?:([^@;>\s]+)@")
-_URI_HOST = re.compile(r"sips?:[^@;>\s]+@([^;>\s]+)")
+# The user and host parts are bounded: with an open-ended "+", a header made of
+# "sip:" repeated and no "@" made every start scan to the end (quadratic).
+_SIP_ID = re.compile(r"sips?:([^@;>\s]{1,128})@")
+_URI_HOST = re.compile(r"sips?:[^@;>\s]{1,128}@([^;>\s]{1,255})")
 _INSTANCE = re.compile(r'\+sip\.instance\s*=\s*"?<?urn:uuid:([^">\s;]+)', re.I)
 _EXPIRES = re.compile(r";\s*expires\s*=\s*(\d+)", re.I)
 _RECEIVED = re.compile(r";\s*received\s*=\s*([^;\s]+)", re.I)
