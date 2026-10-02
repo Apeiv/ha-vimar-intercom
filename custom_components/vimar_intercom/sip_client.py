@@ -15,6 +15,7 @@ import time
 from . import const as C
 from . import log_redact, model_detect, validate
 from . import media_handler as media
+from . import plant_state as S
 from . import runtime as R
 from .inventory import DeviceInventory
 
@@ -30,6 +31,11 @@ def init(broadcast_fn):
 
 
 RING_MAX_S = 90    # squillo senza CANCEL (UDP perso, PBX riavviato): chiuso dopo 90 s
+# A panel that gives up an unanswered ring stops its preview, but on local UDP
+# it sends no CANCEL (#60): no RTP for this long ends the ring. Local UDP only:
+# seen on the 40507, and the cloud relay sends CANCEL and may have preview gaps.
+RING_MEDIA_GAP_S = 3.0
+RING_MEDIA_POLL_S = 0.5
 
 _suppress_broadcast = False
 
@@ -717,17 +723,17 @@ def _apply_ua(ua: str) -> None:
     if not model:
         return
     # Un match più specifico (priorità più bassa) sovrascrive quello corrente
-    if model == R.DETECTED_MODEL and (fw or "") == R.DETECTED_FW:
+    if model == S.DETECTED_MODEL and (fw or "") == S.DETECTED_FW:
         return
-    if priority > R.DETECTED_PRIORITY:
+    if priority > S.DETECTED_PRIORITY:
         return
 
     _LOGGER.info("Modello citofono rilevato: %s (fw=%s) da User-Agent «%s»",
                  model, fw or "n/d", ua)
-    R.DETECTED_MODEL    = model
-    R.DETECTED_FW       = fw or ""
-    R.DETECTED_UA       = ua
-    R.DETECTED_PRIORITY = priority
+    S.DETECTED_MODEL    = model
+    S.DETECTED_FW       = fw or ""
+    S.DETECTED_UA       = ua
+    S.DETECTED_PRIORITY = priority
 
     if _model_callback:
         try:
@@ -1217,11 +1223,11 @@ def _line_security(offer: dict | None, kind: str) -> tuple[bool, dict | None]:
     cannot be used and is refused (port 0, RFC 4568 section 7.1.2). A line the
     offer declined (port 0) stays declined, and a line the offer lacks is not
     answered at all (build_sdp leaves it out). Only when we make the offer does
-    the plant setting (R.MEDIA_ENC) decide.
+    the plant setting (S.MEDIA_ENC) decide.
     """
     offered = [m for m in (_offered_line(offer, "audio"), _offered_line(offer, "video")) if m]
     if not offered:
-        return True, (dict(_DEFAULT_CRYPTO) if getattr(R, "MEDIA_ENC", False) else None)
+        return True, (dict(_DEFAULT_CRYPTO) if getattr(S, "MEDIA_ENC", False) else None)
     line = _offered_line(offer, kind)
     if line is None or not line.get("port"):
         return False, None
@@ -1242,7 +1248,7 @@ def build_sdp(offer: dict | None = None, reuse_keys: bool = False):
     Su questo impianto (verificato sul campo 20/08/2026 verso la targa 55100)
     il media viaggia in RTP IN CHIARO: se si offre SRTP (RTP/SAVP + a=crypto)
     la targa baresip non risponde e tutto il media fallisce. Perciò il default
-    è RTP/AVP senza a=crypto. SRTP resta disponibile via R.MEDIA_ENC=True per
+    è RTP/AVP senza a=crypto. SRTP resta disponibile via S.MEDIA_ENC=True per
     impianti che negoziano media_enc. As an answer, each m-line mirrors the
     offer's profile and crypto suite for that line (see _line_security).
 
@@ -2339,6 +2345,8 @@ async def handle_incoming_invite(raw):
         if not ringing(cid) and not in_call:
             await media.stop_media()  # CANCEL arrivato mentre il video partiva
             return
+        if pending_incoming["early"] and R.USE_LOCAL_UDP:
+            _spawn(_watch_ring_media(cid))
     else:
         resp = f"SIP/2.0 180 Ringing\r\n{head}Content-Length: 0\r\n\r\n"
         pending_incoming["resp"] = resp
@@ -2395,6 +2403,26 @@ async def _ring_timeout(cid) -> None:
     if ringing(cid) and not in_call:
         # Risposta finale anche qui: se il CANCEL si è solo perso, la targa smette.
         await do_decline_incoming("480 Temporarily Unavailable", msg="Squillo scaduto")
+
+
+def _rx_packets() -> int:
+    return sum(p.pkt_count for p in (media.audio_proto, media.video_proto) if p is not None)
+
+
+async def _watch_ring_media(cid) -> None:
+    """End the ring when the panel's preview stops: that is the panel giving up.
+    Armed only once some RTP arrived, so a panel that sends no preview keeps
+    RING_MAX_S. The 480 is for a CANCEL that got lost while the panel still rings."""
+    last, quiet = _rx_packets(), 0.0
+    while ringing(cid) and early_media() and not in_call:
+        await asyncio.sleep(RING_MEDIA_POLL_S)
+        n = _rx_packets()
+        quiet = quiet + RING_MEDIA_POLL_S if n == last and n else 0.0
+        last = n
+        if quiet >= RING_MEDIA_GAP_S and ringing(cid) and not in_call:
+            _LOGGER.info("Ring preview stopped for %.0f s: the panel gave up", quiet)
+            await do_decline_incoming("480 Temporarily Unavailable", msg="Squillo terminato dalla targa")
+            return
 
 
 async def do_answer_incoming():

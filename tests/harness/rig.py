@@ -22,6 +22,7 @@ from custom_components.vimar_intercom import av_passive, av_stream, away_tts, fr
 from custom_components.vimar_intercom import const as C
 from custom_components.vimar_intercom import hub as hub_mod
 from custom_components.vimar_intercom import media_handler as media
+from custom_components.vimar_intercom import plant_state as S
 from custom_components.vimar_intercom import runtime as R
 from custom_components.vimar_intercom import sip_client as sip
 
@@ -87,8 +88,9 @@ class Rig:
                          INTERCOM=f"sip:{PANEL}@{DOMAIN}", DEVICE_UUID="uuid-test",
                          DEVICE_IMEI="000", AWAY_MESSAGE_FILE="", AWAY_MESSAGE_TEXT="",
                          AWAY_MESSAGE_TTS="", AWAY_MESSAGE_DELAY=0,
-                         SNAPSHOT_DIR="", MEDIA_ENC=self.srtp).items():
+                         SNAPSHOT_DIR="").items():
             mp.setattr(R, k, v, raising=False)
+        mp.setattr(S, "MEDIA_ENC", self.srtp)
         mp.setattr(away_tts, "_hass", None)
         mp.setattr(away_tts, "_cache", None)
         mp.setattr(C, "LOCAL_SIP_PORT", peer.port)

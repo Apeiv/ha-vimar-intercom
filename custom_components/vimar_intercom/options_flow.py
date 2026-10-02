@@ -16,7 +16,7 @@ from homeassistant.components.file_upload import process_uploaded_file
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import selector
 
-from . import cloud_phonebook, rest_client, rubrica_import, runtime, validate
+from . import away_config, cloud_phonebook, rest_client, rubrica_import, runtime, validate
 from .config_flow import (
     DEFAULT_LOCAL_UDP_PORT,
     KEY_ACTUATORS,
@@ -81,6 +81,8 @@ from .runtime import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+KEY_AWAY_UPLOAD = "away_message_upload"  # solo nel form: non si salva nelle opzioni
 
 
 # Icone ammesse per gli attuatori dinamici (vedi tools/parse_rubrica.py)
@@ -247,6 +249,10 @@ def _away_schema(form: dict) -> dict:
             KEY_AWAY_FILE,
             default=form.get(KEY_AWAY_FILE, ""),
         ): str,
+        # Caricato qui finisce in <media>/citofono/messaggi e diventa il file scelto.
+        vol.Optional(KEY_AWAY_UPLOAD): selector.FileSelector(
+            selector.FileSelectorConfig(accept=",".join(away_config.AUDIO_EXT))
+        ),
         vol.Optional(
             KEY_AWAY_TEXT,
             default=form.get(KEY_AWAY_TEXT, ""),
@@ -440,6 +446,23 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         away_text  = str(user_input.get(KEY_AWAY_TEXT, "")).strip()
         away_tts   = str(user_input.get(KEY_AWAY_TTS) or "").strip()
         away_delay = user_input.get(KEY_AWAY_DELAY, 0)
+        if upload_id := user_input.get(KEY_AWAY_UPLOAD):
+            def _save() -> str:
+                with process_uploaded_file(self.hass, upload_id) as file_path:
+                    return away_config.save_upload(file_path, away_config.messages_dir(self.hass))
+
+            try:
+                away_file = await self.hass.async_add_executor_job(_save)
+            except ValueError as exc:
+                errors[KEY_AWAY_UPLOAD] = str(exc)
+            except OSError:
+                _LOGGER.exception("Away message upload not saved")
+                errors[KEY_AWAY_UPLOAD] = "upload_failed"
+            else:
+                # Il file è già nella cartella: se il form torna per un altro errore
+                # mostra il nuovo percorso e non ricarica un upload già consumato.
+                user_input[KEY_AWAY_FILE] = away_file
+                user_input.pop(KEY_AWAY_UPLOAD)
         if len(away_text) > AWAY_TEXT_MAX:
             errors[KEY_AWAY_TEXT] = "text_too_long"
         # Come snapshot_dir: solo cartelle che HA può leggere (allowlist_external_dirs,

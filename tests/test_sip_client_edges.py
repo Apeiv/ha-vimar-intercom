@@ -12,6 +12,7 @@ import types
 import pytest
 
 from custom_components.vimar_intercom import const as C
+from custom_components.vimar_intercom import plant_state as S
 from custom_components.vimar_intercom import runtime as R
 from custom_components.vimar_intercom import sip_client as sip
 
@@ -196,18 +197,18 @@ def test_a_broken_binding_list_does_not_break_the_registration(monkeypatch, capl
 
 def test_the_model_is_learned_once_and_a_less_specific_match_does_not_replace_it(monkeypatch, caplog):
     seen = []
-    monkeypatch.setattr(R, "DETECTED_MODEL", "")
-    monkeypatch.setattr(R, "DETECTED_FW", "")
-    monkeypatch.setattr(R, "DETECTED_PRIORITY", 999)
+    monkeypatch.setattr(S, "DETECTED_MODEL", "")
+    monkeypatch.setattr(S, "DETECTED_FW", "")
+    monkeypatch.setattr(S, "DETECTED_PRIORITY", 999)
     monkeypatch.setattr(sip, "_model_callback", None)
     sip._apply_ua("Elvox Tab IP")                # no callback yet: only remembered
-    assert R.DETECTED_MODEL == "Elvox Tab IP"
+    assert S.DETECTED_MODEL == "Elvox Tab IP"
     monkeypatch.setattr(sip, "_model_callback", lambda *a: seen.append(a))
     sip._apply_ua("Elvox Tab 7S/2.1.0")
     sip._apply_ua("Elvox Tab 7S/2.1.0")          # same model and firmware: nothing
     sip._apply_ua("Generic Tab")                 # less specific: ignored
     assert [s[0] for s in seen] == ["Elvox Tab 7S"]
-    assert R.DETECTED_FW == "2.1.0"
+    assert S.DETECTED_FW == "2.1.0"
 
     def _boom(*a):
         raise RuntimeError("registry gone")
@@ -215,7 +216,7 @@ def test_the_model_is_learned_once_and_a_less_specific_match_does_not_replace_it
     monkeypatch.setattr(sip, "_model_callback", _boom)
     with caplog.at_level(logging.ERROR, logger=sip.__name__):
         sip._apply_ua("Elvox Tab 7S Plus/3.0")
-    assert R.DETECTED_MODEL == "Elvox Tab 7S Plus"
+    assert S.DETECTED_MODEL == "Elvox Tab 7S Plus"
     assert "Model callback error" in caplog.text
 
 
@@ -627,6 +628,86 @@ def test_declining_the_echo_of_our_own_call_ends_the_ring_quietly(ring, monkeypa
     assert "ring_ended" not in events
     assert ring.media == ["setup"], "our call's media stays open"
     assert ring.sent[-1].startswith("SIP/2.0 603 Decline")
+
+
+@pytest.fixture
+def preview(ring, monkeypatch):
+    """A ring with early media whose RTP the test feeds by hand (#60)."""
+    events = []
+
+    async def _bc(kind, msg):
+        events.append(kind)
+
+    audio = types.SimpleNamespace(pkt_count=0, remote_addr=("192.0.2.50", 4000))
+    monkeypatch.setattr(sip, "broadcast", _bc)
+    monkeypatch.setattr(sip.media, "audio_proto", audio)
+    monkeypatch.setattr(sip.media, "video_proto", None)
+    monkeypatch.setattr(sip, "RING_MEDIA_POLL_S", 0.01, raising=False)
+    monkeypatch.setattr(sip, "RING_MEDIA_GAP_S", 0.05, raising=False)
+    monkeypatch.setattr(R, "USE_LOCAL_UDP", True)
+    return types.SimpleNamespace(events=events, audio=audio, net=ring)
+
+
+async def _rtp_for(audio, seconds):
+    for _ in range(int(seconds / 0.01)):
+        audio.pkt_count += 1
+        await asyncio.sleep(0.01)
+
+
+def test_a_ring_ends_when_the_panel_stops_its_preview(preview):
+    """40507 on local UDP: an unanswered ring gets no CANCEL, the panel just stops
+    its early media after ~30 s. The ring ends there, not at RING_MAX_S, and a
+    late answer finds no ring instead of a dead dialog."""
+    async def _run():
+        await sip.handle_incoming_invite(INVITE)
+        await _rtp_for(preview.audio, 0.2)
+        assert sip.ringing("ring-1"), "the preview is flowing: still ringing"
+        await asyncio.sleep(0.2)
+        return await sip.do_answer_incoming()
+
+    assert asyncio.run(_run()) == (False, "Nessuna chiamata in arrivo")
+    assert preview.events == ["ring", "ring_ended"]
+    assert preview.net.sent[-1].startswith("SIP/2.0 480 ")
+    assert preview.net.media == ["setup", "stop"]
+    assert not sip.in_call
+
+
+def test_a_cloud_ring_is_not_ended_by_a_gap_in_its_preview(preview, monkeypatch):
+    """The cloud relay sends CANCEL; a preview gap over Wi-Fi or the relay must
+    not end a ring the user can still answer."""
+    monkeypatch.setattr(R, "USE_LOCAL_UDP", False)
+
+    async def _run():
+        await sip.handle_incoming_invite(INVITE)
+        await _rtp_for(preview.audio, 0.05)
+        await asyncio.sleep(0.2)
+        return sip.ringing("ring-1")
+
+    assert asyncio.run(_run()) is True
+    assert preview.events == ["ring"]
+
+
+def test_a_ring_whose_preview_never_starts_keeps_the_long_timeout(preview):
+    async def _run():
+        await sip.handle_incoming_invite(INVITE)
+        await asyncio.sleep(0.2)
+        return sip.ringing("ring-1")
+
+    assert asyncio.run(_run()) is True
+    assert preview.events == ["ring"]
+
+
+def test_an_answered_ring_is_not_ended_by_the_preview_watch(preview, monkeypatch):
+    async def _run():
+        await sip.handle_incoming_invite(INVITE)
+        await _rtp_for(preview.audio, 0.05)
+        assert await sip.do_answer_incoming() == (True, "Risposto!")
+        await asyncio.sleep(0.2)  # no RTP now: the call is the media's business
+
+    monkeypatch.setattr(sip.media, "enable_tx", lambda: None)
+    asyncio.run(_run())
+    assert sip.in_call and "ring_ended" not in preview.events
+    sip._set_in_call(False)
 
 
 # ─── Request loop ────────────────────────────────────────────────────────────

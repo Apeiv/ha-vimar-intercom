@@ -11,6 +11,10 @@ Italian and are kept as they were written.
 - **Test ring button** (diagnostic, on the device page): a 20 s test ring in one tap, the same as the
   `simulate_ring` service, to try your ring automations and notifications without writing YAML. It reports an
   error if a real call or ring is in progress.
+- **Upload the away message from the settings**: a file field next to *Message if nobody answers (audio file)*
+  takes an mp3, wav or m4a (max 5 MB), saves it in `<media folder>/citofono/messaggi` and makes it the away
+  message. Only the file name is kept (no paths); a different file with the same name gets `-2` added instead of
+  being overwritten.
 
 ### Changed
 
@@ -21,6 +25,11 @@ Italian and are kept as they were written.
 - Live video from the 40515 was soft and choppy (16 fps, ~14 KB keyframes) because we asked the panel for 256 kbit/s. We now ask for 2 Mbit/s: it sends 25 fps at about 1.5 Mbit/s, same 720x576 picture. A keyframe is now a burst of about 40 packets, which filled the 64-packet cap of the reorder buffer before the 80 ms wait ran out and dropped the picture until the next keyframe, so the cap is now 512.
 - Card video colours looked off (skin and sky tints): the panel's SD H.264 carries no colour info, so browsers assumed BT.709. The decoder is now configured with BT.601.
 - **A dashboard left open no longer calls the panel again ~10 s after a hang-up** ([#57](../../issues/57)): go2rtc and the stream worker reconnect to `/av` with a growing back-off, and each refused reconnect moved the 5 s quick-reopen window forward, so the first one more than 5 s apart placed a call. Now a reconnect from a viewer that was watching `/av` when the call ended waits the full 60 s pause. Opening the camera within the minute still calls if `/av` was not open at the end (for example after answering from the card), and HomeKit is unchanged.
+- **An unanswered ring now ends when the panel stops ringing** ([#60](../../issues/60)): on local UDP the panel
+  gives up without a `CANCEL`, so HA kept ringing up to 90 s and a late answer opened a dead call. The panel
+  does stop its ring preview when it gives up: 3 s without any preview RTP now ends the ring (`ring_ended`, end
+  webhook, the card closes) and a late answer finds no ring. A panel that sends no preview keeps the 90 s limit.
+  Cloud TLS is unchanged: the relay sends `CANCEL`, and a gap in the preview there must not end the ring.
 - Live video froze for up to 3 s after each keyframe on cloud plants: packets the relay delivered a few milliseconds out of order were treated as lost. The reorder buffer now waits up to 80 ms for a gap.
 - **The door is opened with your plant's own command** ([#58](../../issues/58)): the lock, the *Open Door* button,
   HomeKit's gate and `open_door` without `command` now send the `MSG` of the phonebook's door actuator for that

@@ -18,7 +18,7 @@ from homeassistant.const import UnitOfTime
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from . import runtime as R
+from . import plant_state as S
 from .const import DOMAIN
 from .device import device_info
 from .hub import sip_id_name
@@ -63,7 +63,7 @@ def _status_attrs(hub) -> dict:
         "gid_appartamento": st.get("apt_gid"),
         "nomi_appartamento": st.get("apt_names"),
         "cifratura_impianto": st.get("media_enc"),
-        "srtp_attivo": R.MEDIA_ENC,
+        "srtp_attivo": S.MEDIA_ENC,
     }
 
 

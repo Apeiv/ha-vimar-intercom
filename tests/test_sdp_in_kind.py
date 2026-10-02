@@ -24,7 +24,7 @@ PLAIN_OFFER = (
 
 @pytest.mark.parametrize("plant_setting", [False, True])
 def test_an_srtp_offer_gets_an_srtp_answer(monkeypatch, plant_setting):
-    monkeypatch.setattr(sip.R, "MEDIA_ENC", plant_setting)
+    monkeypatch.setattr(sip.S, "MEDIA_ENC", plant_setting)
     answer = sip.build_sdp(sip.parse_sdp(SRTP_OFFER))
     assert "m=audio" in answer and "RTP/SAVP" in answer
     assert answer.count("a=crypto:") == 2
@@ -32,14 +32,14 @@ def test_an_srtp_offer_gets_an_srtp_answer(monkeypatch, plant_setting):
 
 @pytest.mark.parametrize("plant_setting", [False, True])
 def test_a_plain_offer_gets_a_plain_answer(monkeypatch, plant_setting):
-    monkeypatch.setattr(sip.R, "MEDIA_ENC", plant_setting)
+    monkeypatch.setattr(sip.S, "MEDIA_ENC", plant_setting)
     answer = sip.build_sdp(sip.parse_sdp(PLAIN_OFFER))
     assert "RTP/SAVP" not in answer and "a=crypto:" not in answer
 
 
 @pytest.mark.parametrize("plant_setting", [False, True])
 def test_our_own_offer_follows_the_plant_setting(monkeypatch, plant_setting):
-    monkeypatch.setattr(sip.R, "MEDIA_ENC", plant_setting)
+    monkeypatch.setattr(sip.S, "MEDIA_ENC", plant_setting)
     answer = sip.build_sdp()
     assert ("RTP/SAVP" in answer) is plant_setting
 
@@ -63,7 +63,7 @@ def _mline(answer, kind):
 
 @pytest.mark.parametrize("plant_setting", [False, True])
 def test_each_line_mirrors_its_own_profile(monkeypatch, plant_setting):
-    monkeypatch.setattr(sip.R, "MEDIA_ENC", plant_setting)
+    monkeypatch.setattr(sip.S, "MEDIA_ENC", plant_setting)
     answer = sip.build_sdp(sip.parse_sdp(MIXED_OFFER))
     audio, video = _mline(answer, "audio"), _mline(answer, "video")
     assert "RTP/SAVP" in audio and "a=crypto:1 AES_CM_128_HMAC_SHA1_80 inline:" in audio
@@ -173,7 +173,7 @@ def test_a_rebuilt_answer_in_a_dialog_keeps_the_running_srtp_key(monkeypatch):
 
     from custom_components.vimar_intercom import media_handler as mh
 
-    monkeypatch.setattr(sip.R, "MEDIA_ENC", True)
+    monkeypatch.setattr(sip.S, "MEDIA_ENC", True)
     monkeypatch.setattr(sip.R, "USE_LOCAL_UDP", False)
     ours = sip.build_sdp()                       # our offer, with SRTP keys
     running_key = sip._local_crypto_key
