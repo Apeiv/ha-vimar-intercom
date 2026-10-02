@@ -20,8 +20,10 @@ is older and partly stale (Italian); trust the code over it.
 All in `custom_components/vimar_intercom/`.
 
 - `sip_client.py`: the SIP stack. Transport (UDP, TLS with fallback), digest auth, REGISTER,
-  INVITE/answer, MESSAGE, INFO (`picture_fast_update` keyframe requests), dialogs, SDP
-  (`build_sdp`, `parse_sdp`). State is module-level globals, not a class.
+  INVITE/answer, MESSAGE, INFO (`picture_fast_update` keyframe requests), dialogs.
+  State is module-level globals, not a class.
+- `sdp.py`: the SDP we offer or answer (`build_sdp`) and the parser for the peer's
+  (`parse_sdp`), plus the local SRTP keys our last SDP advertised.
 - `hub.py`: `VimarIntercomHub`, the orchestrator. Call lifecycle, ring/state/event callbacks
   for entities, stats, keepalive, keyframe requests (a burst at call start, one per lost
   packet, never periodic), camera target learning, device inventory.

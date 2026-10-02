@@ -302,15 +302,15 @@ def test_an_old_copy_outside_the_window_is_a_new_request(monkeypatch):
 
 def test_unloading_forgets_the_seen_requests_keys_and_ring(monkeypatch):
     monkeypatch.setitem(sip._seen_requests, ("MESSAGE", "m1", "7 MESSAGE"), 1.0)
-    monkeypatch.setattr(sip, "_local_crypto_key", "k1")
-    monkeypatch.setattr(sip, "_local_video_crypto_key", "k2")
+    monkeypatch.setattr(sip.SDP, "_local_crypto_key", "k1")
+    monkeypatch.setattr(sip.SDP, "_local_video_crypto_key", "k2")
     monkeypatch.setattr(sip, "_state_change_callback", None, raising=False)
     for key, value in dict(cid="c1", caller_uri="sip:55001@d", body="v=0").items():
         monkeypatch.setitem(sip.pending_incoming, key, value)
     sip.DEVICES.note_binding('<sip:60999@1.1.1.1>;+sip.instance="<urn:uuid:aaa>";expires=900')
     sip.reset_state()
     assert sip._seen_requests == {}
-    assert sip._local_crypto_key is None and sip._local_video_crypto_key is None
+    assert sip.SDP._local_crypto_key is None and sip.SDP._local_video_crypto_key is None
     assert sip.pending_incoming == sip._PENDING_INITIAL
     assert sip.DEVICES.snapshot()[0]["registered"] is False
 

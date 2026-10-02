@@ -39,7 +39,7 @@ def test_an_audio_only_offer_gets_an_audio_only_answer():
     answer = sip.build_sdp(sip.parse_sdp(AUDIO_ONLY_OFFER))
     assert [m.split()[0] for m in _mlines(answer)] == ["m=audio"]
     assert f"m=audio {sip.C.RTP_AUDIO_PORT} " in answer
-    assert sip._local_video_crypto_key is None
+    assert sip.SDP._local_video_crypto_key is None
 
 
 def test_an_audio_only_srtp_offer_adds_no_video(monkeypatch):

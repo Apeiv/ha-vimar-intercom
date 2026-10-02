@@ -68,8 +68,8 @@ def test_each_line_mirrors_its_own_profile(monkeypatch, plant_setting):
     audio, video = _mline(answer, "audio"), _mline(answer, "video")
     assert "RTP/SAVP" in audio and "a=crypto:1 AES_CM_128_HMAC_SHA1_80 inline:" in audio
     assert "RTP/AVP" in video and "a=crypto" not in video
-    assert sip._local_crypto_key is not None
-    assert sip._local_video_crypto_key is None
+    assert sip.SDP._local_crypto_key is not None
+    assert sip.SDP._local_video_crypto_key is None
 
 
 def test_the_answer_echoes_the_chosen_tag_and_suite():
@@ -176,7 +176,7 @@ def test_a_rebuilt_answer_in_a_dialog_keeps_the_running_srtp_key(monkeypatch):
     monkeypatch.setattr(sip.S, "MEDIA_ENC", True)
     monkeypatch.setattr(sip.R, "USE_LOCAL_UDP", False)
     ours = sip.build_sdp()                       # our offer, with SRTP keys
-    running_key = sip._local_crypto_key
+    running_key = sip.SDP._local_crypto_key
     panel = ("v=0\r\nc=IN IP4 192.0.2.20\r\n"
              f"m=audio 7078 RTP/SAVP 0\r\na=crypto:1 AES_CM_128_HMAC_SHA1_80 inline:{KEY_A}\r\n")
     sent, setups = [], []

@@ -29,8 +29,8 @@ def test_build_sdp_plain_rtp_default():
     assert "RTP/AVP 0 8 101" in sdp
     assert "RTP/AVP 96" in sdp  # video H.264
     # nessuna chiave SRTP generata → setup_media non creerà i contesti
-    assert sip._local_crypto_key is None
-    assert sip._local_video_crypto_key is None
+    assert sip.SDP._local_crypto_key is None
+    assert sip.SDP._local_video_crypto_key is None
 
 
 def test_build_sdp_asks_the_panel_for_2_mbit_video():
@@ -50,8 +50,8 @@ def test_build_sdp_srtp_when_enabled():
     assert "RTP/SAVP 96" in sdp
     assert "RTP/AVP" not in sdp
     assert sdp.count("a=crypto:1 AES_CM_128_HMAC_SHA1_80 inline:") == 2
-    assert sip._local_crypto_key is not None
-    assert sip._local_video_crypto_key is not None
+    assert sip.SDP._local_crypto_key is not None
+    assert sip.SDP._local_video_crypto_key is not None
 
 
 def test_parse_sdp_plain_answer_no_crypto():
