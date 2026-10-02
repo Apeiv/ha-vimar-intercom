@@ -177,10 +177,11 @@ async def _run(enc, standby: bytes, is_live, on_live, port: int) -> None:
             live = is_live()
             if live and (decoder is None or decoder.done()):
                 decoder = asyncio.create_task(_decode(is_live, on_live))
-            elif not live and decoder and not decoder.done():
+            elif not live and decoder and not decoder.done() and not decoder.cancelling():
                 # At call end the decoder can attach to /av again after the media
                 # stopped but before in_call drops, then wait forever on an ffmpeg
-                # with no RTP while _live keeps the panel's last frame.
+                # with no RTP while _live keeps the panel's last frame. Cancelled
+                # once: a second cancel would cut its cleanup (ffmpeg, av_unsubscribe).
                 decoder.cancel()
             chunk = bytes(_pcm[:_CHUNK]) if live else b""
             del _pcm[:_CHUNK]
@@ -202,7 +203,8 @@ async def _run(enc, standby: bytes, is_live, on_live, port: int) -> None:
         if audio:
             audio.close()
         if decoder:
-            decoder.cancel()
+            if not decoder.cancelling():
+                decoder.cancel()
             await asyncio.gather(decoder, return_exceptions=True)
         enc.stdin.close()
         if enc.returncode is None:

@@ -362,6 +362,55 @@ def test_the_end_of_the_video_brings_back_the_standby_even_with_a_stuck_decoder(
     assert cancelled == [1], "the stuck decoder is cancelled when the video ends"
 
 
+def test_the_decoder_is_cancelled_once_so_its_cleanup_can_unsubscribe(monkeypatch):
+    # The loop keeps ticking while the decoder unwinds. A cancel on every tick cut its
+    # av_unsubscribe (waiting for av_stream's lock) and left the queue subscribed, so
+    # the "last client left" stop never came.
+    _run_env(monkeypatch)
+    enc = _Proc()
+
+    class _Hung(_Stdout):
+        async def readexactly(self, n):
+            await asyncio.Event().wait()  # ffmpeg with no RTP
+
+    _spawner(monkeypatch, _Proc(stdout=_Hung()))
+    subscribed: set = set()
+    av_lock = asyncio.Lock()
+
+    async def av_subscribe():
+        q: asyncio.Queue = asyncio.Queue()
+        subscribed.add(q)
+        return q
+
+    async def av_unsubscribe(q):
+        async with av_lock:
+            subscribed.discard(q)
+
+    monkeypatch.setattr(av_stream, "av_subscribe", av_subscribe)
+    monkeypatch.setattr(av_stream, "av_unsubscribe", av_unsubscribe)
+    live = [True]
+
+    async def run():
+        task = asyncio.create_task(av_passive._run(enc, b"STANDBY", lambda: live[0], lambda: None, 1))
+        while not subscribed:
+            await asyncio.sleep(0.01)
+        async with av_lock:  # busy for a few ticks, as _av_lock can be
+            live[0] = False
+            n = len(enc.stdin.writes)
+            while len(enc.stdin.writes) < n + 4:
+                await asyncio.sleep(0.01)
+        for _ in range(100):
+            if not subscribed:
+                break
+            await asyncio.sleep(0.01)
+        left = set(subscribed)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        return left
+
+    assert asyncio.run(run()) == set(), "the decoder's queue left the /av fan-out"
+
+
 def test_a_cancelled_encoder_loop_leaves_the_clients_alone(monkeypatch):
     _run_env(monkeypatch)
     enc = _Proc()
