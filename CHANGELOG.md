@@ -11,6 +11,10 @@ Italian and are kept as they were written.
 - **Test ring button** (diagnostic, on the device page): a 20 s test ring in one tap, the same as the
   `simulate_ring` service, to try your ring automations and notifications without writing YAML. It reports an
   error if a real call or ring is in progress.
+- **Upload the away message from the settings**: a file field next to *Message if nobody answers (audio file)*
+  takes an mp3, wav or m4a (max 5 MB), saves it in `<media folder>/citofono/messaggi` and makes it the away
+  message. Only the file name is kept (no paths); a different file with the same name gets `-2` added instead of
+  being overwritten.
 
 ### Changed
 

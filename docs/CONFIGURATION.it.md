@@ -87,6 +87,7 @@ segreteria, vale quella del Tab. Il ritardo è uno solo, *Segreteria · ritardo*
 espone, l'opzione `away_message_delay`, 0 = 20 s): il messaggio di HA parte dopo quei secondi.
 Il messaggio si imposta dalla stessa pagina: *Segreteria · testo del messaggio* e *Segreteria · file audio* (elenco dei file in
 `<prima cartella media di HA>/citofono/messaggi`, creata se manca; si carica da Media > Local media; l'elenco si aggiorna ogni minuto).
+Il file si può caricare anche dalle impostazioni dell'integrazione (*Oppure carica il file audio*: mp3, wav o m4a, massimo 5 MB): finisce in quella cartella e diventa subito il messaggio di assenza.
 Sono le stesse opzioni dell'integrazione, applicate subito senza ricaricarla. Solo gli amministratori possono cambiare testo e file del messaggio (dalla 1.0.17, #64); il dialog delle impostazioni della card nasconde quelle righe agli altri utenti.
 
 Esempio, Tab 5S Up 40515 (Due Fili Plus, cloud): SGA `61000`, PICG `60001`, targa video e apri‑porta

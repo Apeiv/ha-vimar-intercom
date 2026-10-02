@@ -275,6 +275,70 @@ def test_an_existing_away_file_is_saved(of, tmp_path):
     assert result["type"] == "create_entry" and result["data"]["away_message_file"] == str(f)
 
 
+def _away_upload(of, monkeypatch, tmp_path, name, data=b"ID3 audio"):
+    """The settings saved with an uploaded away file called `name`; the media folder is tmp_path/media."""
+    (tmp_path / "upload" / "id1").mkdir(parents=True, exist_ok=True)
+    src = tmp_path / "upload" / "id1" / name
+    if data is not None:
+        src.write_bytes(data)
+
+    @contextlib.contextmanager
+    def process_uploaded_file(hass, upload_id):
+        assert upload_id == "id1"
+        yield src
+
+    monkeypatch.setattr(of, "process_uploaded_file", process_uploaded_file)
+    flow = _options_flow(of)
+    flow.hass.config.media_dirs = {"local": str(tmp_path / "media")}
+    result = asyncio.run(flow.async_step_settings({"local_proxy": "192.0.2.1", "use_local_udp": False,
+                                                   "away_message_upload": "id1"}))
+    return result, tmp_path / "media" / "citofono" / "messaggi"
+
+
+def test_an_uploaded_away_file_is_saved_in_the_messages_folder_and_chosen(of, monkeypatch, tmp_path):
+    result, folder = _away_upload(of, monkeypatch, tmp_path, "Benvenuti a casa.mp3")
+    assert result["type"] == "create_entry"
+    assert result["data"]["away_message_file"] == str(folder / "Benvenuti a casa.mp3")
+    assert (folder / "Benvenuti a casa.mp3").read_bytes() == b"ID3 audio"
+    assert "away_message_upload" not in result["data"]
+
+
+def test_an_upload_with_the_name_of_a_different_file_does_not_overwrite_it(of, monkeypatch, tmp_path):
+    folder = tmp_path / "media" / "citofono" / "messaggi"
+    folder.mkdir(parents=True)
+    (folder / "msg.wav").write_bytes(b"old")
+    result, _ = _away_upload(of, monkeypatch, tmp_path, "msg.wav", b"new")
+    assert (folder / "msg.wav").read_bytes() == b"old"
+    assert result["data"]["away_message_file"] == str(folder / "msg-2.wav")
+    assert (folder / "msg-2.wav").read_bytes() == b"new"
+
+
+def test_an_upload_keeps_only_the_file_name(of, monkeypatch, tmp_path):
+    """A name with ../ cannot write outside the messages folder."""
+    (tmp_path / "evil.mp3").write_bytes(b"x")
+    result, folder = _away_upload(of, monkeypatch, tmp_path, "../../evil.mp3", data=None)
+    assert result["data"]["away_message_file"] == str(folder / "evil.mp3")
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["evil.mp3", "media", "upload"]
+
+
+@pytest.mark.parametrize("name", ["msg.exe", "msg.mp3.sh", ".hidden.mp3", "a\\..\\b:.mp3", "x;rm.mp3"])
+def test_an_upload_of_the_wrong_kind_is_refused(of, monkeypatch, tmp_path, name):
+    if ":" in name or "\\" in name:  # not a valid file name on Windows: check the name alone
+        with pytest.raises(ValueError, match="upload_bad_type"):
+            of.away_config.save_upload(name, str(tmp_path))
+        return
+    result, folder = _away_upload(of, monkeypatch, tmp_path, name)
+    assert result["errors"] == {"away_message_upload": "upload_bad_type"}
+    assert not folder.exists()
+
+
+def test_a_too_big_upload_is_refused(of, monkeypatch, tmp_path):
+    result, folder = _away_upload(of, monkeypatch, tmp_path, "big.m4a",
+                                  b"x" * (of.away_config.UPLOAD_MAX + 1))
+    assert result["errors"] == {"away_message_upload": "upload_too_big"}
+    assert not folder.exists()
+
+
 def test_webhook_urls_must_be_http(of):
     result = _settings(of, {"ring_webhook_url": "ftp://192.0.2.5/x",
                             "ring_end_webhook_url": "https://example.test/end"})
