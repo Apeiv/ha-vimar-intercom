@@ -140,12 +140,15 @@ def test_a_failed_renewal_and_reconnect_count_once(hub, chiamate, monkeypatch):
     assert chiamate["init_status"] == 0
 
 
-@pytest.mark.parametrize("flag", ["in_call", "calling"])
+@pytest.mark.parametrize("flag", ["in_call", "calling", "ringing"])
 @pytest.mark.parametrize("retry_ok", [True, False])
 def test_a_failed_renewal_during_a_call_never_reconnects(hub, chiamate, monkeypatch, flag, retry_ok):
-    """A reconnect tears down the connection the live call runs on."""
+    """A reconnect tears down the connection the live call (or the ring) runs on."""
     monkeypatch.setattr(sip, "registered", True, raising=False)
-    monkeypatch.setattr(sip, flag, True, raising=False)
+    if flag == "ringing":
+        monkeypatch.setitem(sip.pending_incoming, "active", True)
+    else:
+        monkeypatch.setattr(sip, flag, True, raising=False)
     hub._init_status_sent = True
     answers = iter([False, retry_ok])
 
@@ -160,6 +163,24 @@ def test_a_failed_renewal_during_a_call_never_reconnects(hub, chiamate, monkeypa
 
     assert chiamate["reconnect"] == 0
     assert chiamate["register"] == 2, "the REGISTER is retried once"
+    assert hub.stats["register_failures"] == prima + 1, "one failed tick, one failure"
+
+
+@pytest.mark.parametrize("flag", ["in_call", "calling", "ringing"])
+def test_a_lapsed_registration_during_a_call_does_not_reconnect(hub, chiamate, monkeypatch, flag):
+    """The next tick after a failed renewal (registered is False) must not drop the call or ring."""
+    monkeypatch.setattr(sip, "registered", False, raising=False)
+    if flag == "ringing":
+        monkeypatch.setitem(sip.pending_incoming, "active", True)
+    else:
+        monkeypatch.setattr(sip, flag, True, raising=False)
+    chiamate["register_ok"] = False
+    hub._init_status_sent = True
+    prima = hub.stats["register_failures"]
+
+    _tick(hub, chiamate, monkeypatch)
+
+    assert chiamate["reconnect"] == 0 and chiamate["register"] == 1
     assert hub.stats["register_failures"] == prima + 1, "one failed tick, one failure"
 
 
