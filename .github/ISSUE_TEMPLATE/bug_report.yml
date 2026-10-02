@@ -87,9 +87,9 @@ body:
     attributes:
       label: SIP trace (optional, but it usually decides the issue)
       description: |
-        Output of `python tools/sip_probe.py options --target <addr>`, or the
-        REGISTER/MESSAGE exchange from the debug log. Strip the `Authorization`
-        header values.
+        The REGISTER/INVITE/MESSAGE exchange from the debug log above (SIP
+        traffic is logged at debug level). Strip the `Authorization` header
+        values.
       render: shell
 
   - type: checkboxes
