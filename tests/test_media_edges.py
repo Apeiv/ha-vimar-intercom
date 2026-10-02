@@ -170,6 +170,27 @@ def test_a_sequence_restart_on_the_same_ssrc_keeps_the_video():
     assert vp.pkt_count == 309 and rx.replayed == 0 and vp._srtp_fail == 0
 
 
+def test_a_window_jump_is_logged_once_per_call_with_its_size(caplog, monkeypatch):
+    """The cloud ring that sent no media: the next one shows which it was, a lone
+    packet far ahead (info) or numbers going back (warning, the default level)."""
+    from custom_components.vimar_intercom import srtp
+
+    # the integration's own logger may drop INFO in a full run: use a plain one
+    monkeypatch.setattr(srtp, "_LOGGER", logging.getLogger("test_srtp_window"))
+    tx, rx = _srtp_pair()
+    rx.name = "video"
+    vp = _video()
+    vp.srtp_rx = rx
+    addr = ("198.51.100.7", 5002)
+    with caplog.at_level(logging.INFO, logger="test_srtp_window"):
+        for seq in [1000, 1001, 5000] + list(range(1002, 1400)) + list(range(10, 20)):
+            vp.datagram_received(tx.protect(_rtp(P, pt=96, seq=seq)), addr)
+    logged = [(r.levelno, r.getMessage()) for r in caplog.records if "SRTP video" in r.getMessage()]
+    assert [lvl for lvl, _ in logged] == [logging.INFO, logging.WARNING]
+    assert "3999 ahead" in logged[0][1] and "went back 3998" in logged[1][1]
+    assert rx.resyncs == 2
+
+
 def test_a_duplicate_srtp_audio_packet_is_a_replay_not_an_auth_failure(caplog):
     tx, rx = _srtp_pair()
     ap = _audio()

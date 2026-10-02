@@ -998,7 +998,7 @@ async def setup_media(remote_sdp, local_crypto_key=None, local_video_crypto_key=
         audio_proto.srtp_rx = None
         audio_proto.srtp_tx = None
         if remote_audio_key:
-            audio_proto.srtp_rx = SRTPContext(remote_audio_key, audio_suite)
+            audio_proto.srtp_rx = SRTPContext(remote_audio_key, audio_suite, "audio")
             _LOGGER.info("SRTP Audio RX context created")
         if local_crypto_key and remote_audio_key:
             audio_proto.srtp_tx = SRTPContext(local_crypto_key, audio_suite)
@@ -1044,7 +1044,7 @@ async def setup_media(remote_sdp, local_crypto_key=None, local_video_crypto_key=
         video_proto._nal_types = {}
         video_proto.srtp_rx = None
         if remote_video_key:
-            video_proto.srtp_rx = SRTPContext(remote_video_key, video_suite)
+            video_proto.srtp_rx = SRTPContext(remote_video_key, video_suite, "video")
             _LOGGER.info("SRTP Video RX — direct H.264 depacketization (no ffmpeg)")
         frame_grabber.start(video_proto)
         video_proto.send_stun()

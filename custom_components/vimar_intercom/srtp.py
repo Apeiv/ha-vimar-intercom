@@ -8,9 +8,12 @@ loop Python e nessuna dipendenza non dichiarata. Il contatore è il blocco da
 import base64
 import hashlib
 import hmac
+import logging
 import struct
 
 from Crypto.Cipher import AES
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _aes_ctr(key: bytes, iv: bytes):
@@ -82,15 +85,16 @@ class SRTPContext:
     #: Received indices remembered per SSRC for replay protection (libsrtp keeps 128).
     REPLAY_WINDOW = 128
 
-    def __init__(self, master_key_b64: str, suite: str = "AES_CM_128_HMAC_SHA1_80"):
+    def __init__(self, master_key_b64: str, suite: str = "AES_CM_128_HMAC_SHA1_80", name: str = ""):
         """Initialize from base64-encoded inline key (30 bytes = 16 key + 14 salt).
 
         suite: the SDES crypto suite (RFC 4568); _32 only shortens the SRTP
-        authentication tag to 32 bits.
+        authentication tag to 32 bits. name: audio/video, for the log lines.
         """
         if suite not in SUITE_TAG_LEN:
             raise ValueError(f"unsupported SRTP suite: {suite}")
         self.AUTH_TAG_LEN = SUITE_TAG_LEN[suite]
+        self.name = name
         raw = base64.b64decode(master_key_b64)
         if len(raw) < 30:
             raise ValueError(f"SRTP key too short: {len(raw)} bytes (need 30)")
@@ -114,6 +118,10 @@ class SRTPContext:
         # bitmap of the REPLAY_WINDOW indices below it (bit n = max - n received).
         self._rx_window: dict[int, tuple[int, int]] = {}
         self.replayed = 0  # authentic packets dropped as replays
+        # Window restarts from an older index: logged once per context, i.e. per
+        # call and stream, so the next cloud ring shows which hypothesis was right.
+        self.resyncs = 0
+        self._far_ahead_logged = False
 
     def _estimate_index(self, ssrc: int, seq: int) -> tuple[int, int]:
         """(ROC, indice) più vicino all'ultimo indice buono del flusso (RFC 3711 §3.3.1)."""
@@ -140,10 +148,19 @@ class SRTPContext:
         state = self._rx_window.get(ssrc)
         behind = state[0] - idx if state else 0
         if state is None or behind >= self.REPLAY_WINDOW:
+            if state:
+                self.resyncs += 1
+                if self.resyncs == 1:
+                    _LOGGER.warning("SRTP %s: packet numbers went back %d, replay window restarted "
+                                    "(the sender restarted its sequence?)", self.name, behind)
             self._rx_window[ssrc] = (idx, 1)
             return True
         top, seen = state
         if behind < 0:
+            if -behind >= self.REPLAY_WINDOW and not self._far_ahead_logged:
+                self._far_ahead_logged = True  # info: a loss burst does this too
+                _LOGGER.info("SRTP %s: a packet arrived %d ahead of the previous highest",
+                             self.name, -behind)
             seen = 1 if -behind >= self.REPLAY_WINDOW else (
                 ((seen << -behind) | 1) & ((1 << self.REPLAY_WINDOW) - 1))
             self._rx_window[ssrc] = (idx, seen)

@@ -137,6 +137,7 @@ def test_the_stream_goes_on_after_a_packet_far_ahead_or_a_jump_back():
         assert rx.unprotect(tx.protect(_rtp(seq))) is not None, seq
     dup = tx.protect(_rtp(300))
     assert rx.unprotect(dup) is not None and rx.unprotect(dup) is None, "still refuses a replay"
+    assert rx.resyncs == 2
 
 
 def test_late_packets_inside_the_window_are_still_accepted():
