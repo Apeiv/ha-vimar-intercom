@@ -92,8 +92,9 @@ class Request:
         self._user = types.SimpleNamespace(is_admin=admin)
 
     def get(self, k, d=None):
-        # Like HA's auth middleware: a user means an authenticated request.
-        if k == "hass_authenticated":
+        # Like HA's auth middleware (homeassistant/components/http/auth.py): a user
+        # means an authenticated request, under the key HA really uses.
+        if k == "ha_authenticated":
             return self._user is not None
         return self._user if k == "hass_user" else d
 
