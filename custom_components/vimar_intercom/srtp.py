@@ -79,6 +79,8 @@ class SRTPContext:
     """SRTP encryption/decryption context for one direction."""
 
     AUTH_TAG_LEN = 10  # 80-bit HMAC-SHA1
+    #: Received indices remembered per SSRC for replay protection (libsrtp keeps 128).
+    REPLAY_WINDOW = 128
 
     def __init__(self, master_key_b64: str, suite: str = "AES_CM_128_HMAC_SHA1_80"):
         """Initialize from base64-encoded inline key (30 bytes = 16 key + 14 salt).
@@ -108,6 +110,10 @@ class SRTPContext:
         # nuovo flusso poteva ricevere il ROC sbagliato, e da lì in poi ogni
         # pacchetto falliva l'autenticazione (lo stato si aggiorna solo sui buoni).
         self._streams: dict[int, tuple[int, int]] = {}  # ssrc -> (roc, last_seq)
+        # Replay window (RFC 3711 §3.3.2) per SSRC: highest index accepted and a
+        # bitmap of the REPLAY_WINDOW indices below it (bit n = max - n received).
+        self._rx_window: dict[int, tuple[int, int]] = {}
+        self.replayed = 0  # authentic packets dropped as replays
 
     def _estimate_index(self, ssrc: int, seq: int) -> tuple[int, int]:
         """(ROC, indice) più vicino all'ultimo indice buono del flusso (RFC 3711 §3.3.1)."""
@@ -119,6 +125,26 @@ class SRTPContext:
         _, r = min((abs(((r << 16) | seq) - last_idx), r)
                    for r in (roc, roc + 1, roc - 1) if r >= 0)
         return r, (r << 16) | seq
+
+    def _is_fresh(self, ssrc: int, idx: int) -> bool:
+        """False for an index already received, or older than the window; records
+        it otherwise. Called after authentication, so a forged packet never moves
+        the window."""
+        state = self._rx_window.get(ssrc)
+        if state is None:
+            self._rx_window[ssrc] = (idx, 1)
+            return True
+        top, seen = state
+        behind = top - idx
+        if behind < 0:
+            seen = 1 if -behind >= self.REPLAY_WINDOW else (
+                ((seen << -behind) | 1) & ((1 << self.REPLAY_WINDOW) - 1))
+            self._rx_window[ssrc] = (idx, seen)
+            return True
+        if behind >= self.REPLAY_WINDOW or seen >> behind & 1:
+            return False
+        self._rx_window[ssrc] = (top, seen | 1 << behind)
+        return True
 
     def _update_roc(self, ssrc: int, seq: int, roc: int):
         """Dopo un pacchetto buono: avanza lo stato del flusso se l'indice è nuovo."""
@@ -135,7 +161,7 @@ class SRTPContext:
         return _truncated_hmac(self._hmac, rtp_packet + struct.pack("!I", roc), self.AUTH_TAG_LEN)
 
     def unprotect(self, srtp_packet: bytes) -> bytes | None:
-        """Decrypt SRTP packet → plain RTP packet. Returns None on auth failure."""
+        """Decrypt SRTP packet → plain RTP packet. Returns None on auth failure or replay."""
         if len(srtp_packet) < 12 + self.AUTH_TAG_LEN:
             return None
 
@@ -164,7 +190,12 @@ class SRTPContext:
         if not hmac.compare_digest(auth_tag, expected_tag):
             return None
 
-        # Auth passed — update ROC state
+        # Auth passed: a captured packet sent again is dropped here
+        if not self._is_fresh(ssrc, idx):
+            self.replayed += 1
+            return None
+
+        # Update ROC state
         self._update_roc(ssrc, seq, est_roc)
 
         # Decrypt payload — single native AES-CTR call

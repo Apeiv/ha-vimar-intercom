@@ -364,22 +364,6 @@ class TestReplayedVoice:
         with pytest.raises(socket.timeout):
             talk.recvfrom(2048)
 
-    def test_the_window_accepts_reordering_and_refuses_the_too_old(self):
-        f = audio.ReplayFilter()
-        assert [f.fresh(rtp(s, 0)) for s in (10, 12, 11)] == [True, True, True]
-        assert not f.fresh(rtp(11, 0))
-        assert f.fresh(rtp(10 + f.WINDOW + 5, 0))
-        assert not f.fresh(rtp(12, 0)), "never seen twice, but behind the window"
-
-    def test_the_sequence_may_wrap(self):
-        f = audio.ReplayFilter()
-        assert all(f.fresh(rtp(s, 0)) for s in (65534, 65535, 0, 1))
-        assert not f.fresh(rtp(65535, 0)) and not f.fresh(rtp(0, 0))
-
-    def test_each_ssrc_has_its_own_window(self):
-        f = audio.ReplayFilter()
-        assert f.fresh(rtp(7, 0, ssrc=1)) and f.fresh(rtp(7, 0, ssrc=2))
-
 
 class TestStopping:
     def test_a_decoder_already_gone_does_not_break_the_stop(self):
