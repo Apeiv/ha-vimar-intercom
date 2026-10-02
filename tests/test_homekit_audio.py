@@ -16,6 +16,7 @@ import pytest
 
 audio = pytest.importorskip("custom_components.vimar_intercom.homekit_audio")
 srtp = pytest.importorskip("custom_components.vimar_intercom.srtp")
+from harness.homekit import FakeVoiceFfmpeg  # noqa: E402
 
 KEY = base64.b64encode(bytes(range(30))).decode()
 
@@ -252,17 +253,6 @@ class TestTheVoiceDecoderComesAndGoes:
         assert len(bridge._test_starts) == 2
 
 
-class FakeFfmpeg:
-    """A voice decoder that exits at once (a broken ffmpeg, a bad build)."""
-
-    def __init__(self, returncode=1):
-        self.returncode = returncode
-        self.stdout = self.stderr = None
-
-    async def wait(self):
-        return self.returncode
-
-
 class TestABrokenVoiceDecoder:
     """ffmpeg that fails to start, or exits at once, was relaunched on every
     voice packet (fifty times a second) and an exception from the launch was
@@ -292,7 +282,7 @@ class TestABrokenVoiceDecoder:
 
         async def spawn(*args, **_kw):
             launches.append(args)
-            return FakeFfmpeg()
+            return FakeVoiceFfmpeg()
 
         loop, bridge, voice_for = self._talk(monkeypatch, spawn)
         try:
@@ -330,7 +320,7 @@ class TestABrokenVoiceDecoder:
             path = args[args.index("-i") + 1]
             with open(path) as f:
                 launches.append((args, f.read(), os.stat(path).st_mode & 0o777))
-            return FakeFfmpeg()
+            return FakeVoiceFfmpeg()
 
         loop, bridge, voice_for = self._talk(monkeypatch, spawn)
         try:

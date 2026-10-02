@@ -28,6 +28,8 @@ from custom_components.vimar_intercom import media_handler as media
 from custom_components.vimar_intercom import runtime as R
 from custom_components.vimar_intercom import sip_client as sip
 
+pytestmark = pytest.mark.slow
+
 
 def lose_first(peer, method):
     """La rete (Wi-Fi del Tab) perde il primo datagramma `method` diretto alla targa."""

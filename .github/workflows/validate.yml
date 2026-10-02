@@ -52,10 +52,11 @@ jobs:
       - run: pip install -r requirements-dev.txt
       # I test girano senza Home Assistant installato: conftest.py fornisce gli
       # stub. I test marcati `live` (che richiedono il citofono in rete) sono
-      # esclusi dal marker in pyproject.toml.
+      # esclusi dal marker in pyproject.toml. Quelli `slow` (e2e SIP, ~2 min)
+      # sono esclusi di default in locale ma qui girano: -m sovrascrive addopts.
       # Coverage (lines + branches) of custom_components/vimar_intercom: the
       # threshold is fail_under in pyproject.toml, below it the job fails.
-      - run: python -m pytest tests --cov --cov-report=term-missing
+      - run: python -m pytest tests -m "not live and not media and not browser" --cov --cov-report=term-missing
 
   media-browser:
     # A richiesta (workflow_dispatch): media vero (ffmpeg, aiohttp) e la card in

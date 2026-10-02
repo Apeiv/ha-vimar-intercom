@@ -9,6 +9,7 @@ import struct
 import pytest
 
 tc = pytest.importorskip("custom_components.vimar_intercom.homekit_transcode")
+from harness.homekit import FakeSdpFfmpeg  # noqa: E402
 
 
 def rtp(payload: bytes, seq: int = 1) -> bytes:
@@ -78,20 +79,6 @@ class TestEncodedGop:
         assert not g.has_keyframe
 
 
-class FakeFfmpeg:
-    returncode = None
-    stderr = None
-    stdout = None
-
-    def terminate(self):
-        self.returncode = -15
-
-    kill = terminate
-
-    async def wait(self):
-        return self.returncode
-
-
 def test_the_panel_video_is_read_on_loopback_from_a_private_sdp(monkeypatch):
     """ffmpeg 8.1 bound the RTCP port of an SDP input on 0.0.0.0, and the SDP
     had a guessable name in /tmp that open() would follow as a symlink."""
@@ -105,7 +92,7 @@ def test_the_panel_video_is_read_on_loopback_from_a_private_sdp(monkeypatch):
         seen["args"], seen["mode"] = args, os.stat(path).st_mode & 0o777
         with open(path) as f:
             seen["sdp"] = f.read()
-        return FakeFfmpeg()
+        return FakeSdpFfmpeg()
 
     monkeypatch.setattr(tc.asyncio, "create_subprocess_exec", spawn)
     monkeypatch.setattr(tc, "port_bound", lambda _port: True)
@@ -170,7 +157,7 @@ def test_a_deferred_start_feeds_nothing_until_begin(monkeypatch):
     import asyncio
 
     async def spawn(*_a, **_kw):
-        return FakeFfmpeg()
+        return FakeSdpFfmpeg()
 
     monkeypatch.setattr(tc.asyncio, "create_subprocess_exec", spawn)
     monkeypatch.setattr(tc, "port_bound", lambda _port: True)

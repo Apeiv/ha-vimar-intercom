@@ -6,9 +6,10 @@ requires-python = ">=3.11"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-m 'not live and not media and not browser'"
+addopts = "-m 'not live and not media and not browser and not slow'"
 markers = [
     "live: richiede il Tab reale in rete (escluso di default)",
+    "slow: end-to-end SIP and call-flow tests, about two minutes together (excluded by default; CI runs them: -m 'not live and not media and not browser')",
     "media: media vero con ffmpeg e aiohttp (escluso di default: -m media)",
     "browser: la card in Chromium/WebKit con playwright e aiohttp (escluso di default: -m browser)",
 ]
