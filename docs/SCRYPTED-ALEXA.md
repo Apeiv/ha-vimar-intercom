@@ -18,9 +18,9 @@ Tab 5S Up (40515), Scrypted and an Echo Show.
 
 ## Requirements
 
-- The integration at version **1.0.19 or later** (passive stream fixes, see the
-  [pull request](https://github.com/lollox80/ha-vimar-intercom/pulls?q=is%3Apr+passive)).
-  <!-- placeholder: update with the real release and PR number -->
+- The integration at version **1.0.19 or later** (passive stream fixes, see
+  [#88](https://github.com/lollox80/ha-vimar-intercom/pull/88)).
+  <!-- placeholder: update with the real release -->
 - Scrypted with the **Scripts**, **Rebroadcast** and **Alexa** plugins.
 - The ring sent to Scrypted as a doorbell press: the *Doorbell Button* (Dummy Switch) and the
   integration's ring webhooks, as in [External systems, steps 2 and 3](EXTERNAL.md#scrypted-alexa-chime--echo-show-live-view).

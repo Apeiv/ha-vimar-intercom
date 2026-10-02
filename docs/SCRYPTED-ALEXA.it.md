@@ -18,9 +18,9 @@ un Tab 5S Up (40515), Scrypted e un Echo Show.
 
 ## Cosa serve
 
-- L'integrazione alla versione **1.0.19 o successiva** (correzioni allo stream passivo, vedi la
-  [pull request](https://github.com/lollox80/ha-vimar-intercom/pulls?q=is%3Apr+passive)).
-  <!-- segnaposto: aggiornare con la release vera e il numero della PR -->
+- L'integrazione alla versione **1.0.19 o successiva** (correzioni allo stream passivo, vedi
+  [#88](https://github.com/lollox80/ha-vimar-intercom/pull/88)).
+  <!-- segnaposto: aggiornare con la release vera -->
 - Scrypted con i plugin **Scripts**, **Rebroadcast** e **Alexa**.
 - Lo squillo che arriva a Scrypted come pressione del campanello: il *Doorbell Button* (Dummy
   Switch) e i webhook dello squillo dell'integrazione, come ai
