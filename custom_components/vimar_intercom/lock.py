@@ -11,7 +11,6 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from . import const as C
 from .const import DOMAIN
 from .device import device_info
 
@@ -30,7 +29,7 @@ async def async_setup_entry(
         # rubrica non è stata importata. Un indirizzo sbagliato risponde 200
         # senza effetto e la serratura mostra "sbloccata" con la porta chiusa.
         VimarIntercomLock(hub, entry.entry_id, key="lock", name="Serratura",
-                          door_target=None, door_command=C.DOOR_COMMAND),
+                          door_target=None, door_command=None),
     ])
 
 
@@ -45,7 +44,7 @@ class VimarIntercomLock(LockEntity):
     _attr_has_entity_name = False
     _attr_icon = "mdi:door-closed-lock"
 
-    def __init__(self, hub, entry_id: str, *, key: str, name: str, door_target: str | None, door_command: str = "OPEN_2F") -> None:
+    def __init__(self, hub, entry_id: str, *, key: str, name: str, door_target: str | None, door_command: str | None = None) -> None:
         self._hub = hub
         self._door_target = door_target
         self._door_command = door_command

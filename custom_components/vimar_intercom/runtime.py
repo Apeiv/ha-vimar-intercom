@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib as _hashlib
 import logging as _logging
+import re as _re
 import secrets as _secrets
 import uuid as _uuid
 
@@ -215,6 +216,37 @@ def door_from_actuators(actuators) -> str:
         if (act or {}).get("icon") == "door" and target.isdigit():
             return target
     return ""
+
+
+# A door command body from the phonebook's MSG column: upper-case letters, digits
+# and underscores only (OPEN, OPEN_2F, ...). Anything else falls back to the
+# default rather than going on the wire.
+_DOOR_BODY = _re.compile(r"[A-Z0-9_]{1,32}")
+
+
+def door_command_for(target) -> tuple[str, str]:
+    """The body that opens the door at panel `target`, and where it came from.
+
+    The phonebook's door actuator (icon "door") pairs a body (MSG) with the
+    panel that owns the relay (GID_PE); both come from the same row, because
+    the body alone does not identify a door (a relay module can use the same
+    body towards another panel, #58). "AUTO" as a target means DOOR_TARGET.
+    Returns (MSG, "phonebook") for a match, else (OPEN_2F, "default").
+    """
+    target = str(target or "")
+    for act in ACTUATORS or []:
+        a = act or {}
+        if a.get("icon") != "door":
+            continue
+        t = str(a.get("target") or "")
+        if t.upper() == "AUTO":
+            t = DOOR_TARGET
+        if t != target:
+            continue
+        msg = str(a.get("msg") or "").strip()
+        if _DOOR_BODY.fullmatch(msg):
+            return msg, "phonebook"
+    return _const.DOOR_COMMAND, "default"
 
 
 def configure(data: dict) -> None:

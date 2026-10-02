@@ -337,7 +337,7 @@
         },
         "command": {
           "name": "Comando",
-          "description": "Comando di apertura"
+          "description": "Comando di apertura. Vuoto = quello dell'attuatore porta della rubrica per quella targa, altrimenti OPEN_2F."
         }
       }
     },

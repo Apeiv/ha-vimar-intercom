@@ -184,6 +184,8 @@ class VimarIntercomHub:
             "last_door_time": None,
             "last_door_target": None,
             "last_door_result": None,
+            "last_door_command": None,         # body sent, e.g. "OPEN"
+            "last_door_command_source": None,  # "phonebook" | "default" | "explicit"
             "door_count": 0,
             "last_register_time": None,
             "register_failures": 0,
@@ -1049,15 +1051,26 @@ class VimarIntercomHub:
         # Senza target: la targa che apre la porta (R.DOOR_TARGET, dalla
         # rubrica), non l'SGA — su un 2FV2 l'SGA risponde 200 e non apre.
         uri = sip_uri(target) if target else R.DOOR_ESTERNO
-        body = command or C.DOOR_COMMAND
+        door_target = target or R.DOOR_TARGET
+        # The body is the phonebook's MSG for that panel's door actuator (#58);
+        # OPEN_2F only when the phonebook has none. An explicit command wins.
+        if command:
+            body, source = command, "explicit"
+        else:
+            body, source = R.door_command_for(door_target)
+            if source == "default":
+                _LOGGER.info("Door command: no door actuator for %s in the phonebook, sending the default %s",
+                             door_target, body)
 
-        _LOGGER.info("Door command: uri=%s body=%s registered=%s", uri, body, sip.registered)
+        _LOGGER.info("Door command: uri=%s body=%s (%s) registered=%s", uri, body, source, sip.registered)
 
         ok, msg = await sip.do_system_message(
             uri, body, extra_headers={"Panda": "command"})
 
         self.stats["last_door_time"] = self._now()
-        self.stats["last_door_target"] = target or R.DOOR_TARGET
+        self.stats["last_door_target"] = door_target
+        self.stats["last_door_command"] = body
+        self.stats["last_door_command_source"] = source
         self.stats["last_door_result"] = msg
         if ok:
             self.stats["door_count"] += 1

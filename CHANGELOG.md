@@ -6,6 +6,15 @@ Italian and are kept as they were written.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The door is opened with your plant's own command** ([#58](../../issues/58)): the lock, the *Open Door* button,
+  HomeKit's gate and `open_door` without `command` now send the `MSG` of the phonebook's door actuator for that
+  panel, as the VIEW app does, instead of a fixed `OPEN_2F`. The body is taken only together with its panel, since
+  a relay module can use the same body towards another one. Without a door actuator in the phonebook nothing
+  changes (`OPEN_2F`, with a log line saying so). The *Last Door Open* sensor shows the command sent and where it
+  came from (`phonebook`, `default`, `explicit`).
+
 ## [1.0.18] - 2026-10-02
 
 ### Changed
