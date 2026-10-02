@@ -29,13 +29,6 @@ _LOGGER = logging.getLogger(__name__)
 KEY_AUTHENTICATED = "ha_authenticated"
 
 
-def _state(hub, **extra) -> str:
-    """/audio_ws "state": the same fields from every reply. "ringing" lets a client
-    joining mid-ring (an Echo through Scrypted) watch instead of calling over it."""
-    return json.dumps({"type": "state", "registered": hub.registered, "in_call": hub.in_call,
-                       "ringing": hub.is_ringing, **extra})
-
-
 def _user_allowed(request: web.Request) -> bool:
     """Opzione `allowed_users`: chi può vedere squilli, foto, clip e media live. Admin
     sempre; lista vuota = ogni utente autenticato; senza utente (/av in LAN dallo stream
@@ -161,7 +154,7 @@ class VimarAudioWSView(HomeAssistantView):
             media.video_proto.replay_gop_ws(functools.partial(media.ws_send_bytes, only=ws))
 
         # Send initial state
-        await ws.send_str(_state(hub))
+        await ws.send_str(json.dumps(hub.state_message()))
 
         loud_ms = 0.0  # voce di fila sopra soglia mentre squilla
         # Risposta a voce secondo l'opzione voice_answer: "declared" solo chi manda
@@ -221,7 +214,7 @@ class VimarAudioWSView(HomeAssistantView):
             return
 
         if action == "status":
-            await ws.send_str(_state(hub))
+            await ws.send_str(json.dumps(hub.state_message()))
 
         elif action == "call":
             target = data.get("target")  # optional: "55002" etc.
@@ -354,7 +347,7 @@ class VimarAudioWSView(HomeAssistantView):
             _LOGGER.info("Force reconnect requested via WS")
             try:
                 ok = await sip.reconnect()
-                await ws.send_str(_state(hub, msg="Reconnected" if ok else "Reconnect failed"))
+                await ws.send_str(json.dumps(hub.state_message(msg="Reconnected" if ok else "Reconnect failed")))
             except Exception as e:
                 await ws.send_str(json.dumps({"type": "error", "msg": str(e)}))
 

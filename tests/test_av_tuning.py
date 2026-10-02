@@ -60,6 +60,7 @@ def fresh(monkeypatch):
     monkeypatch.setattr(av, "_stderr_task", None)
     monkeypatch.setattr(av, "_av_pump", None)
     monkeypatch.setattr(av, "_idle_stop", None)
+    monkeypatch.setattr(av, "_reap_task", None)
     monkeypatch.setattr(av, "_av_clients", set())
     monkeypatch.setattr(av, "_av_lock", asyncio.Lock())
     monkeypatch.setattr(av, "_write_av_sdp", lambda: "x.sdp")
@@ -140,6 +141,68 @@ def test_a_caller_cancelled_while_ffmpeg_starts_does_not_orphan_it(monkeypatch, 
 
     asyncio.run(run())
     assert spawned[0].killed and av.av_ffmpeg_proc is None
+
+
+def test_the_next_start_waits_until_the_cancelled_ffmpeg_is_gone(monkeypatch, fresh):
+    # It holds the UDP ports until it exits: a new ffmpeg started meanwhile
+    # (a client right after the one that left) failed with "bind failed".
+    inside, go, exited = threading.Event(), threading.Event(), threading.Event()
+
+    class Exiting(FakeProc):
+        def wait(self, t=None):
+            exited.wait(5)
+            return self.rc
+
+    def popen(cmd, **kw):
+        if not fresh:
+            fresh.append(Exiting(cmd))
+            inside.set()
+            go.wait(5)
+        else:
+            fresh.append(FakeProc(cmd))
+        return fresh[-1]
+
+    async def listening(proc, timeout=0.5):
+        return True
+
+    monkeypatch.setattr(av.subprocess, "Popen", popen)
+    monkeypatch.setattr(av, "_wait_until_ffmpeg_listens", listening)
+    monkeypatch.setattr(media, "video_proto", None)
+
+    async def run():
+        first = asyncio.create_task(av._start_av_ffmpeg_locked())
+        await wait_until(inside.is_set, 2)
+        first.cancel()
+        await asyncio.gather(first, return_exceptions=True)
+        go.set()
+        second = asyncio.create_task(av._start_av_ffmpeg_locked())
+        await wait_until(lambda: fresh[0].killed, 2)
+        await asyncio.sleep(0.1)
+        waited = len(fresh) == 1 and not second.done()
+        exited.set()
+        await second
+        return waited
+
+    assert asyncio.run(run()), "no new ffmpeg while the old one holds the ports"
+    assert len(fresh) == 2 and av.av_ffmpeg_proc is fresh[1]
+
+
+def test_a_caller_cancelled_while_ffmpeg_binds_its_ports_kills_it(monkeypatch, fresh):
+    async def binding(proc, timeout=0.5):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(av, "_wait_until_ffmpeg_listens", binding)
+
+    async def run():
+        task = asyncio.create_task(av._start_av_ffmpeg_locked())
+        await wait_until(lambda: fresh, 2)
+        await asyncio.sleep(0.01)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        await wait_until(lambda: fresh[0].killed, 2)
+
+    asyncio.run(run())
+    assert av.av_ffmpeg_proc is None
 
 
 # ─── waiting for ffmpeg's ports ──────────────────────────────────────────────

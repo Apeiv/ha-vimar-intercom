@@ -15,11 +15,14 @@ from custom_components.vimar_intercom import av_stream as av_stream_mod
 from custom_components.vimar_intercom import media_handler as media
 from custom_components.vimar_intercom import ring_log, runtime
 from custom_components.vimar_intercom import sip_client as sip
+from custom_components.vimar_intercom.hub import VimarIntercomHub
 
 
 class ViewHub:
     """The hub as the views see it: state flags and awaitable actions whose
     results (or exceptions) each test sets."""
+
+    state_message = VimarIntercomHub.state_message
 
     def __init__(self):
         self.registered, self.in_call, self.is_ringing = True, False, False

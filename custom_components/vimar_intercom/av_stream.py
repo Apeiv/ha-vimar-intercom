@@ -188,13 +188,24 @@ async def _wait_until_ffmpeg_listens(proc, timeout: float = FFMPEG_LISTEN_TIMEOU
     return False
 
 
-def _reap_orphan(spawn: asyncio.Future) -> None:
-    """Kill and wait (in the executor) an ffmpeg whose starter was cancelled."""
-    if spawn.cancelled() or spawn.exception():
-        return
-    proc = spawn.result()
-    proc.kill()
-    asyncio.get_running_loop().run_in_executor(None, proc.wait)
+# An ffmpeg whose starter was cancelled (an /av client leaving, the passive
+# decoder stopped) being killed. The next start waits for it: until it exits
+# it holds the UDP ports, and the new one fails with "bind failed".
+_reap_task: asyncio.Task | None = None
+
+
+async def _reap(spawn: asyncio.Future) -> None:
+    """Kill the ffmpeg `spawn` starts and wait until it is gone."""
+    loop = asyncio.get_running_loop()
+    # Anything: a failed Popen (nothing to kill), an executor already shut
+    # down (HA stopping).
+    with contextlib.suppress(Exception):
+        proc = await spawn
+        proc.kill()
+        try:
+            await loop.run_in_executor(None, proc.wait, 5)  # under _av_lock: never forever
+        finally:
+            loop.run_in_executor(None, _close_av_pipes, proc)
 
 
 async def _start_av_ffmpeg_locked():
@@ -205,7 +216,10 @@ async def _start_av_ffmpeg_locked():
     nuovo bind), scrive l'SDP in executor, poi abilita il forward RTP verso
     ffmpeg SOLO dopo lo start.
     """
-    global av_ffmpeg_proc, _stderr_task, _av_stopping, _av_sdp_file
+    global av_ffmpeg_proc, _stderr_task, _av_stopping, _av_sdp_file, _reap_task
+    if _reap_task and not _reap_task.done():
+        # Shielded: a caller cancelled here must not cut the kill short.
+        await asyncio.shield(_reap_task)
     await _stop_av_ffmpeg_locked()
     _av_stopping = False
 
@@ -262,27 +276,29 @@ async def _start_av_ffmpeg_locked():
         "-f", "mpegts",
         "pipe:1",
     ]
-    # Popen (fork + exec) fuori dall'event loop. Shielded: a caller cancelled
-    # meanwhile (an /av client leaving, the passive decoder stopped) would lose
-    # the process, and its UDP ports with it ("bind failed" on the next call).
+    # Popen (fork + exec) fuori dall'event loop. Shielded: a cancelled caller
+    # would lose the process otherwise; it is reaped instead (_reap_task),
+    # here or while it binds its ports.
     spawn = loop.run_in_executor(
         None, lambda: subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE))
     try:
-        av_ffmpeg_proc = await asyncio.shield(spawn)
-    except asyncio.CancelledError:
-        spawn.add_done_callback(_reap_orphan)
-        raise
-    except Exception as e:
-        _LOGGER.error("AV ffmpeg start error: %s", e)
-        av_ffmpeg_proc = None
-        return
+        try:
+            av_ffmpeg_proc = await asyncio.shield(spawn)
+        except Exception as e:
+            _LOGGER.error("AV ffmpeg start error: %s", e)
+            av_ffmpeg_proc = None
+            return
 
-    proc = av_ffmpeg_proc
-    stderr_tail: collections.deque[str] = collections.deque(maxlen=20)
-    # Riferimento tenuto: un task senza riferimenti può essere raccolto a metà lettura.
-    _stderr_task = stderr_task = asyncio.create_task(_read_av_ffmpeg_stderr(proc, stderr_tail))
-    # RTP only once ffmpeg's UDP ports are bound: packets sent before are lost.
-    await _wait_until_ffmpeg_listens(proc)
+        proc = av_ffmpeg_proc
+        stderr_tail: collections.deque[str] = collections.deque(maxlen=20)
+        # Riferimento tenuto: un task senza riferimenti può essere raccolto a metà lettura.
+        _stderr_task = stderr_task = asyncio.create_task(_read_av_ffmpeg_stderr(proc, stderr_tail))
+        # RTP only once ffmpeg's UDP ports are bound: packets sent before are lost.
+        await _wait_until_ffmpeg_listens(proc)
+    except asyncio.CancelledError:
+        av_ffmpeg_proc = None
+        _reap_task = asyncio.create_task(_reap(spawn))
+        raise
     if av_ffmpeg_proc and av_ffmpeg_proc.poll() is None:
         if media.video_proto:
             media.video_proto.av_rtp = AvRtp(3000)  # ffmpeg nuovo: flusso nuovo
