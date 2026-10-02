@@ -81,6 +81,7 @@
         "menu_options": {
           "settings": "Impostazioni di rete e attuatori",
           "homekit": "HomeKit",
+          "av_key": "Chiave dello stream /av",
           "import_rubrica": "Importa attuatori da rubrica.db",
           "fetch_rubrica": "Scarica la rubrica dal citofono",
           "fetch_rubrica_cloud": "Scarica la rubrica dal cloud Vimar"
@@ -182,6 +183,16 @@
         },
         "data_description": {
           "rubrica_gid": "Il GID dell'appartamento nella rubrica (proposto quello che dichiara l'impianto)."
+        }
+      },
+      "av_key": {
+        "title": "Chiave dello stream /av",
+        "description": "`/api/vimar_intercom/av` senza `autocall=0` chiama la targa: accetta solo un utente di Home Assistant autenticato oppure questa chiave nel parametro `{param}`. La camera dell'integrazione la usa da sola.\n\nChiave attuale: `{key}`\n\nPer go2rtc, Frigate o Scrypted aggiungi `&{param}=<chiave>` all'URL (vedi docs/EXTERNAL.md). Sugli URL passivi (`autocall=0`) per ora è facoltativa, ma una chiave sbagliata viene rifiutata.\n\nSe un log o un URL con la chiave è finito in mani altrui, rigenerala: la vecchia smette subito di funzionare e l'integrazione si ricarica (una chiamata in corso cade).",
+        "data": {
+          "regenerate": "Rigenera la chiave"
+        },
+        "data_description": {
+          "regenerate": "Crea una chiave nuova. Poi aggiorna l'URL in go2rtc, Frigate o Scrypted, se la usano."
         }
       }
     },

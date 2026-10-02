@@ -81,6 +81,7 @@
         "menu_options": {
           "settings": "Network and actuator settings",
           "homekit": "HomeKit",
+          "av_key": "/av stream key",
           "import_rubrica": "Import actuators from rubrica.db",
           "fetch_rubrica": "Download the phonebook from the intercom",
           "fetch_rubrica_cloud": "Download the phonebook from the Vimar cloud"
@@ -182,6 +183,16 @@
         },
         "data_description": {
           "rubrica_gid": "The apartment GID in the phonebook (the one the system declares is proposed)."
+        }
+      },
+      "av_key": {
+        "title": "/av stream key",
+        "description": "`/api/vimar_intercom/av` without `autocall=0` calls the panel: it only accepts an authenticated Home Assistant user or this key in the `{param}` parameter. The integration's camera adds it by itself.\n\nCurrent key: `{key}`\n\nFor go2rtc, Frigate or Scrypted append `&{param}=<key>` to the URL (see docs/EXTERNAL.md). On passive URLs (`autocall=0`) it is optional for now, but a wrong key is refused.\n\nIf a log or a URL with the key ever reached someone else, regenerate it: the old key stops working at once and the integration reloads (a call in progress drops).",
+        "data": {
+          "regenerate": "Regenerate the key"
+        },
+        "data_description": {
+          "regenerate": "Creates a new key. Then update the URL in go2rtc, Frigate or Scrypted, if they use it."
         }
       }
     },

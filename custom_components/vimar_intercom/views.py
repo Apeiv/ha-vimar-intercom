@@ -458,6 +458,13 @@ class VimarAVStreamView(HomeAssistantView):
             return web.Response(status=403, text="Forbidden (local network only)")
         if not _user_allowed(request):
             return web.Response(status=403, text="Forbidden (user)")
+        # The key (#63). A wrong key is refused in every mode. Refusals are 403, never
+        # 401: HA's "invalid authentication" warning prints the requested URL, key
+        # included, and it comes from the 401 path only.
+        key = request.query.get(runtime.AV_KEY_PARAM)
+        if key is not None and not runtime.av_key_valid(key):
+            _LOGGER.warning("AV stream refused: wrong key")
+            return web.Response(status=403, text="Forbidden (key)")
         hub = _entry_data(self._hass).get("hub")
         if hub is None:
             return web.Response(status=503, text="Integration not loaded")
@@ -466,6 +473,12 @@ class VimarAVStreamView(HomeAssistantView):
         # auto-call): video solo se c'è già (squillo o chiamata), altrimenti 503 subito,
         # così i loro tentativi in ciclo non toccano la targa condominiale.
         passive = request.query.get("autocall") == "0" or request.query.get("mode") == "passive"
+        # Plain /av places a call: an authenticated HA user or the key, on top of
+        # the local-network check. Passive /av never calls; the key stays optional
+        # there for now (docs/EXTERNAL.md), so go2rtc/Frigate setups keep working.
+        if not passive and key is None and not request.get("hass_authenticated"):
+            _LOGGER.warning("AV stream refused: no key and no authenticated user")
+            return web.Response(status=403, text="Forbidden (key required)")
         if passive and request.query.get("idle") == "image":
             return await self._idle_image(request, hub)
         if passive and not hub.video_active:

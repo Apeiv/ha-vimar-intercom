@@ -598,3 +598,78 @@ def test_debug_log_with_a_bad_line_count_serves_the_default(views, monkeypatch):
     monkeypatch.setattr(views._log_buffer, "tail", lambda n: asked.append(n) or ["a", "b"])
     r = asyncio.run(views.VimarDebugView().get(Request(query={"lines": "many"})))
     assert asked == [100] and r.text == "a\nb" and r.content_type == "text/plain"
+
+
+# ─── /av key (#63) ───────────────────────────────────────────────────────────
+
+AV_KEY = "placeholder-av-key-0123456789abc"
+
+
+def _anon(query=None):
+    req = Request(query=query)
+    req._user = None  # the stream worker, go2rtc: no HA user
+    return req
+
+
+def _av_req(views, hub, req):
+    hass = _hass(hub)
+
+    async def run():
+        return await views.VimarAVStreamView(hass).get(req)
+    return asyncio.run(run())
+
+
+@pytest.fixture
+def av_key(monkeypatch):
+    monkeypatch.setattr(runtime, "AV_KEY", AV_KEY)
+    return AV_KEY
+
+
+def test_plain_av_without_key_or_user_is_refused_and_never_calls(views, av_key):
+    hub = ViewHub()
+    r = _av_req(views, hub, _anon())
+    assert (r.status, r.text) == (403, "Forbidden (key required)") and hub.opened == 0
+
+
+def test_plain_av_with_the_key_places_the_call(views, av_key):
+    hub = ViewHub()
+    hub.open_result = False
+    r = _av_req(views, hub, _anon({runtime.AV_KEY_PARAM: av_key}))
+    assert (r.status, r.text) == (503, "No call") and hub.opened == 1
+
+
+def test_plain_av_for_an_authenticated_user_needs_no_key(views, av_key):
+    hub = ViewHub()
+    hub.open_result = False
+    r = _av_req(views, hub, Request())
+    assert r.status == 503 and hub.opened == 1
+
+
+@pytest.mark.parametrize("query", [{}, {"autocall": "0"}, {"mode": "passive"}])
+def test_a_wrong_key_is_refused_in_every_mode_even_for_a_user(views, av_key, query, caplog):
+    hub = ViewHub()
+    wrong = "x" + av_key[1:]
+    with caplog.at_level("DEBUG"):
+        r = _av_req(views, hub, Request(query={**query, runtime.AV_KEY_PARAM: wrong}))
+    assert (r.status, r.text) == (403, "Forbidden (key)") and hub.opened == 0
+    assert all(k not in caplog.text for k in (av_key, wrong))
+
+
+def test_passive_av_keeps_working_without_the_key(views, av_key):
+    hub = ViewHub()
+    r = _av_req(views, hub, _anon({"autocall": "0"}))
+    assert (r.status, r.text) == (503, "No call (passive)") and hub.opened == 0
+
+
+def test_an_empty_key_is_a_wrong_key(views, av_key):
+    r = _av_req(views, ViewHub(), _anon({runtime.AV_KEY_PARAM: ""}))
+    assert r.status == 403
+
+
+def test_av_refusals_are_403_never_401(views, av_key):
+    """HA logs "invalid authentication" with the full URL (key included) only when a
+    view raises HTTPUnauthorized (ban_middleware -> process_wrong_login). The key
+    checks answer 403 and raise nothing."""
+    for req in (_anon(), _anon({runtime.AV_KEY_PARAM: "nope"}),
+                Request(query={"autocall": "0", runtime.AV_KEY_PARAM: "nope"})):
+        assert _av_req(views, ViewHub(), req).status == 403

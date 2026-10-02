@@ -11,6 +11,7 @@ L'inizializzazione avviene in __init__.py → async_setup_entry():
 from __future__ import annotations
 
 import hashlib as _hashlib
+import hmac as _hmac
 import logging as _logging
 import secrets as _secrets
 import uuid as _uuid
@@ -179,6 +180,12 @@ DOOR_ESTERNO: str = ""   # sip:<DOOR_TARGET>@<domain> — destinatario dell'apri
 # al primo avvio se mancano. Mai costanti: vedi nota in const.py.
 DEVICE_IMEI: str = ""
 DEVICE_UUID: str = ""
+# Key for /av (#63): plain /av places a call, so it wants an authenticated HA user
+# or this key in the `auth` query parameter. Generated once, stored in the entry,
+# never expires (the stream worker reuses its URL on every reconnect). `auth` is
+# the name HA's stream component masks in its own logs; log_redact masks it in ours.
+AV_KEY: str = ""
+AV_KEY_PARAM = "auth"
 # The MyName header. A local pairing binds (identifier, name) to the credential
 # and refuses any change with a 503, so it is stored rather than hard-coded.
 DEVICE_NAME: str = _const.MY_NAME
@@ -205,6 +212,22 @@ def new_device_identity() -> dict[str, str]:
         ),
         "device_uuid": str(_uuid.UUID(bytes=_secrets.token_bytes(16), version=4)),
     }
+
+
+def new_av_key() -> str:
+    """A fresh /av key: 32 URL-safe characters, from the OS's CSPRNG."""
+    return _secrets.token_urlsafe(24)
+
+
+# Never empty, even before configure() runs: an empty key would match an empty `auth=`.
+AV_KEY = new_av_key()
+
+
+def av_key_valid(given) -> bool:
+    """True when `given` is this installation's /av key (constant-time compare)."""
+    if not AV_KEY or not isinstance(given, str) or not given:
+        return False
+    return _hmac.compare_digest(given.encode(), AV_KEY.encode())
 
 
 def door_from_actuators(actuators) -> str:
@@ -236,7 +259,7 @@ def configure(data: dict) -> None:
     global AWAY_MESSAGE_FILE, AWAY_MESSAGE_TEXT, AWAY_MESSAGE_TTS, AWAY_MESSAGE_DELAY
     global SNAPSHOT_DIR, SNAPSHOT_DELAY, VIEW_KEEPALIVE, ALLOWED_USERS
     global RING_WEBHOOK_URL, RING_END_WEBHOOK_URL
-    global DEVICE_IMEI, DEVICE_UUID, DEVICE_NAME
+    global DEVICE_IMEI, DEVICE_UUID, DEVICE_NAME, AV_KEY
 
     SIP_USER     = data.get("sip_user", "")
     SIP_PASSWORD = data.get("sip_password", "")
@@ -348,6 +371,9 @@ def configure(data: dict) -> None:
         fallback = new_device_identity()
         DEVICE_IMEI = DEVICE_IMEI or fallback["device_imei"]
         DEVICE_UUID = DEVICE_UUID or fallback["device_uuid"]
+    # Same for the /av key: an entry without one gets an ephemeral key, never a
+    # shared or empty one (empty would make every key "valid").
+    AV_KEY = str(data.get("av_key") or "").strip() or new_av_key()
 
     # Modello rilevato in una sessione precedente: riparte da lì, così le
     # entità mostrano subito il valore giusto anche prima del primo dialogo SIP.

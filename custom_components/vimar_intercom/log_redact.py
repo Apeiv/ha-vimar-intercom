@@ -43,7 +43,7 @@ MASK = "***"
 MAX_LEN = 16384
 
 # Nomi di campo che nel protocollo Vimar portano un segreto.
-_SECRET_KEYS = ("pwd", "passwd", "password", "secret", "ha1", "token", "pn-tok", "apikey", "api_key",
+_SECRET_KEYS = ("pwd", "passwd", "password", "secret", "ha1", "token", "auth", "pn-tok", "apikey", "api_key",
                 "crypto_key", "srtp_key", "a_srtp_key", "v_srtp_key", "key_b64")
 
 # La chiave può essere tra virgolette (JSON `"token": "…"`, repr di un dict

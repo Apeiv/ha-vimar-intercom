@@ -46,6 +46,7 @@ def test_rings_solo_agli_utenti_ammessi(monkeypatch, hub, allowed, admin, uid, o
 def test_audio_ws_e_av_chiusi_a_chi_non_e_ammesso(monkeypatch, hub):
     views = load_views(monkeypatch)
     monkeypatch.setattr(runtime, "ALLOWED_USERS", ["u1"])
+    monkeypatch.setattr(runtime, "AV_KEY", "placeholder-av-key")
     rig = types.SimpleNamespace(hub=hub)
     hass = make_hass(rig)
     ws = views.web.WebSocketResponse()
@@ -54,11 +55,12 @@ def test_audio_ws_e_av_chiusi_a_chi_non_e_ammesso(monkeypatch, hub):
     async def run():
         await views.VimarAudioWSView(hass).get(_req(uid="u2"))
         av = await views.VimarAVStreamView(hass).get(_req(uid="u2"))
-        senza = Request(admin=False)
+        senza = Request(admin=False, query={runtime.AV_KEY_PARAM: runtime.AV_KEY})
         senza._user = None
         anon = await views.VimarAVStreamView(hass).get(senza)
         return av.status, anon.status
 
     av, anon = asyncio.run(run())
     assert ws.closed and not rig.audio_ws_clients  # mai entrato fra i client
-    assert av == 403 and anon != 403               # senza utente (stream worker, go2rtc): come oggi
+    # Without a user but with the /av key (stream worker, go2rtc): as before (#63).
+    assert av == 403 and anon != 403

@@ -112,7 +112,10 @@ class VimarIntercomCamera(Camera):
         http = getattr(self._hass, "http", None)
         scheme = "https" if getattr(http, "ssl_certificate", None) else "http"
         port = getattr(http, "server_port", None) or 8123
-        return f"{scheme}://127.0.0.1:{port}/api/vimar_intercom/av"
+        # The key (#63) does not expire: the stream worker reuses this URL on every
+        # reconnect, where a signed path (authSig) would be refused after its lifetime.
+        return (f"{scheme}://127.0.0.1:{port}/api/vimar_intercom/av"
+                f"?{R.AV_KEY_PARAM}={R.AV_KEY}")
 
     async def async_camera_image(
         self, width: int | None = None, height: int | None = None

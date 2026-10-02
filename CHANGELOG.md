@@ -6,6 +6,18 @@ Italian and are kept as they were written.
 
 ## [Unreleased]
 
+### Security
+
+- **`/av` key** ([#63](../../issues/63)): plain `/api/vimar_intercom/av` places a call to the panel, and
+  until now any client that looked local got it (a port-forward with SNAT, a guest Wi-Fi device). It now
+  also wants an authenticated Home Assistant user or the installation's key in `?auth=<key>`. The key is
+  created at first start, stored in the entry, never expires (the stream worker reuses its URL on every
+  reconnect) and the integration's camera adds it by itself. Refusals are 403, not 401, so Home Assistant's
+  "invalid authentication" warning never prints the URL; `auth` is also the name HA masks in its stream
+  logs, and the integration masks it in its own. Options → *`/av` stream key* shows it and regenerates it.
+  Passive URLs (`autocall=0`, go2rtc/Frigate/Scrypted) keep working without it for now; a wrong key is
+  refused everywhere. See `docs/EXTERNAL.md`.
+
 ## [1.0.18] - 2026-10-02
 
 ### Changed
