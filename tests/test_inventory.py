@@ -141,7 +141,11 @@ class TestPeers:
 
 
 class TestReporting:
-    def test_the_newest_device_comes_first(self):
+    def test_the_newest_device_comes_first(self, monkeypatch):
+        # A clock of our own: two devices noted within one tick of a coarse
+        # system clock (about 15 ms on Windows) have the same last_seen.
+        ticks = iter(range(1000, 2000))
+        monkeypatch.setattr(inv.time, "time", lambda: float(next(ticks)))
         inventory = inv.DeviceInventory()
         inventory.note_peer(ENTRANCE_INVITE)
         inventory.note_peer(IPHONE_MESSAGE)

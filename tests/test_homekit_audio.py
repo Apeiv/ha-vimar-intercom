@@ -312,7 +312,7 @@ class TestABrokenVoiceDecoder:
             loop.close()
         assert errors == []
 
-    def test_the_decoder_listens_on_loopback_only_from_a_private_sdp(self, monkeypatch):
+    def test_the_decoder_listens_on_loopback_only_from_a_private_sdp(self, monkeypatch, assert_private_mode):
         """ffmpeg 8.1 bound the RTCP port of an SDP input on 0.0.0.0."""
         launches = []
 
@@ -330,7 +330,7 @@ class TestABrokenVoiceDecoder:
             assert args[i - 2:i] == ("-localaddr", "127.0.0.1")
             path = args[i + 1]
             assert path != f"/tmp/vimar_intercom_talk_{bridge._talk_port}.sdp", "not guessable"
-            assert mode == 0o600
+            assert_private_mode(mode)
             assert f"m=audio {bridge._talk_port} " in sdp
         finally:
             loop.run_until_complete(bridge.stop())

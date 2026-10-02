@@ -49,18 +49,21 @@ def test_a_dropped_source_is_logged_once_per_call(caplog):
     proto = media.RTPAudioProtocol()
     proto.remote_addr = ("198.51.100.7", 40000)
     def drops():
-        # Distinct records: log_buffer, once installed by another test, sends a
+        # Distinct messages: log_buffer, once installed by another test, sends a
         # WARNING again through the root logger as a copy of the same record.
-        return {(r.created, r.getMessage()) for r in caplog.records
+        # The two calls are counted apart (caplog.clear() below), not told apart
+        # by the record's timestamp: two records can share one tick of the clock.
+        return {r.getMessage() for r in caplog.records
                 if r.name == media.__name__ and "192.0.2.66" in r.getMessage()}
 
     with caplog.at_level("WARNING", logger=media.__name__):
         for seq in range(1, 4):
             proto.datagram_received(pcmu(seq), ("192.0.2.66", 40000))
         assert len(drops()) == 1
+        caplog.clear()
         proto.remote_addr = tuple(["198.51.100.7", 40000])  # the next call (new tuple)
         proto.datagram_received(pcmu(5), ("192.0.2.66", 40000))
-    assert len(drops()) == 2
+        assert len(drops()) == 1
 
 
 
