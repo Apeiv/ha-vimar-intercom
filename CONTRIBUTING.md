@@ -75,7 +75,9 @@ add a test — those are the parts that break silently on other plants.
 ## PR checklist
 
 - [ ] Tests pass, and new behaviour has a test
-- [ ] `manifest.json` version bumped (semver) and a `CHANGELOG.md` entry added
+- [ ] User-visible changes have an entry under `## [Unreleased]` in `CHANGELOG.md`
+      (not needed for changes to tests, docs or CI only)
+- [ ] `manifest.json` version left alone: it changes only in `release/X.Y.Z` PRs
 - [ ] UI strings kept in sync across `strings.json`, `translations/it.json` and `translations/en.json`
 - [ ] No credentials, MAC addresses or raw QR payloads anywhere in the diff
 - [ ] Says which hardware you tested on: model, article number, firmware, and whether local UDP or cloud TLS
