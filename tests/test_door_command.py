@@ -114,3 +114,29 @@ def test_the_open_door_service_has_no_default_command():
     block = src.split("OPEN_DOOR_SCHEMA = vol.Schema({", 1)[1].split("})", 1)[0]
     assert 'vol.Optional("command"):' in block
     assert "default=" not in block.split('vol.Optional("command")', 1)[1].split("\n", 1)[0]
+
+
+def test_a_row_for_the_panel_wins_over_an_auto_row():
+    """AUTO counts only after the rows naming the panel itself (review on #75)."""
+    runtime.configure({**BASE, "door_target": "55002", "actuators": [
+        {"name": "Porta", "msg": "OPEN", "target": "AUTO", "icon": "door"},
+        {"name": "Interno", "msg": "OPEN_X", "target": "55002", "icon": "door"}]})
+    assert runtime.door_command_for("55002") == ("OPEN_X", "phonebook")
+
+
+def test_an_auto_row_still_serves_the_door_panel_when_nothing_else_does():
+    runtime.configure({**BASE, "door_target": "55001", "actuators": [
+        {"name": "Porta", "msg": "OPEN", "target": "AUTO", "icon": "door"},
+        {"name": "Interno", "msg": "OPEN_X", "target": "55002", "icon": "door"}]})
+    assert runtime.door_command_for("55001") == ("OPEN", "phonebook")
+    assert runtime.door_command_for("55003") == (const.DOOR_COMMAND, "default")
+
+
+def test_the_default_is_logged_once_per_panel(hub, caplog):
+    runtime.configure(BASE)
+    with caplog.at_level("INFO"):
+        for _ in range(3):
+            asyncio.run(hub.async_door())
+        asyncio.run(hub.async_door(target="55002"))
+    lines = [r.getMessage() for r in caplog.records if "no door actuator" in r.getMessage()]
+    assert len(lines) == 2 and len(hub.sent) == 4

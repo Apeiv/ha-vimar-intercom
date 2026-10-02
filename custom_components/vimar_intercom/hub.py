@@ -133,6 +133,8 @@ class VimarIntercomHub:
         self._ring_callbacks: list[Callable] = []
         self._persist: Callable[[dict], None] | None = None
         self._last_ring_panel: str | None = None
+        # Panels whose default door command was already logged (#58): once each.
+        self._door_default_logged: set[str] = set()
         self._video_end_callbacks: list[Callable] = []  # video finito: la camera ferma lo stream di HA
         self._state_callbacks: list[Callable] = []
         self._model_callbacks: list[Callable] = []
@@ -1058,7 +1060,9 @@ class VimarIntercomHub:
             body, source = command, "explicit"
         else:
             body, source = R.door_command_for(door_target)
-            if source == "default":
+            if source == "default" and door_target not in self._door_default_logged:
+                # Once per panel: installs without a phonebook would log it on every open.
+                self._door_default_logged.add(door_target)
                 _LOGGER.info("Door command: no door actuator for %s in the phonebook, sending the default %s",
                              door_target, body)
 

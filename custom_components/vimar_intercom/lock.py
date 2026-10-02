@@ -29,7 +29,7 @@ async def async_setup_entry(
         # rubrica non è stata importata. Un indirizzo sbagliato risponde 200
         # senza effetto e la serratura mostra "sbloccata" con la porta chiusa.
         VimarIntercomLock(hub, entry.entry_id, key="lock", name="Serratura",
-                          door_target=None, door_command=None),
+                          door_target=None),
     ])
 
 
@@ -44,10 +44,9 @@ class VimarIntercomLock(LockEntity):
     _attr_has_entity_name = False
     _attr_icon = "mdi:door-closed-lock"
 
-    def __init__(self, hub, entry_id: str, *, key: str, name: str, door_target: str | None, door_command: str | None = None) -> None:
+    def __init__(self, hub, entry_id: str, *, key: str, name: str, door_target: str | None) -> None:
         self._hub = hub
         self._door_target = door_target
-        self._door_command = door_command
         self._attr_name = name
         self._attr_unique_id = f"{entry_id}_{key}"
         self._is_locked = True
@@ -69,7 +68,8 @@ class VimarIntercomLock(LockEntity):
 
     async def async_unlock(self, **kwargs) -> None:
         """Open the door via SIP MESSAGE."""
-        ok, msg = await self._hub.async_door(target=self._door_target, command=self._door_command)
+        # No command: the hub takes the door actuator's MSG from the phonebook (#58).
+        ok, msg = await self._hub.async_door(target=self._door_target)
         if ok:
             self._is_locked = False
             self.async_write_ha_state()

@@ -230,19 +230,17 @@ def door_command_for(target) -> tuple[str, str]:
     The phonebook's door actuator (icon "door") pairs a body (MSG) with the
     panel that owns the relay (GID_PE); both come from the same row, because
     the body alone does not identify a door (a relay module can use the same
-    body towards another panel, #58). "AUTO" as a target means DOOR_TARGET.
+    body towards another panel, #58). "AUTO" as a target means DOOR_TARGET,
+    and only counts after the rows naming the panel itself: [{AUTO, OPEN},
+    {55002, OPEN_X}] sends OPEN_X to 55002 even when DOOR_TARGET is 55002.
     Returns (MSG, "phonebook") for a match, else (OPEN_2F, "default").
     """
     target = str(target or "")
-    for act in ACTUATORS or []:
-        a = act or {}
-        if a.get("icon") != "door":
-            continue
-        t = str(a.get("target") or "")
-        if t.upper() == "AUTO":
-            t = DOOR_TARGET
-        if t != target:
-            continue
+    doors = [a for a in (act or {} for act in ACTUATORS or []) if a.get("icon") == "door"]
+    exact = [a for a in doors if str(a.get("target") or "").upper() != "AUTO"
+             and str(a.get("target") or "") == target]
+    auto = [a for a in doors if str(a.get("target") or "").upper() == "AUTO" and DOOR_TARGET == target]
+    for a in exact + auto:
         msg = str(a.get("msg") or "").strip()
         if _DOOR_BODY.fullmatch(msg):
             return msg, "phonebook"
