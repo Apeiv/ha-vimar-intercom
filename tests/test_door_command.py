@@ -69,7 +69,7 @@ def hub(monkeypatch):
     monkeypatch.setattr(h, "_touch", lambda: None)
     sent = []
 
-    async def fake_msg(uri, body, extra_headers=None):
+    async def fake_msg(uri, body, extra_headers=None, timeout=15):
         sent.append((uri, body, extra_headers))
         return True, "200"
 

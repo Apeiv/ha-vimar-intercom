@@ -143,7 +143,7 @@ def test_apri_porta_senza_target_usa_l_sga_configurato(hub, monkeypatch):
 
     inviati = []
 
-    async def _fake_msg(uri, body, extra_headers=None):
+    async def _fake_msg(uri, body, extra_headers=None, timeout=15):
         inviati.append((uri, body))
         return True, "200"
 

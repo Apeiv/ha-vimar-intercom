@@ -1128,6 +1128,11 @@ async def do_register():
     return False
 
 
+# A request with no final answer in time (do_system_message, do_options).
+TIMEOUT = "Timeout"
+SIGNED_SEND_FAILED = "Send failed after the 407"
+
+
 async def do_system_message(target_uri, body_text, extra_headers=None, timeout=15):
     if not registered:
         _LOGGER.warning("do_system_message: not registered, target=%s body=%s", target_uri, body_text)
@@ -1171,19 +1176,23 @@ async def do_system_message(target_uri, body_text, extra_headers=None, timeout=1
                 return False, f"Auth vuoto ({code})"
             _retry_auth(ch, 0, None)  # memorizza la sfida: gli INFO di keyframe partono autenticati
             auth = _make_auth("MESSAGE", target_uri, ch)
-            for r2 in await _send_request(_msg(auth=auth, seq=_next_cseq()), cid, timeout=timeout):
+            try:
+                answers = await _send_request(_msg(auth=auth, seq=_next_cseq()), cid, timeout=timeout)
+            except OSError as e:  # the signed MESSAGE may have left before the error
+                return False, f"{SIGNED_SEND_FAILED}: {e}"
+            for r2 in answers:
                 c2 = _parse(r2)[0]
                 _LOGGER.info("do_system_message: auth response %s for %s", c2, target_uri)
                 if c2 and 200 <= c2 < 300:
                     return True, f"OK ({c2})"
                 if c2 and c2 >= 300:
                     return False, f"Errore: {c2}"
-            return False, "Timeout"
+            return False, TIMEOUT
         if code and 200 <= code < 300:
             return True, f"OK ({code})"
         if code and code >= 300:
             return False, f"Errore: {code}"
-    return False, "Timeout"
+    return False, TIMEOUT
 
 
 # do_call's result when answer_timeout ran out with no final answer. The
@@ -1692,12 +1701,12 @@ async def do_options(target=None):
                 if c2 and 200 <= c2 < 300:
                     return True, f"OK: {c2}"
                 return False, f"Errore: {c2}"
-            return False, "Timeout"
+            return False, TIMEOUT
         if code and 200 <= code < 300:
             return True, f"OK: {code}"
         if code and code >= 300:
             return False, f"Errore: {code}"
-    return False, "Timeout"
+    return False, TIMEOUT
 
 
 async def do_connect_profiles():
