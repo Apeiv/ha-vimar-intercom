@@ -70,6 +70,7 @@ const REFUSED = "La targa non ha accettato, riprova.";
 const SETUP_TIMEOUT_S = 20;  // oltre, "la targa non risponde" (il cloud a volte ci mette 15 s)
 const HOLD_MS = 1500;        // dopo il riaggancio: video fermo, tasti spenti, poi la card si richiude
 const OPEN_FLASH_MS = 2000;  // "Aperto" / "Errore" sul tasto
+const CLOSE_GUARD_MS = 800;   // after the popup closes, taps on the compact card are ignored (iOS click-through)
 const PENDING_MS = 10000;   // "Collegamento…" subito al tocco, senza aspettare lo stato di HA; oltre, si lascia stare
 const SAY_MS = 4000;         // un avviso resta 4 s al posto della riga di stato
 const LIVE = ["ringing", "calling", "in_call"];
@@ -137,6 +138,10 @@ const TEMPLATE = `<ha-card>
   <dialog class="set" aria-label="Impostazioni citofono"></dialog>`;
 
 const SC = { lock: ["unlock", "mdi:door-open"], button: ["press", "mdi:gesture-tap-button"] };  // dominio → servizio, icona
+// The ring (last_ring state) whose popup was closed by hand on this page: it does not open by
+// itself again for that ring, whatever follows (answered elsewhere, call ended, card rebuilt).
+let dismissedRing = null;
+
 // Popup aperto: la dashboard sotto non scorre (su iOS il dito sulla cronologia la trascinava).
 const lockPageScroll = (on) => {
   for (const el of [document.documentElement, document.body]) el.style.overflow = on ? "hidden" : "";
@@ -326,6 +331,7 @@ class VimarIntercomCard extends CardAudio(HTMLElement) {
     if (!live) this._popTried = false;
     else if (this._pop.open) this._popTried = true;
     else if (this._popup && !this._popTried && this.isConnected && !this._preview
+        && last !== dismissedRing
         && (this._liveFrom !== "calling" || (this._cfg.anchor && location.hash === `#${this._cfg.anchor}`))) {
       this._popTried = true;
       this._openPop();
@@ -393,6 +399,11 @@ class VimarIntercomCard extends CardAudio(HTMLElement) {
     // Popup chiuso (X, Esc, fuori): la card torna al suo posto, audio chiuso, riaggancio solo se la chiamata è della card.
     this._pop.onclick = (e) => e.target === this._pop && this._pop.close();
     this._pop.onclose = () => {
+      this._closedAt = performance.now();
+      if (this.isConnected && LIVE.includes(this._state)) {  // not when the card leaves the page
+        const ring = this._hass.states[this._ent("last_ring")]?.state;
+        dismissedRing = Date.parse(ring) ? ring : null;  // "unknown": no ring yet
+      }
       lockPageScroll(false);
       this._card.classList.remove("pop");
       this._root.insertBefore(this._card, this._pop);
@@ -427,6 +438,14 @@ class VimarIntercomCard extends CardAudio(HTMLElement) {
       if (this._popup && !this._pop.open) { e.stopPropagation(); this._setDrawer(true); return this._openPop(); }  // cronologia: mai la targa
       this._setDrawer(this._card.dataset.drawer !== "true");
     };
+    // The tap that closed the popup (X, Hang up) must not land on the compact card that takes its
+    // place: on the iPhone it did, and answered the ring, called the panel or opened the door.
+    this._card.addEventListener("click", (e) => {
+      if (!this._pop.open && performance.now() - this._closedAt < CLOSE_GUARD_MS) {
+        e.stopPropagation();
+        e.preventDefault();
+      }
+    }, true);
     this._card.onclick = (e) => this._popup && !this._pop.open && !e.target.closest("button") && this._openPop(!this._preview);  // anteprima dell'editor: niente Vedi esterno
     this._card.onkeydown = (e) => e.target === this._card && (e.key === "Enter" || e.key === " ") && (e.preventDefault(), this._card.click());
     this._root.getElementById("x").onclick = () => this._pop.close();
@@ -732,14 +751,20 @@ class VimarIntercomCard extends CardAudio(HTMLElement) {
     this._player?.close();
     this._player = null;
     this._fitShape();
+    this._card.classList.remove("wait");
     if (!live || !NalPlayer.ok()) return this._setPicture(live);
+    this._card.classList.add("wait");  // until the first frame: "waiting for video", not a black box
     const canvas = document.createElement("canvas");
     this._player = new NalPlayer(this._hass, canvas, () => {
       this._player = null;
+      this._card.classList.remove("wait");
       this._fitShape();
       if (this._live) this._setPicture(true);
     });
-    this._player.onsize = () => this._fitShape();
+    this._player.onsize = () => {  // first frame (and any size change)
+      this._card.classList.remove("wait");
+      this._fitShape();
+    };
     this._videoBox.replaceChildren(canvas);
     this._video = null;
   }

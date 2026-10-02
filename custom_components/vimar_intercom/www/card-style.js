@@ -93,6 +93,8 @@ const STYLE = `
   ha-card:not(.live) .still[src] { display: block; }
   ha-card:not(.live) .still:not([src]) + .ph { display: grid; place-items: center; color: rgba(255,255,255,.28); }
   .ph ha-icon { --mdc-icon-size: 48px; }
+  ha-card.live.wait .ph { display: grid; place-content: center; justify-items: center; gap: 8px; color: rgba(255,255,255,.6); }
+  ha-card.live.wait .ph::after { content: "In attesa del video…"; font-size: 15px; }
   .badge { position: absolute; top: 10px; left: 10px; z-index: 2; display: none; align-items: center; gap: 6px;
            padding: 4px 10px 4px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; line-height: 16px;
            color: #fff; background: rgba(0,0,0,.55); }
