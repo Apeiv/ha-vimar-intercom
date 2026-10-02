@@ -53,6 +53,7 @@ the phonebook: [Configuration](https://github.com/lollox80/ha-vimar-intercom/blo
   nobody answers. → [Configuration](https://github.com/lollox80/ha-vimar-intercom/blob/main/docs/CONFIGURATION.md#voicemail)
 - **Apple Home**: an optional native HomeKit video doorbell. → [HomeKit](https://github.com/lollox80/ha-vimar-intercom/blob/main/docs/HOMEKIT.md)
 - **Scrypted, go2rtc, Frigate**: a continuous stream that never rings the panel. → [External systems](https://github.com/lollox80/ha-vimar-intercom/blob/main/docs/EXTERNAL.md)
+- **Echo Show as an intercom**: live view and two-way talk from Alexa, through Scrypted. → [Echo Show (Scrypted)](https://github.com/lollox80/ha-vimar-intercom/blob/main/docs/SCRYPTED-ALEXA.md)
 
 ## Documentation
 
@@ -63,6 +64,7 @@ the phonebook: [Configuration](https://github.com/lollox80/ha-vimar-intercom/blo
 | [The intercom card](https://github.com/lollox80/ha-vimar-intercom/blob/main/docs/CARD.md) | Layouts, buttons, video and voice, ring history |
 | [HomeKit](https://github.com/lollox80/ha-vimar-intercom/blob/main/docs/HOMEKIT.md) | The native Apple Home doorbell |
 | [External systems](https://github.com/lollox80/ha-vimar-intercom/blob/main/docs/EXTERNAL.md) | Scrypted, Alexa, Echo Show, go2rtc, Frigate |
+| [Echo Show as an intercom](https://github.com/lollox80/ha-vimar-intercom/blob/main/docs/SCRYPTED-ALEXA.md) | Step by step: Echo Show watches, calls and talks to the panel through Scrypted |
 | [Phonebook](https://github.com/lollox80/ha-vimar-intercom/blob/main/docs/RUBRICA.md) | Where `rubrica.db` comes from and what it contains |
 | [Troubleshooting](https://github.com/lollox80/ha-vimar-intercom/blob/main/docs/TROUBLESHOOTING.md) | Known limitations and how to read the logs |
 | [Changelog](https://github.com/lollox80/ha-vimar-intercom/blob/main/CHANGELOG.md) | What changed in each release |
