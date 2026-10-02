@@ -6,6 +6,16 @@ Italian and are kept as they were written.
 
 ## [Unreleased]
 
+### Fixed
+
+- **SRTP replay window, follow-up to #106**: a jump past half a sequence wrap at ROC 0 that wrapped before
+  the window followed had every packet after the wrap fail authentication until the end of the call. The
+  receiver now tries the next ROC once more, ahead of the window only. Three strays in a row no longer move the
+  window off a reordered live stream (a run ahead needs 50, they pass meanwhile), and a run counts packets
+  out of order, so a sender restarting lower behind a jittery relay loses 2 packets instead of ~120. Known
+  gap: far-ahead packets other than the highest of the run pass again if sent again, once more after the
+  window moved there too.
+
 ## [1.0.19] - 2026-10-02
 
 ### Added
