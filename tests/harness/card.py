@@ -73,7 +73,7 @@ customElements.define("fake-picture-entity", class extends HTMLElement {
     while (this.alive) {
       this.ctrl = new AbortController();
       try {
-        const r = await fetch("/api/vimar_intercom/av", { signal: this.ctrl.signal });
+        const r = await fetch("__AV_URL__", { signal: this.ctrl.signal });  // the key, as HA's camera (#63)
         T.av.push(r.status);
         const rd = r.body.getReader();
         for (;;) { const { done, value } = await rd.read(); if (done) break; T.avBytes += value.length; }
