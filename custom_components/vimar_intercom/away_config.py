@@ -44,13 +44,14 @@ UPLOAD_MAX = 5 * 1024 * 1024
 _PLAIN_NAME = re.compile(r"\w[\w .()-]*")  # niente nomi nascosti, separatori o caratteri strani
 
 
-def save_upload(src, folder: str | None) -> str:
-    """Copia un file caricato dalle opzioni nella cartella messaggi e dà il percorso
-    (eseguire in executor). ValueError col codice d'errore del form se non va.
+def save_upload(src, folder: str | None, name: str | None = None) -> str:
+    """Copia un file caricato (dalle opzioni o dalla card) nella cartella messaggi e dà
+    il percorso (eseguire in executor). ValueError col codice d'errore del form se non va.
 
-    Del nome conta solo l'ultimo pezzo: niente ../ fuori dalla cartella. Un file
-    diverso con lo stesso nome non si sovrascrive: si aggiunge -2, -3..."""
-    name = os.path.basename(str(src).replace("\\", "/"))
+    `name`: il nome scelto da chi carica (la card); senza, quello di `src`. Del nome
+    conta solo l'ultimo pezzo: niente ../ fuori dalla cartella. Un file diverso con lo
+    stesso nome non si sovrascrive: si aggiunge -2, -3..."""
+    name = os.path.basename(str(src if name is None else name).replace("\\", "/"))
     if not _PLAIN_NAME.fullmatch(name) or not name.lower().endswith(AUDIO_EXT):
         raise ValueError("upload_bad_type")
     if os.path.getsize(src) > UPLOAD_MAX:

@@ -1147,6 +1147,51 @@ def test_impostazioni_citofono_non_admin_e_righe_mancanti(monkeypatch, engine): 
 
 
 @pytest.mark.parametrize("engine", ["chromium"], indirect=True)
+@pytest.mark.parametrize("layout,query,label", [("overlay", "&nofile", "Carica"), ("overlay", "", "Sostituisci"),
+                                                ("popup", "&nofile&lang=en", "Upload")])
+def test_impostazioni_carica_il_file_audio(monkeypatch, engine, tmp_path, layout, query, label):  # noqa: F811
+    """Sotto "File audio del messaggio": "Carica" se non c'è un file, "Sostituisci" se c'è. Il tasto apre la
+    scelta del file, che va a /api/vimar_intercom/away_upload (la view vera), diventa il file del messaggio e il
+    select si rilegge (homeassistant.update_entity). Un nome sbagliato dà l'errore e non salva niente.
+    Il select mostra l'etichetta tradotta di "none", non il valore. Il click della scelta file non arriva alla
+    card (in "popup" aprirebbe la diretta, e il suo `return false` annullava la scelta)."""
+    import types
+    file_row = "card.shadowRoot.querySelector('dialog.set [data-k=file]')"
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            entry = types.SimpleNamespace(entry_id="e1", options={})
+            rig.hass.config = types.SimpleNamespace(media_dirs={"local": str(tmp_path)})
+            rig.hass.config_entries = types.SimpleNamespace(
+                async_get_entry=lambda i: entry, async_update_entry=lambda e, options: setattr(e, "options", options))
+            monkeypatch.setattr(R, "AWAY_MESSAGE_FILE", "")
+            await rig.register()
+            async with Card(rig, engine, layout=layout, query=query) as c:
+                await c.until(IDLE)
+                await c.page.evaluate("card._openSettings()")
+                assert await c.page.evaluate(f"{file_row}.querySelector('.set-ub').textContent") == label
+                assert await c.page.evaluate(f"{file_row}.querySelector('select').options[0].text") == "Nessuno (usa il testo)"
+                assert await c.page.evaluate(f"{file_row}.querySelector('select').options[0].value") == "none"
+                async with c.page.expect_file_chooser() as fc:
+                    await c.page.locator("dialog.set [data-k=file] .set-ub").click()  # un tocco vero: senza, niente scelta del file
+                await (await fc.value).set_files(files=[{"name": "ciao.txt", "mimeType": "text/plain", "buffer": b"x"}])
+                await c.until("card.shadowRoot.querySelector('dialog.set .set-e').textContent !== ''")
+                assert "mp3" in await c.page.evaluate("card.shadowRoot.querySelector('dialog.set .set-e').textContent")
+                assert entry.options == {} and not (tmp_path / "citofono" / "messaggi").exists()
+                await c.page.locator("dialog.set [data-k=file] input[type=file]").set_input_files(
+                    files=[{"name": "Benvenuti.mp3", "mimeType": "audio/mpeg", "buffer": b"ID3audio"}])
+                done = "Uploaded: Benvenuti.mp3" if "lang=en" in query else "Caricato: Benvenuti.mp3"
+                await c.until(f"{file_row}.querySelector('small')?.textContent === {done!r}")
+                saved = tmp_path / "citofono" / "messaggi" / "Benvenuti.mp3"
+                assert saved.read_bytes() == b"ID3audio"
+                assert entry.options == {"away_message_file": str(saved)} and R.AWAY_MESSAGE_FILE == str(saved)
+                assert ["homeassistant", "update_entity", {"entity_id": "select.vimar_intercom_segreteria_file_audio"}] in await c.page.evaluate("T.settings")
+                assert await c.page.evaluate("card.shadowRoot.querySelector('dialog.set .set-e').textContent") == ""
+                assert not (await c.T())["errors"] and not (await c.info())["pop"]
+                assert not [s for s in (await c.T())["calls"] if s.startswith("vimar_intercom.")]  # mai la targa
+    run(s())
+
+
+@pytest.mark.parametrize("engine", ["chromium"], indirect=True)
 def test_layout_popup_proporzioni_pc_e_telefono(monkeypatch, engine):  # noqa: F811
     """PC (1280x800): il pannello è il video 4:3 (al massimo 900 px, mai vuoto sotto); telefono (390x844): pannello alto, come prima.
     Riga in alto: pill di stato larga, ingranaggio, adatta/riempi, cronologia, X (da sinistra a destra, tondi da 44)."""

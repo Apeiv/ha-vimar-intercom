@@ -401,6 +401,11 @@ const STYLE = `
   select.set-in { width: auto; max-width: 55%; }
   .set-r.col select.set-in { width: 100%; max-width: none; }
   .set-in:focus-visible { outline: 2px solid var(--vi-primary); outline-offset: 1px; }
+  .set-up { display: flex; gap: 8px; }
+  .set-r.col .set-up select.set-in { flex: 1; min-width: 0; }
+  .set-ub { flex: none; min-height: 44px; padding: 0 16px; display: grid; place-items: center; border-radius: 10px; font-size: 15px; font-weight: 500;
+            background: var(--vi-primary); color: var(--text-primary-color, #fff); }
+  .set-ub:disabled { opacity: .45; }
   .set-e { min-height: 0; margin: 4px 0 0; font-size: 13px; color: var(--vi-bad); }
   .set-e:empty { display: none; }
   .pop .media { display: block; position: absolute; inset: 0; aspect-ratio: auto; background: #000; }

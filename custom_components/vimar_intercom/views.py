@@ -5,6 +5,8 @@ import functools
 import ipaddress
 import json
 import logging
+import os
+import tempfile
 import time
 
 from aiohttp import web
@@ -12,7 +14,7 @@ from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import Unauthorized
 
-from . import av_passive, av_stream, ring_log, runtime
+from . import av_passive, av_stream, away_config, ring_log, runtime
 from . import log_buffer as _log_buffer
 from . import media_handler as media
 from . import sip_client as sip
@@ -383,6 +385,58 @@ class VimarDebugView(HomeAssistantView):
             n = 100
         text = "\n".join(_log_buffer.tail(n))
         return web.Response(text=text, content_type="text/plain")
+
+
+def _save_body(body: bytes, folder: str | None, name: str) -> str:
+    """Il corpo della richiesta in un file temporaneo, poi save_upload come dalle opzioni."""
+    with tempfile.TemporaryDirectory() as tmp:
+        src = os.path.join(tmp, "upload")
+        with open(src, "wb") as f:
+            f.write(body)
+        return away_config.save_upload(src, folder, name)
+
+
+class VimarAwayUploadView(HomeAssistantView):
+    """File del messaggio di assenza caricato dalla card: POST col file come corpo e
+    ?name=<nome del file>. Solo admin, come le entità del messaggio. Stesse regole
+    del caricamento dalle opzioni (save_upload); il file salvato diventa quello scelto."""
+
+    url = "/api/vimar_intercom/away_upload"
+    name = "api:vimar_intercom:away_upload"
+    requires_auth = True
+
+    def __init__(self, hass: HomeAssistant):
+        self._hass = hass
+
+    async def post(self, request: web.Request) -> web.Response:
+        user = request.get("hass_user")
+        if user is None or not user.is_admin:
+            raise Unauthorized()
+        entry_id = next((k for k, v in self._hass.data.get(DOMAIN, {}).items()
+                         if isinstance(v, dict) and "hub" in v), None)
+        entry = entry_id and self._hass.config_entries.async_get_entry(entry_id)
+        if not entry:
+            return web.json_response({"error": "not_loaded"}, status=503)
+        # Il limite vale mentre si legge: un corpo più grande non finisce mai in memoria.
+        too_big = web.json_response({"error": "upload_too_big"}, status=413)
+        if (request.content_length or 0) > away_config.UPLOAD_MAX:
+            return too_big
+        body = bytearray()
+        async for chunk in request.content.iter_chunked(64 * 1024):
+            body += chunk
+            if len(body) > away_config.UPLOAD_MAX:
+                return too_big
+        try:
+            path = await self._hass.async_add_executor_job(
+                _save_body, bytes(body), away_config.messages_dir(self._hass),
+                request.query.get("name", ""))
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+        except OSError:
+            _LOGGER.exception("Away message upload not saved")
+            return web.json_response({"error": "upload_failed"}, status=500)
+        away_config.set_away(self._hass, entry, "away_message_file", path)
+        return web.json_response({"file": os.path.basename(path)})
 
 
 class VimarRingsView(HomeAssistantView):

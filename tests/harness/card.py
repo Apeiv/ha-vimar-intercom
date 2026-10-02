@@ -112,18 +112,22 @@ window.WebSocket = class extends WS {
   send(b) { T.sent++; if (T.frames.length < 5 && b.byteLength) T.frames.push([new Uint8Array(b)[0], b.byteLength]); super.send(b); }
   close() { T.wsClosed++; super.close(); }
 };
-// Le impostazioni del citofono (stesso dispositivo della camera): `?ents=dnd,vm` ne tiene solo alcune, `?noadmin` toglie is_admin.
+// Le impostazioni del citofono (stesso dispositivo della camera): `?ents=dnd,vm` ne tiene solo alcune, `?noadmin` toglie is_admin,
+// `?nofile` lascia il file audio su "none" (nessuno), `?lang=en` la lingua di HA.
 const QS = new URLSearchParams(location.search), WANT = QS.get("ents")?.split(",");
 const SET = {
   "switch.vimar_intercom_non_disturbare": { k: "dnd", state: "off", attributes: { friendly_name: "Non disturbare" } },
   "switch.vimar_intercom_segreteria": { k: "vm", state: "on", attributes: { friendly_name: "Segreteria", modo: "Home Assistant" } },
   "select.vimar_intercom_segreteria_ritardo": { k: "delay", state: "10", attributes: { friendly_name: "Segreteria · ritardo", options: ["5", "10", "15"] } },
   "text.vimar_intercom_segreteria_testo_del_messaggio": { k: "text", state: "Non siamo in casa", attributes: { friendly_name: "Segreteria · testo del messaggio" } },
-  "select.vimar_intercom_segreteria_file_audio": { k: "file", state: "a.wav", attributes: { friendly_name: "Segreteria · file audio", options: ["a.wav", "b.wav"] } },
+  "select.vimar_intercom_segreteria_file_audio": { k: "file", state: QS.has("nofile") ? "none" : "a.wav", attributes: { friendly_name: "Segreteria · file audio", options: ["none", "a.wav", "b.wav"] } },
 };
 const setEnts = Object.entries(SET).filter(([, v]) => !WANT || WANT.includes(v.k));
 const mkHass = (status, lastRing = {}) => ({
   user: { is_admin: !QS.has("noadmin") },
+  language: QS.get("lang") || "it",
+  formatEntityState: (s, v) => (v === "none" ? "Nessuno (usa il testo)" : v),  // come la traduzione dello stato del select
+  fetchWithAuth: (p, init) => fetch(p, init),
   entities: Object.fromEntries([["camera.vimar_intercom_intercom", 0], ...setEnts].map(([id]) => [id, { entity_id: id, device_id: "dev1", platform: "vimar_intercom" }])),
   states: {
     ...Object.fromEntries(setEnts.map(([id, v]) => [id, { state: v.state, attributes: v.attributes }])),
@@ -135,7 +139,7 @@ const mkHass = (status, lastRing = {}) => ({
   },
   callService: async (d, sv, data) => {
     T.calls.push(d + "." + sv);
-    if (["switch", "select", "text"].includes(d)) { (T.settings ||= []).push([d, sv, data]); return { context: {} }; }
+    if (["switch", "select", "text", "homeassistant"].includes(d)) { (T.settings ||= []).push([d, sv, data]); return { context: {} }; }
     const j = await (await fetch(`/svc/${d}/${sv}`, { method: "POST" })).json();
     if (d === "lock" && !j.ok) throw new Error(j.result);
     return { context: {}, response: j };
