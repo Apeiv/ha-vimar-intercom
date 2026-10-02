@@ -7,7 +7,10 @@ non ricarica se cambiano solo le chiavi away_message_* (vedi __init__).
 """
 from __future__ import annotations
 
+import filecmp
 import os
+import re
+import shutil
 
 from homeassistant.exceptions import Unauthorized
 
@@ -35,6 +38,35 @@ def list_files(path: str | None) -> list[str]:
     if not path:
         return []
     return sorted(f for f in os.listdir(path) if f.lower().endswith(AUDIO_EXT))
+
+
+UPLOAD_MAX = 5 * 1024 * 1024
+_PLAIN_NAME = re.compile(r"\w[\w .()-]*")  # niente nomi nascosti, separatori o caratteri strani
+
+
+def save_upload(src, folder: str | None) -> str:
+    """Copia un file caricato dalle opzioni nella cartella messaggi e dà il percorso
+    (eseguire in executor). ValueError col codice d'errore del form se non va.
+
+    Del nome conta solo l'ultimo pezzo: niente ../ fuori dalla cartella. Un file
+    diverso con lo stesso nome non si sovrascrive: si aggiunge -2, -3..."""
+    name = os.path.basename(str(src).replace("\\", "/"))
+    if not _PLAIN_NAME.fullmatch(name) or not name.lower().endswith(AUDIO_EXT):
+        raise ValueError("upload_bad_type")
+    if os.path.getsize(src) > UPLOAD_MAX:
+        raise ValueError("upload_too_big")
+    if not folder:
+        raise ValueError("upload_failed")
+    ensure_dir(folder)
+    stem, ext = os.path.splitext(name)
+    dest, n = os.path.join(folder, name), 1
+    while os.path.exists(dest):
+        if filecmp.cmp(src, dest, shallow=False):
+            return dest  # lo stesso file, già lì
+        n += 1
+        dest = os.path.join(folder, f"{stem}-{n}{ext}")
+    shutil.copyfile(src, dest)
+    return dest
 
 
 def apply_options(data: dict, options) -> bool:

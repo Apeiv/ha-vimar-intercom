@@ -87,6 +87,7 @@ on by itself, the Tab's wins. There is a single delay, *Voicemail · delay* (fro
 not expose it, the `away_message_delay` option, 0 = 20 s): the away message starts after that many seconds.
 The message is set from the same page: *Voicemail · message text* and *Voicemail · audio file* (a pick-list of the files in
 `<first HA media folder>/citofono/messaggi`, created on demand; upload from Media > Local media; refreshed every minute).
+The file can also be uploaded from the integration's settings (*Or upload the audio file*: mp3, wav or m4a, max 5 MB): it lands in that folder and becomes the away message at once.
 These are the integration's options, applied at once without a reload. Only administrators can change the message text and file (since 1.0.17, #64); the card's settings dialog hides those rows from other users.
 
 Example, Tab 5S Up 40515 (Due Fili Plus, cloud): SGA `61000`, PICG `60001`, video and door panel
