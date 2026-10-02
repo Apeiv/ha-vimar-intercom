@@ -11,6 +11,7 @@ import os
 import socket
 import struct
 import time
+import types
 
 import pytest
 
@@ -514,8 +515,12 @@ class TestPortPairs:
         assert len(got) == 2 and len(set(got)) == 2, got
 
     def test_a_reservation_expires(self, monkeypatch):
-        monkeypatch.setattr(audio, "RESERVE_SECONDS", 0.0)
+        # A clock of our own: on Windows time.monotonic() moves in steps of about
+        # 15 ms, so after a 10 ms sleep the reservation was often still "now" and
+        # the only free pair stayed reserved ("no free UDP port pair on loopback").
+        clock = [1000.0]
+        monkeypatch.setattr(audio, "time", types.SimpleNamespace(monotonic=lambda: clock[0]))
         first = audio.free_udp_port()
         monkeypatch.setattr(audio, "_ephemeral_port", lambda: first)
-        time.sleep(0.01)
+        clock[0] += audio.RESERVE_SECONDS + 0.001
         assert audio.free_udp_port() == first
