@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import os
 import types
 
 import pytest
@@ -337,6 +338,69 @@ def test_a_too_big_upload_is_refused(of, monkeypatch, tmp_path):
                                   b"x" * (of.away_config.UPLOAD_MAX + 1))
     assert result["errors"] == {"away_message_upload": "upload_too_big"}
     assert not folder.exists()
+
+
+def test_an_empty_upload_is_refused(of, monkeypatch, tmp_path):
+    result, folder = _away_upload(of, monkeypatch, tmp_path, "empty.mp3", b"")
+    assert result["errors"] == {"away_message_upload": "upload_bad_type"}
+    assert not folder.exists()
+
+
+def test_an_upload_with_a_too_long_name_is_refused(of, tmp_path):
+    """Over 200 bytes the name plus -n may not fit the 255-byte file name limit: the
+    copy failed with an OSError instead of a form error."""
+    name = "a" * 197 + ".mp3"  # 201 bytes, checked before the file is opened
+    with pytest.raises(ValueError, match="upload_bad_type"):
+        of.away_config.save_upload(str(tmp_path / name), str(tmp_path / "messaggi"))
+    assert not (tmp_path / "messaggi").exists()
+
+
+def test_an_expired_upload_shows_upload_failed(of, monkeypatch, tmp_path):
+    """process_uploaded_file raises ValueError("File does not exist") for an expired
+    upload: the form shows a translated error, not that raw text."""
+
+    @contextlib.contextmanager
+    def process_uploaded_file(hass, upload_id):
+        raise ValueError("File does not exist")
+        yield
+
+    monkeypatch.setattr(of, "process_uploaded_file", process_uploaded_file)
+    flow = _options_flow(of)
+    flow.hass.config.media_dirs = {"local": str(tmp_path / "media")}
+    result = asyncio.run(flow.async_step_settings({"local_proxy": "192.0.2.1", "use_local_udp": False,
+                                                   "away_message_upload": "id1"}))
+    assert result["errors"] == {"away_message_upload": "upload_failed"}
+
+
+def test_an_upload_never_writes_through_a_link_already_at_the_destination(of, monkeypatch, tmp_path):
+    """A hard link to a file outside the folder that shows up after any existence check
+    (os.path.exists patched to miss it): the upload goes to msg-2.wav, the outside file
+    is untouched. Hard link, so it runs on Windows too."""
+    folder = tmp_path / "media" / "citofono" / "messaggi"
+    folder.mkdir(parents=True)
+    outside = tmp_path / "outside.wav"
+    outside.write_bytes(b"precious")
+    os.link(outside, folder / "msg.wav")
+    monkeypatch.setattr(of.away_config.os.path, "exists", lambda p: False)
+    result, _ = _away_upload(of, monkeypatch, tmp_path, "msg.wav", b"new")
+    assert outside.read_bytes() == b"precious"
+    assert result["data"]["away_message_file"] == str(folder / "msg-2.wav")
+    assert (folder / "msg-2.wav").read_bytes() == b"new"
+
+
+def test_an_upload_never_writes_through_a_dangling_symlink(of, tmp_path):
+    """os.path.exists is False for a dangling symlink: the old copy created its target."""
+    src = tmp_path / "msg.wav"
+    src.write_bytes(b"new")
+    folder, target = tmp_path / "messaggi", tmp_path / "planted.wav"
+    folder.mkdir()
+    try:
+        os.symlink(target, folder / "msg.wav")
+    except OSError:
+        pytest.skip("symlinks need privileges on this system")
+    assert of.away_config.save_upload(str(src), str(folder)) == str(folder / "msg-2.wav")
+    assert not target.exists()
+    assert (folder / "msg-2.wav").read_bytes() == b"new"
 
 
 def test_webhook_urls_must_be_http(of):

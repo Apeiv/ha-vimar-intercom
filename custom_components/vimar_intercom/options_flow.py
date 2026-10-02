@@ -453,11 +453,12 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
             try:
                 away_file = await self.hass.async_add_executor_job(_save)
-            except ValueError as exc:
-                errors[KEY_AWAY_UPLOAD] = str(exc)
-            except OSError:
-                _LOGGER.exception("Away message upload not saved")
-                errors[KEY_AWAY_UPLOAD] = "upload_failed"
+            except (ValueError, OSError) as exc:
+                if str(exc) in ("upload_bad_type", "upload_too_big"):
+                    errors[KEY_AWAY_UPLOAD] = str(exc)
+                else:  # e.g. an expired upload: ValueError("File does not exist")
+                    _LOGGER.warning("Away message upload not saved: %s", exc, exc_info=isinstance(exc, OSError))
+                    errors[KEY_AWAY_UPLOAD] = "upload_failed"
             else:
                 # Il file è già nella cartella: se il form torna per un altro errore
                 # mostra il nuovo percorso e non ricarica un upload già consumato.

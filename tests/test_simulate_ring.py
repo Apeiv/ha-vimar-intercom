@@ -105,6 +105,7 @@ def test_the_test_ring_button_cannot_fire_during_a_real_call_or_ring(hub, log, m
         pass
     monkeypatch.setattr(button, "HomeAssistantError", _Err)
     b = button.VimarTestRingButton(hub, "e1")
+    b._context = None  # no user, as from an automation
 
     async def run():
         if busy == "test_ring":
