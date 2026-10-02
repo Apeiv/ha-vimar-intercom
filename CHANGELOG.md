@@ -6,6 +6,10 @@ Italian and are kept as they were written.
 
 ## [Unreleased]
 
+### Changed
+
+- **README**: an *Open in HACS* button (My Home Assistant) and a last-commit badge; the release, downloads and
+  stars badges are gone, since HACS already shows them at the top of the page.
 ### Fixed
 
 - **The door is opened with your plant's own command** ([#58](../../issues/58)): the lock, the *Open Door* button,

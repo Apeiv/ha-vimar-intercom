@@ -1,6 +1,8 @@
 # Vimar Intercom — Integrazione Home Assistant
 
-[![Release](https://img.shields.io/github/v/release/lollox80/ha-vimar-intercom?style=for-the-badge)](https://github.com/lollox80/ha-vimar-intercom/releases) [![Downloads](https://img.shields.io/github/downloads/lollox80/ha-vimar-intercom/total?style=for-the-badge)](https://github.com/lollox80/ha-vimar-intercom/releases) [![HACS](https://img.shields.io/badge/HACS-Custom-orange?style=for-the-badge)](https://hacs.xyz/docs/faq/custom_repositories/) [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.7%2B-41BDF5?style=for-the-badge&logo=home-assistant&logoColor=white)](https://www.home-assistant.io/) [![Tests](https://img.shields.io/github/actions/workflow/status/lollox80/ha-vimar-intercom/validate.yml?branch=main&label=tests&style=for-the-badge)](https://github.com/lollox80/ha-vimar-intercom/actions/workflows/validate.yml) [![License](https://img.shields.io/github/license/lollox80/ha-vimar-intercom?style=for-the-badge)](https://github.com/lollox80/ha-vimar-intercom/blob/main/LICENSE) [![Stars](https://img.shields.io/github/stars/lollox80/ha-vimar-intercom?style=for-the-badge)](https://github.com/lollox80/ha-vimar-intercom/stargazers)
+[![HACS](https://img.shields.io/badge/HACS-Custom-orange?style=for-the-badge)](https://hacs.xyz/docs/faq/custom_repositories/) [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.7%2B-41BDF5?style=for-the-badge&logo=home-assistant&logoColor=white)](https://www.home-assistant.io/) [![Tests](https://img.shields.io/github/actions/workflow/status/lollox80/ha-vimar-intercom/validate.yml?branch=main&label=tests&style=for-the-badge)](https://github.com/lollox80/ha-vimar-intercom/actions/workflows/validate.yml) [![Last commit](https://img.shields.io/github/last-commit/lollox80/ha-vimar-intercom?style=for-the-badge)](https://github.com/lollox80/ha-vimar-intercom/commits/main) [![License](https://img.shields.io/github/license/lollox80/ha-vimar-intercom?style=for-the-badge)](https://github.com/lollox80/ha-vimar-intercom/blob/main/LICENSE)
+
+[![Apri il tuo Home Assistant e questo repository in HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=lollox80&repository=ha-vimar-intercom&category=integration)
 
 🇬🇧 *[Read this page in English](https://github.com/lollox80/ha-vimar-intercom/blob/main/README.md)*
 
@@ -27,8 +29,8 @@ Cosa cambia da un impianto all'altro: [Configurazione](https://github.com/lollox
 
 ## Installazione
 
-1. HACS → menu ⋮ → *Repository personalizzati* → aggiungi `https://github.com/lollox80/ha-vimar-intercom`,
-   categoria *Integrazione*.
+1. Premi il pulsante **Apri in HACS** qui sopra (oppure: HACS → menu ⋮ → *Repository personalizzati* →
+   aggiungi `https://github.com/lollox80/ha-vimar-intercom`, categoria *Integrazione*).
 2. Installa **Vimar Intercom** e riavvia Home Assistant.
 3. Impostazioni → Dispositivi e servizi → **Aggiungi integrazione** → **Vimar Intercom**, poi incolla il
    testo del QR di abbinamento dell'app VIEW (oppure inserisci a mano i parametri SIP). Sulla rete
