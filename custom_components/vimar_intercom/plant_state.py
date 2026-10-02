@@ -7,7 +7,7 @@ while the integration runs, reset by runtime.configure() at setup.
 from __future__ import annotations
 
 # ─── Media encryption ────────────────────────────────────────────────────────
-# MEDIA_ENC è il valore effettivo, quello che legge sip_client.build_sdp:
+# MEDIA_ENC è il valore effettivo, quello che legge sdp.build_sdp:
 # l'opzione (runtime.MEDIA_ENC_OPTION) se forzata, altrimenti quanto dichiara
 # l'impianto.
 MEDIA_ENC_PLANT: bool | None = None   # None = l'impianto non l'ha dichiarato

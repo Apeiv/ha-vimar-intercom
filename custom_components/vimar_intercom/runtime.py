@@ -55,7 +55,7 @@ VIDEO_ENABLED: bool = True
 # `media_enc` che l'impianto dichiara nel GET_INIT_STATUS_REPLY lungo ("srtp" su
 # un 40515/2FV2 in cloud); senza dichiarazione (risposta corta, come sul 40507)
 # resta in chiaro. "on" / "off" forzano. Il valore effettivo, quello che legge
-# sip_client.build_sdp, è plant_state.MEDIA_ENC.
+# sdp.build_sdp, è plant_state.MEDIA_ENC.
 MEDIA_ENC_MODES = ("auto", "on", "off")
 MEDIA_ENC_OPTION: str = "auto"
 

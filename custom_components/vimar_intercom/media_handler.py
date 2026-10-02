@@ -965,7 +965,7 @@ async def setup_media(remote_sdp, local_crypto_key=None, local_video_crypto_key=
     remote_ip = remote_sdp.get("conn", "")
 
     # parse_sdp sets crypto_key only on an RTP/SAVP line with a supported
-    # suite; our answer echoes that suite (sip_client._line_security), so both
+    # suite; our answer echoes that suite (sdp._line_security), so both
     # directions of a line use it.
     remote_audio_key = audio.get("crypto_key")
     remote_video_key = video.get("crypto_key")

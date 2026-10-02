@@ -139,7 +139,7 @@ def test_the_h264_answer_takes_the_fmtp_of_the_offered_payload_type():
         "a=rtpmap:98 H264/90000\r\n"
         "a=fmtp:99 packetization-mode=1\r\n"
         "a=fmtp:98 profile-level-id=42800c;packetization-mode=0;max-br=512\r\n")
-    assert sip._h264_answer(offer) == (("98", "profile-level-id=42800c;packetization-mode=0"),)
+    assert sip.SDP._h264_answer(offer) == (("98", "profile-level-id=42800c;packetization-mode=0"),)
 
 
 def test_sdp_corners_bad_port_keyless_crypto_and_media_level_address():
