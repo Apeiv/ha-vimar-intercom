@@ -173,6 +173,135 @@ def _homekit_pairing_text(hass, entry_id) -> str:
     return text
 
 
+# ─── Settings form, one helper per section (same keys, order and defaults) ──
+
+
+def _network_schema(form: dict) -> dict:
+    return {
+        vol.Required(
+            "local_proxy",
+            default=form.get(KEY_LOCAL_PROXY, "")
+        ): str,
+        vol.Optional(
+            "use_local_udp",
+            default=form.get(KEY_USE_LOCAL_UDP, True)
+        ): bool,
+        vol.Optional(
+            "local_udp_port",
+            default=form.get(KEY_LOCAL_UDP_PORT, DEFAULT_LOCAL_UDP_PORT)
+        ): vol.All(vol.Coerce(int), vol.Range(min=1024, max=65535)),
+        # auto (segue il media_enc dichiarato dall'impianto) / on / off (issue #4).
+        vol.Optional(
+            KEY_MEDIA_ENC,
+            default=media_enc_mode(form.get(KEY_MEDIA_ENC)),
+        ): selector.SelectSelector(selector.SelectSelectorConfig(
+            options=list(MEDIA_ENC_MODES),
+            translation_key="media_enc",
+            mode=selector.SelectSelectorMode.DROPDOWN,
+        )),
+        # Chi può rispondere a voce su /audio_ws: dichiarato / mai / chiunque.
+        vol.Optional(
+            KEY_VOICE_ANSWER,
+            default=voice_answer_mode(form.get(KEY_VOICE_ANSWER)),
+        ): selector.SelectSelector(selector.SelectSelectorConfig(
+            options=list(VOICE_ANSWER_MODES),
+            translation_key="voice_answer",
+            mode=selector.SelectSelectorMode.DROPDOWN,
+        )),
+    }
+
+
+def _targets_schema(form: dict) -> dict:
+    return {
+        vol.Optional(
+            KEY_SGA_TARGET,
+            default=form.get(KEY_SGA_TARGET) or SGA_TARGET,
+        ): str,
+        vol.Optional(
+            KEY_PICG_TARGET,
+            default=form.get(KEY_PICG_TARGET) or PICG_TARGET,
+        ): str,
+        # Empty is a valid value: the panel learned from the last ring
+        # with video (hub._camera_fallback), else 55100. Pre-filling 55100
+        # saved it on the first save and the fallback never ran again.
+        vol.Optional(
+            KEY_CAMERA_TARGET,
+            default=form.get(KEY_CAMERA_TARGET) or "",
+        ): str,
+        vol.Optional(
+            KEY_INTERNAL_PANEL_TARGET,
+            default=form.get(KEY_INTERNAL_PANEL_TARGET) or INTERNAL_PANEL_TARGET,
+        ): str,
+        # Nessun default fisso: vuoto è un valore valido (ripiego in
+        # runtime.configure), non «55001».
+        vol.Optional(
+            KEY_DOOR_TARGET,
+            default=form.get(KEY_DOOR_TARGET) or "",
+        ): str,
+    }
+
+
+def _away_schema(form: dict) -> dict:
+    return {
+        vol.Optional(
+            KEY_AWAY_FILE,
+            default=form.get(KEY_AWAY_FILE, ""),
+        ): str,
+        vol.Optional(
+            KEY_AWAY_TEXT,
+            default=form.get(KEY_AWAY_TEXT, ""),
+        ): selector.TextSelector(selector.TextSelectorConfig(multiline=True)),
+        # Niente default: un EntitySelector non accetta "" (vuoto = motore
+        # predefinito di HA); il valore salvato torna come suggerimento.
+        vol.Optional(
+            KEY_AWAY_TTS,
+            description={"suggested_value": form.get(KEY_AWAY_TTS) or None},
+        ): selector.EntitySelector(selector.EntitySelectorConfig(domain="tts")),
+        vol.Optional(
+            KEY_AWAY_DELAY,
+            default=form.get(KEY_AWAY_DELAY, 0),
+        ): vol.All(vol.Coerce(int), vol.Range(min=0, max=60)),
+    }
+
+
+def _photos_schema(form: dict) -> dict:
+    return {
+        vol.Optional(
+            KEY_SNAP_DIR,
+            default=form.get(KEY_SNAP_DIR, ""),
+        ): str,
+        vol.Optional(
+            KEY_SNAP_DELAY,
+            default=form.get(KEY_SNAP_DELAY, DEFAULT_SNAPSHOT_DELAY),
+        ): vol.All(vol.Coerce(int), vol.Range(min=0, max=30)),
+        vol.Optional(
+            KEY_VIEW_KA,
+            default=form.get(KEY_VIEW_KA, view_keepalive_default(
+                form.get(KEY_USE_LOCAL_UDP, True))),
+        ): vol.All(vol.Coerce(int), vol.Range(min=0, max=3600)),
+    }
+
+
+def _access_schema(form: dict, users: list[dict]) -> dict:
+    return {
+        vol.Optional(
+            KEY_ALLOWED_USERS,
+            default=[u for u in form.get(KEY_ALLOWED_USERS) or [] if any(u == x["value"] for x in users)],
+        ): selector.SelectSelector(selector.SelectSelectorConfig(
+            options=users, multiple=True, mode="list")),  # caselle, non un menu
+        # password: l'URL può portare un token segreto (es. Scrypted), non va
+        # mostrato in chiaro nel form.
+        vol.Optional(
+            KEY_RING_WEBHOOK_URL,
+            default=form.get(KEY_RING_WEBHOOK_URL, ""),
+        ): selector.TextSelector(selector.TextSelectorConfig(type="password")),
+        vol.Optional(
+            KEY_RING_END_WEBHOOK_URL,
+            default=form.get(KEY_RING_END_WEBHOOK_URL, ""),
+        ): selector.TextSelector(selector.TextSelectorConfig(type="password")),
+    }
+
+
 class OptionsFlowHandler(config_entries.OptionsFlow):
     """Modifica le impostazioni di rete senza re-inserire le credenziali."""
 
@@ -210,104 +339,19 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         )
 
         if user_input is not None:
-            local_proxy    = user_input.get("local_proxy", "").strip()
-            use_local_udp  = user_input.get("use_local_udp", True)
-            local_udp_port = int(user_input.get("local_udp_port", DEFAULT_LOCAL_UDP_PORT))
-            media_enc      = media_enc_mode(user_input.get(KEY_MEDIA_ENC))
-            voice_answer   = voice_answer_mode(user_input.get(KEY_VOICE_ANSWER))
+            local_proxy, use_local_udp, local_udp_port, media_enc, voice_answer = (
+                self._settings_network(user_input))
             actuators_raw  = user_input.get(KEY_ACTUATORS, "")
             actuators_default = actuators_raw  # rimostra ciò che l'utente ha scritto
-
-            # SGA/PICG: id SIP numerici (es. "55001"). Campo vuoto → fallback al
-            # default storico in const.py (gestito da runtime.configure()), quindi
-            # qui basta validare il formato quando l'utente scrive qualcosa.
-            targets = {}
-            for key in (KEY_SGA_TARGET, KEY_PICG_TARGET, KEY_CAMERA_TARGET,
-                        KEY_INTERNAL_PANEL_TARGET, KEY_DOOR_TARGET):
-                targets[key] = str(user_input.get(key, "")).strip()
-                if targets[key] and not validate.sip_target(targets[key]):
-                    errors[key] = "invalid_target"
-
-            away_file  = str(user_input.get(KEY_AWAY_FILE, "")).strip()
-            away_text  = str(user_input.get(KEY_AWAY_TEXT, "")).strip()
-            away_tts   = str(user_input.get(KEY_AWAY_TTS) or "").strip()
-            away_delay = user_input.get(KEY_AWAY_DELAY, 0)
-            if len(away_text) > AWAY_TEXT_MAX:
-                errors[KEY_AWAY_TEXT] = "text_too_long"
-            # Come snapshot_dir: solo cartelle che HA può leggere (allowlist_external_dirs,
-            # media). Il percorso va dritto a `ffmpeg -i`.
-            if away_file and not self.hass.config.is_allowed_path(away_file):
-                errors[KEY_AWAY_FILE] = "file_not_allowed"
-            elif away_file and not await self.hass.async_add_executor_job(os.path.isfile, away_file):
-                errors[KEY_AWAY_FILE] = "file_not_found"
-
-            snap_dir   = str(user_input.get(KEY_SNAP_DIR, "")).strip()
-            snap_delay = user_input.get(KEY_SNAP_DELAY, DEFAULT_SNAPSHOT_DELAY)
-            view_ka    = user_input.get(KEY_VIEW_KA, view_keepalive_default(use_local_udp))
-            if (use_local_udp != current.get(KEY_USE_LOCAL_UDP, True)
-                    and view_ka == view_keepalive_default(current.get(KEY_USE_LOCAL_UDP, True))):
-                view_ka = view_keepalive_default(use_local_udp)  # era il predefinito: segue la modalità
-            allowed_users = [str(u) for u in user_input.get(KEY_ALLOWED_USERS) or []]
-            ring_webhook_url     = str(user_input.get(KEY_RING_WEBHOOK_URL) or "").strip()
-            ring_end_webhook_url = str(user_input.get(KEY_RING_END_WEBHOOK_URL) or "").strip()
-            for key, url in ((KEY_RING_WEBHOOK_URL, ring_webhook_url),
-                             (KEY_RING_END_WEBHOOK_URL, ring_end_webhook_url)):
-                if not validate.http_url(url):
-                    errors[key] = "invalid_url"
-            if snap_dir and not self.hass.config.is_allowed_path(snap_dir):
-                errors[KEY_SNAP_DIR] = "path_not_allowed"
-            elif snap_dir and await self.hass.async_add_executor_job(
-                    _inside, snap_dir, self.hass.config.path("www")):
-                # /config/www è servita su /local SENZA login: la foto della strada
-                # finirebbe leggibile da internet.
-                errors[KEY_SNAP_DIR] = "path_public"
-
-            actuators: list[dict] = []
-            try:
-                actuators = _parse_actuators(actuators_raw)
-            except ValueError as exc:
-                errors[KEY_ACTUATORS] = ("invalid_actuator_target" if isinstance(exc, InvalidActuatorTarget)
-                                         else "invalid_actuators")
-                self._actuators_error = str(exc)
-
-            # Il test SIP live va fatto solo se cambiano davvero i parametri SIP:
-            # rifarlo a ogni salvataggio (es. modifica solo attuatori) fallirebbe per
-            # conflitto con l'integrazione già registrata e bloccherebbe il salvataggio.
-            sip_changed = (
-                local_proxy    != current.get(KEY_LOCAL_PROXY, "")
-                or use_local_udp  != current.get(KEY_USE_LOCAL_UDP, True)
-                or local_udp_port != current.get(KEY_LOCAL_UDP_PORT, DEFAULT_LOCAL_UDP_PORT)
-            )
-            if not _validate_ip(local_proxy):
-                errors["local_proxy"] = "invalid_ip"
-            elif use_local_udp and sip_changed:
-                ok, msg = await _test_sip_registration(
-                    sip_user      = current["sip_user"],
-                    sip_password  = current["sip_password"],
-                    # The domain runtime.configure uses in local UDP mode
-                    # (as _local_test_domain in the setup flow).
-                    sip_domain    = current.get(KEY_LOCAL_DOMAIN) or current["sip_domain"],
-                    local_proxy   = local_proxy,
-                    local_udp_port = local_udp_port,
-                    device_imei   = str(current.get("device_imei") or ""),
-                    device_uuid   = str(current.get("device_uuid") or ""),
-                    device_name   = str(current.get("device_name") or MY_NAME),
-                    # The entry is set up and registered with this identity:
-                    # do not leave its binding on the test's closed socket.
-                    unregister    = True,
-                )
-                if not ok:
-                    errors["local_proxy"] = "sip_registration_failed"
-                else:
-                    # The test's unregister may have taken the live binding
-                    # with it: register again now, whether or not the form is
-                    # saved (saving reloads and registers anyway).
-                    entry_data = getattr(self.hass, "data", {}).get(DOMAIN, {}).get(
-                        getattr(self._entry, "entry_id", None), {})
-                    hub = entry_data.get("hub") if isinstance(entry_data, dict) else None
-                    if hub is not None:
-                        self.hass.async_create_background_task(
-                            hub.async_register_now(), "vimar_intercom re-register")
+            targets = self._settings_targets(user_input, errors)
+            away_file, away_text, away_tts, away_delay = await self._settings_away(user_input, errors)
+            allowed_users, ring_webhook_url, ring_end_webhook_url = self._settings_access(
+                user_input, errors)
+            snap_dir, snap_delay, view_ka = await self._settings_photos(
+                user_input, current, use_local_udp, errors)
+            actuators = self._settings_actuators(actuators_raw, errors)
+            await self._settings_sip_test(
+                current, local_proxy, use_local_udp, local_udp_port, errors)
 
             if not errors:
                 return self.async_create_entry(
@@ -340,8 +384,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         # Il form si ricompone su ciò che l'utente ha appena inviato, non solo
         # sui valori salvati: ricostruirlo da `current` scarterebbe in silenzio
         # tutte le altre modifiche fatte insieme a quella che non ha passato la
-        # validazione. `current` resta intatto perché serve ai confronti sopra
-        # (sip_changed) per capire cosa è davvero cambiato.
+        # validazione. `current` resta intatto perché serve ai confronti
+        # (sip_changed in _settings_sip_test) per capire cosa è davvero cambiato.
         form = {**current, **(user_input or {})}
         # HA non ha un selettore di utenti: elenco a scelta multipla dagli utenti veri
         # (non quelli di sistema). Un utente cancellato sparisce dalla lista al salvataggio.
@@ -351,117 +395,142 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         return self.async_show_form(
             step_id="settings",
             data_schema=vol.Schema({
-                vol.Required(
-                    "local_proxy",
-                    default=form.get(KEY_LOCAL_PROXY, "")
-                ): str,
-                vol.Optional(
-                    "use_local_udp",
-                    default=form.get(KEY_USE_LOCAL_UDP, True)
-                ): bool,
-                vol.Optional(
-                    "local_udp_port",
-                    default=form.get(KEY_LOCAL_UDP_PORT, DEFAULT_LOCAL_UDP_PORT)
-                ): vol.All(vol.Coerce(int), vol.Range(min=1024, max=65535)),
-                # auto (segue il media_enc dichiarato dall'impianto) / on / off (issue #4).
-                vol.Optional(
-                    KEY_MEDIA_ENC,
-                    default=media_enc_mode(form.get(KEY_MEDIA_ENC)),
-                ): selector.SelectSelector(selector.SelectSelectorConfig(
-                    options=list(MEDIA_ENC_MODES),
-                    translation_key="media_enc",
-                    mode=selector.SelectSelectorMode.DROPDOWN,
-                )),
-                # Chi può rispondere a voce su /audio_ws: dichiarato / mai / chiunque.
-                vol.Optional(
-                    KEY_VOICE_ANSWER,
-                    default=voice_answer_mode(form.get(KEY_VOICE_ANSWER)),
-                ): selector.SelectSelector(selector.SelectSelectorConfig(
-                    options=list(VOICE_ANSWER_MODES),
-                    translation_key="voice_answer",
-                    mode=selector.SelectSelectorMode.DROPDOWN,
-                )),
+                **_network_schema(form),
                 vol.Optional(
                     KEY_ACTUATORS,
                     default=actuators_default,
                 ): str,
-                vol.Optional(
-                    KEY_SGA_TARGET,
-                    default=form.get(KEY_SGA_TARGET) or SGA_TARGET,
-                ): str,
-                vol.Optional(
-                    KEY_PICG_TARGET,
-                    default=form.get(KEY_PICG_TARGET) or PICG_TARGET,
-                ): str,
-                # Empty is a valid value: the panel learned from the last ring
-                # with video (hub._camera_fallback), else 55100. Pre-filling 55100
-                # saved it on the first save and the fallback never ran again.
-                vol.Optional(
-                    KEY_CAMERA_TARGET,
-                    default=form.get(KEY_CAMERA_TARGET) or "",
-                ): str,
-                vol.Optional(
-                    KEY_INTERNAL_PANEL_TARGET,
-                    default=form.get(KEY_INTERNAL_PANEL_TARGET) or INTERNAL_PANEL_TARGET,
-                ): str,
-                # Nessun default fisso: vuoto è un valore valido (ripiego in
-                # runtime.configure), non «55001».
-                vol.Optional(
-                    KEY_DOOR_TARGET,
-                    default=form.get(KEY_DOOR_TARGET) or "",
-                ): str,
-                vol.Optional(
-                    KEY_AWAY_FILE,
-                    default=form.get(KEY_AWAY_FILE, ""),
-                ): str,
-                vol.Optional(
-                    KEY_AWAY_TEXT,
-                    default=form.get(KEY_AWAY_TEXT, ""),
-                ): selector.TextSelector(selector.TextSelectorConfig(multiline=True)),
-                # Niente default: un EntitySelector non accetta "" (vuoto = motore
-                # predefinito di HA); il valore salvato torna come suggerimento.
-                vol.Optional(
-                    KEY_AWAY_TTS,
-                    description={"suggested_value": form.get(KEY_AWAY_TTS) or None},
-                ): selector.EntitySelector(selector.EntitySelectorConfig(domain="tts")),
-                vol.Optional(
-                    KEY_AWAY_DELAY,
-                    default=form.get(KEY_AWAY_DELAY, 0),
-                ): vol.All(vol.Coerce(int), vol.Range(min=0, max=60)),
-                vol.Optional(
-                    KEY_SNAP_DIR,
-                    default=form.get(KEY_SNAP_DIR, ""),
-                ): str,
-                vol.Optional(
-                    KEY_SNAP_DELAY,
-                    default=form.get(KEY_SNAP_DELAY, DEFAULT_SNAPSHOT_DELAY),
-                ): vol.All(vol.Coerce(int), vol.Range(min=0, max=30)),
-                vol.Optional(
-                    KEY_VIEW_KA,
-                    default=form.get(KEY_VIEW_KA, view_keepalive_default(
-                        form.get(KEY_USE_LOCAL_UDP, True))),
-                ): vol.All(vol.Coerce(int), vol.Range(min=0, max=3600)),
-                vol.Optional(
-                    KEY_ALLOWED_USERS,
-                    default=[u for u in form.get(KEY_ALLOWED_USERS) or [] if any(u == x["value"] for x in users)],
-                ): selector.SelectSelector(selector.SelectSelectorConfig(
-                    options=users, multiple=True, mode="list")),  # caselle, non un menu
-                # password: l'URL può portare un token segreto (es. Scrypted), non va
-                # mostrato in chiaro nel form.
-                vol.Optional(
-                    KEY_RING_WEBHOOK_URL,
-                    default=form.get(KEY_RING_WEBHOOK_URL, ""),
-                ): selector.TextSelector(selector.TextSelectorConfig(type="password")),
-                vol.Optional(
-                    KEY_RING_END_WEBHOOK_URL,
-                    default=form.get(KEY_RING_END_WEBHOOK_URL, ""),
-                ): selector.TextSelector(selector.TextSelectorConfig(type="password")),
+                **_targets_schema(form),
+                **_away_schema(form),
+                **_photos_schema(form),
+                **_access_schema(form, users),
             }),
             errors=errors,
             description_placeholders={
                 "actuators_error": getattr(self, "_actuators_error", "") or "",
             },
         )
+
+    # ─── Settings, one helper per section: read and validate user_input ─────
+
+    @staticmethod
+    def _settings_network(user_input: dict) -> tuple:
+        local_proxy    = user_input.get("local_proxy", "").strip()
+        use_local_udp  = user_input.get("use_local_udp", True)
+        local_udp_port = int(user_input.get("local_udp_port", DEFAULT_LOCAL_UDP_PORT))
+        media_enc      = media_enc_mode(user_input.get(KEY_MEDIA_ENC))
+        voice_answer   = voice_answer_mode(user_input.get(KEY_VOICE_ANSWER))
+        return local_proxy, use_local_udp, local_udp_port, media_enc, voice_answer
+
+    @staticmethod
+    def _settings_targets(user_input: dict, errors: dict[str, str]) -> dict:
+        # SGA/PICG: id SIP numerici (es. "55001"). Campo vuoto → fallback al
+        # default storico in const.py (gestito da runtime.configure()), quindi
+        # qui basta validare il formato quando l'utente scrive qualcosa.
+        targets = {}
+        for key in (KEY_SGA_TARGET, KEY_PICG_TARGET, KEY_CAMERA_TARGET,
+                    KEY_INTERNAL_PANEL_TARGET, KEY_DOOR_TARGET):
+            targets[key] = str(user_input.get(key, "")).strip()
+            if targets[key] and not validate.sip_target(targets[key]):
+                errors[key] = "invalid_target"
+        return targets
+
+    async def _settings_away(self, user_input: dict, errors: dict[str, str]) -> tuple:
+        away_file  = str(user_input.get(KEY_AWAY_FILE, "")).strip()
+        away_text  = str(user_input.get(KEY_AWAY_TEXT, "")).strip()
+        away_tts   = str(user_input.get(KEY_AWAY_TTS) or "").strip()
+        away_delay = user_input.get(KEY_AWAY_DELAY, 0)
+        if len(away_text) > AWAY_TEXT_MAX:
+            errors[KEY_AWAY_TEXT] = "text_too_long"
+        # Come snapshot_dir: solo cartelle che HA può leggere (allowlist_external_dirs,
+        # media). Il percorso va dritto a `ffmpeg -i`.
+        if away_file and not self.hass.config.is_allowed_path(away_file):
+            errors[KEY_AWAY_FILE] = "file_not_allowed"
+        elif away_file and not await self.hass.async_add_executor_job(os.path.isfile, away_file):
+            errors[KEY_AWAY_FILE] = "file_not_found"
+        return away_file, away_text, away_tts, away_delay
+
+    @staticmethod
+    def _settings_access(user_input: dict, errors: dict[str, str]) -> tuple:
+        allowed_users = [str(u) for u in user_input.get(KEY_ALLOWED_USERS) or []]
+        ring_webhook_url     = str(user_input.get(KEY_RING_WEBHOOK_URL) or "").strip()
+        ring_end_webhook_url = str(user_input.get(KEY_RING_END_WEBHOOK_URL) or "").strip()
+        for key, url in ((KEY_RING_WEBHOOK_URL, ring_webhook_url),
+                         (KEY_RING_END_WEBHOOK_URL, ring_end_webhook_url)):
+            if not validate.http_url(url):
+                errors[key] = "invalid_url"
+        return allowed_users, ring_webhook_url, ring_end_webhook_url
+
+    async def _settings_photos(
+        self, user_input: dict, current: dict, use_local_udp: bool, errors: dict[str, str]
+    ) -> tuple:
+        snap_dir   = str(user_input.get(KEY_SNAP_DIR, "")).strip()
+        snap_delay = user_input.get(KEY_SNAP_DELAY, DEFAULT_SNAPSHOT_DELAY)
+        view_ka    = user_input.get(KEY_VIEW_KA, view_keepalive_default(use_local_udp))
+        if (use_local_udp != current.get(KEY_USE_LOCAL_UDP, True)
+                and view_ka == view_keepalive_default(current.get(KEY_USE_LOCAL_UDP, True))):
+            view_ka = view_keepalive_default(use_local_udp)  # era il predefinito: segue la modalità
+        if snap_dir and not self.hass.config.is_allowed_path(snap_dir):
+            errors[KEY_SNAP_DIR] = "path_not_allowed"
+        elif snap_dir and await self.hass.async_add_executor_job(
+                _inside, snap_dir, self.hass.config.path("www")):
+            # /config/www è servita su /local SENZA login: la foto della strada
+            # finirebbe leggibile da internet.
+            errors[KEY_SNAP_DIR] = "path_public"
+        return snap_dir, snap_delay, view_ka
+
+    def _settings_actuators(self, actuators_raw: str, errors: dict[str, str]) -> list[dict]:
+        actuators: list[dict] = []
+        try:
+            actuators = _parse_actuators(actuators_raw)
+        except ValueError as exc:
+            errors[KEY_ACTUATORS] = ("invalid_actuator_target" if isinstance(exc, InvalidActuatorTarget)
+                                     else "invalid_actuators")
+            self._actuators_error = str(exc)
+        return actuators
+
+    async def _settings_sip_test(
+        self, current: dict, local_proxy: str, use_local_udp: bool, local_udp_port: int,
+        errors: dict[str, str],
+    ) -> None:
+        # Il test SIP live va fatto solo se cambiano davvero i parametri SIP:
+        # rifarlo a ogni salvataggio (es. modifica solo attuatori) fallirebbe per
+        # conflitto con l'integrazione già registrata e bloccherebbe il salvataggio.
+        sip_changed = (
+            local_proxy    != current.get(KEY_LOCAL_PROXY, "")
+            or use_local_udp  != current.get(KEY_USE_LOCAL_UDP, True)
+            or local_udp_port != current.get(KEY_LOCAL_UDP_PORT, DEFAULT_LOCAL_UDP_PORT)
+        )
+        if not _validate_ip(local_proxy):
+            errors["local_proxy"] = "invalid_ip"
+        elif use_local_udp and sip_changed:
+            ok, msg = await _test_sip_registration(
+                sip_user      = current["sip_user"],
+                sip_password  = current["sip_password"],
+                # The domain runtime.configure uses in local UDP mode
+                # (as _local_test_domain in the setup flow).
+                sip_domain    = current.get(KEY_LOCAL_DOMAIN) or current["sip_domain"],
+                local_proxy   = local_proxy,
+                local_udp_port = local_udp_port,
+                device_imei   = str(current.get("device_imei") or ""),
+                device_uuid   = str(current.get("device_uuid") or ""),
+                device_name   = str(current.get("device_name") or MY_NAME),
+                # The entry is set up and registered with this identity:
+                # do not leave its binding on the test's closed socket.
+                unregister    = True,
+            )
+            if not ok:
+                errors["local_proxy"] = "sip_registration_failed"
+            else:
+                # The test's unregister may have taken the live binding
+                # with it: register again now, whether or not the form is
+                # saved (saving reloads and registers anyway).
+                entry_data = getattr(self.hass, "data", {}).get(DOMAIN, {}).get(
+                    getattr(self._entry, "entry_id", None), {})
+                hub = entry_data.get("hub") if isinstance(entry_data, dict) else None
+                if hub is not None:
+                    self.hass.async_create_background_task(
+                        hub.async_register_now(), "vimar_intercom re-register")
 
     async def async_step_homekit(
         self, user_input: dict | None = None
