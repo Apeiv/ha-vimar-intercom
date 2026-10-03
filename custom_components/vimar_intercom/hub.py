@@ -1647,6 +1647,16 @@ class VimarIntercomHub(PlantMessages, RingMedia):
         _LOGGER.info("SIP re-registration after the options test: %s", "OK" if ok else "FAILED")
         return ok
 
+    async def _register_or_join_reconnect(self) -> bool:
+        """REGISTER during a call; if the reader is already reconnecting, join it
+        instead: a REGISTER now would open a second connection beside it."""
+        if not sip.reconnecting():
+            return await sip.do_register()
+        ok = await sip.reconnect()
+        if ok:
+            self._init_status_sent = False  # back after a drop: ask the Tab's state again
+        return ok
+
     async def _keepalive_tick(self):
         """Un giro di keepalive. Separato dal loop per poterlo testare."""
         try:
@@ -1663,7 +1673,7 @@ class VimarIntercomHub(PlantMessages, RingMedia):
                     # Retry the REGISTER once; if the connection is really gone
                     # the reader notices and reconnects on its own.
                     _LOGGER.warning("SIP re-registration failed during a call or ring: retrying once")
-                    ok = await sip.do_register()
+                    ok = await self._register_or_join_reconnect()
                 elif not ok:
                     # We were registered and the renewal failed: reconnect now,
                     # not a whole keepalive interval later with the intercom
@@ -1675,11 +1685,9 @@ class VimarIntercomHub(PlantMessages, RingMedia):
                         self._init_status_sent = False
                         _LOGGER.info("Registrazione SIP recuperata")
             elif self.call_active:
-                # A lapsed registration (the retry above failed too) must not
-                # reconnect either: on TLS it would close the call's connection.
-                # Bounded: a ring ends in 90 s, a call in 5 minutes, then we reconnect.
-                # `failed` is still False here, so a failed retry counts once below.
-                ok = await sip.do_register()
+                # Lapsed mid-call: never start a reconnect (on TLS it closes the call's connection).
+                # Bounded: a ring ends in 90 s, a call in 5 minutes, then the else branch reconnects.
+                ok = await self._register_or_join_reconnect()
             else:
                 # Fino alla 1.0.5 questo ramo non esisteva: la guardia era
                 # `if sip.registered`, quindi persa la registrazione il loop

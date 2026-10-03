@@ -184,6 +184,25 @@ def test_a_lapsed_registration_during_a_call_does_not_reconnect(hub, chiamate, m
     assert hub.stats["register_failures"] == prima + 1, "one failed tick, one failure"
 
 
+@pytest.mark.parametrize("registered", [False, True])
+def test_a_register_during_a_call_joins_the_readers_reconnect(hub, chiamate, monkeypatch, registered):
+    """The reader is reconnecting (the cloud dropped mid-call): a REGISTER from the
+    keepalive would open a second connection and later cancel the good one.
+    registered=True: the renewal fails while the reader starts over, the retry joins."""
+    renewals = int(registered)  # REGISTERs sent before the reader's reconnect starts
+    monkeypatch.setattr(sip, "registered", registered, raising=False)
+    monkeypatch.setattr(sip, "in_call", True, raising=False)
+    # the reader starts reconnecting once the renewals have gone out
+    monkeypatch.setattr(sip, "reconnecting", lambda: chiamate["register"] >= renewals)
+    chiamate["register_ok"] = False
+    hub._init_status_sent = True
+
+    _tick(hub, chiamate, monkeypatch)
+
+    assert chiamate["register"] == renewals and chiamate["reconnect"] == 1
+    assert chiamate["init_status"] == 1, "back after a drop: the Tab's state is asked again"
+
+
 def test_the_fast_reconnect_joins_the_running_attempt(monkeypatch):
     """The keepalive and the reader share one reconnect: never two in parallel."""
     started = []

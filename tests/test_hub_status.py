@@ -1,4 +1,5 @@
 """hub.status while a REGISTER renewal lapses during a call or a ring."""
+
 from __future__ import annotations
 
 import asyncio
@@ -26,6 +27,7 @@ def test_a_ring_wins_over_a_lapsed_registration(hub, monkeypatch):
 @pytest.mark.slow
 def test_a_failed_renewal_during_a_call_does_not_turn_the_status_offline(monkeypatch):
     """The registrar refuses a renewal (5xx) mid-call: the call stays in_call."""
+
     async def s():
         async with Rig(monkeypatch) as rig:
             await rig.register()
@@ -38,12 +40,14 @@ def test_a_failed_renewal_during_a_call_does_not_turn_the_status_offline(monkeyp
             assert rig.hub.status == "in_call", f"status {rig.hub.status!r} with the call up"
             rig.peer.register_code = None
             await rig.hub.async_hangup()
+
     run(s())
 
 
 @pytest.mark.slow
 def test_a_ring_after_a_failed_renewal_is_still_a_ring(monkeypatch):
     """A ring after a failed renewal still reads "ringing", not "offline"."""
+
     async def s():
         async with Rig(monkeypatch, "tls") as rig:
             await rig.register()
@@ -55,4 +59,5 @@ def test_a_ring_after_a_failed_renewal_is_still_a_ring(monkeypatch):
             assert rig.hub.video_active, "the preview is on"
             assert rig.hub.status == "ringing", f"status {rig.hub.status!r} while the panel rings us"
             await rig.hub.async_decline()
+
     run(s())
