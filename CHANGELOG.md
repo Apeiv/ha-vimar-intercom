@@ -6,12 +6,6 @@ Italian and are kept as they were written.
 
 ## [Unreleased]
 
-### Fixed
-
-- **Card: the microphone says why it can't start**: a denied permission (on iOS: Settings → Home Assistant →
-  Microphone), Home Assistant opened over HTTP, or a webview without a microphone now show a message instead of
-  nothing. Over HTTP the microphone button is no longer greyed out, so a tap can explain it.
-
 ## [1.0.19] - 2026-10-02
 
 ### Added
