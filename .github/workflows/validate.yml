@@ -7,6 +7,11 @@ on:
     - cron: "0 0 * * 0"
   workflow_dispatch:
 
+# Every job here only reads the repository. Declared in the file so that the
+# workflow does not depend on the repository or organization default.
+permissions:
+  contents: read
+
 jobs:
   hassfest:
     name: Hassfest
