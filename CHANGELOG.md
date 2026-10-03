@@ -6,15 +6,6 @@ Italian and are kept as they were written.
 
 ## [Unreleased]
 
-### Fixed
-
-- **Door over the cloud: no second open.** A timeout, a send error after the 407, or a 408/504 from the relay
-  is no longer retried: the relay may still deliver the first copy (late answers seen in [#14](../../issues/14)),
-  so the UI says to wait before trying again. The cloud timeout is now 20 s. Local UDP keeps its retry.
-- **Door: one command at a time.** A second tap while one is still waiting returns *un'altra apertura è in corso*.
-- **Door: a 202 Accepted is not an open door**, on the cloud or local UDP: reported as not confirmed, not counted,
-  not retried.
-
 ## [1.0.19] - 2026-10-02
 
 ### Added
