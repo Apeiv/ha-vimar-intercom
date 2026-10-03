@@ -25,12 +25,12 @@ RELAY_DELAY = 15.2  # #14: the relay's 202 came ~15.2 s after the MESSAGE
 
 
 def _fast_clock(monkeypatch):
-    real = sip.do_system_message
+    real = sip.send_message
 
     async def scaled(uri, body, extra_headers=None, timeout=15):
         return await real(uri, body, extra_headers, timeout=timeout * SCALE)
 
-    monkeypatch.setattr(sip, "do_system_message", scaled)
+    monkeypatch.setattr(sip, "send_message", scaled)
 
 
 def _slow_relay(peer, code, reason):
@@ -88,6 +88,15 @@ def test_a_timeout_over_the_cloud_is_not_retried(monkeypatch):
     ok, msg, sent, count = run(_open(monkeypatch, None, ""))
     assert (ok, msg) == (False, hub_mod.DOOR_UNCONFIRMED)
     assert sent == 1, "the relay has the first MESSAGE: a retry may open the door twice"
+    assert count == 0
+
+
+@pytest.mark.parametrize("code, reason", [(408, "Request Timeout"), (504, "Server Time-out")])
+def test_a_408_or_504_from_the_relay_is_not_retried(monkeypatch, code, reason):
+    """The relay forwarded it and the door did not answer in time: it may still open."""
+    ok, msg, sent, count = run(_open(monkeypatch, code, reason))
+    assert (ok, msg) == (False, hub_mod.DOOR_UNCONFIRMED)
+    assert sent == 1, "a retry may open the door twice"
     assert count == 0
 
 

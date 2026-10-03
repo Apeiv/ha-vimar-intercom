@@ -8,18 +8,12 @@ Italian and are kept as they were written.
 
 ### Fixed
 
-- **Door over the cloud: no second open after a timeout.** When the door MESSAGE timed out (15 s), the hub
-  re-registered and sent it again, but over the cloud the relay already had the first one and can answer late
-  (~15.2 s in [#14](../../issues/14)): the door could open twice, 15 s apart, while the UI said it failed. Over
-  the cloud the door command now waits 20 s, and a timeout or a send error after the 407 is not retried: the
-  UI says the relay may still open it, so wait before trying again. Not registered, a send error before
-  anything left, or an error answer are still retried once. Local UDP keeps its timeout and retry.
-- **Door: one command at a time.** A second open (card, lock, button, HomeKit) while one is still waiting for
-  the relay returns *un'altra apertura è in corso* instead of sending another copy.
-- **Door: a 202 Accepted is not an open door.** Real opens answer 200; the relay's 202 was only seen with no
-  device behind the address ([#14](../../issues/14)), the MESSAGE held for later delivery. The door now reports
-  it as not confirmed, is not counted in `door_count`, is not retried, and a warning asks to report it if the
-  door did open. This holds on local UDP too: a 202 never says the door got it.
+- **Door over the cloud: no second open.** A timeout, a send error after the 407, or a 408/504 from the relay
+  is no longer retried: the relay may still deliver the first copy (late answers seen in [#14](../../issues/14)),
+  so the UI says to wait before trying again. The cloud timeout is now 20 s. Local UDP keeps its retry.
+- **Door: one command at a time.** A second tap while one is still waiting returns *un'altra apertura è in corso*.
+- **Door: a 202 Accepted is not an open door**, on the cloud or local UDP: reported as not confirmed, not counted,
+  not retried.
 
 ## [1.0.19] - 2026-10-02
 
