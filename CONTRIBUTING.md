@@ -31,7 +31,7 @@ cd ha-vimar-intercom
 pip install -r requirements-dev.txt
 ```
 
-Targets: Home Assistant **2024.1+**, Python **3.11+** (HA ships 3.11/3.12/3.13).
+Targets: Home Assistant **2025.10+**, Python **3.13+** (what HA 2025.10 ships; CI also runs 3.14).
 
 Runtime dependencies are deliberately minimal: `pycryptodome` and `requests` (the latter ships
 with Home Assistant, so only `pycryptodome` is listed in the manifest).
@@ -75,8 +75,10 @@ add a test — those are the parts that break silently on other plants.
 ## PR checklist
 
 - [ ] Tests pass, and new behaviour has a test
-- [ ] User-visible changes have an entry under `## [Unreleased]` in `CHANGELOG.md`
-      (not needed for changes to tests, docs or CI only)
+- [ ] The PR description has one or more `Changelog: <section> - <what the user sees>` lines
+      (sections: Enhancements, Bug fixes, Documentation, Security, Other changes), or `Changelog: none`,
+      plus a `Before you update: ...` line when users must act after updating. The template shows how;
+      the "PR text" check reads them. **Don't edit `CHANGELOG.md`**: it is written at release time from these lines
 - [ ] `manifest.json` version left alone: it changes only in `release/X.Y.Z` PRs
 - [ ] UI strings kept in sync across `strings.json`, `translations/it.json` and `translations/en.json`
 - [ ] No credentials, MAC addresses or raw QR payloads anywhere in the diff
