@@ -4,6 +4,8 @@ Thanks for taking the time to contribute. This integration was reverse-engineere
 on a single system (Elvox Tab 7S 2F+ WiFi, art. 40507), so reports and patches from
 other hardware are genuinely valuable — especially Tab 5S / 2FV2 / IP plants.
 
+Who reviews, merges, tests on which intercom and releases: [GOVERNANCE.md](GOVERNANCE.md).
+
 ## Ground rules
 
 **1. Never guess SIP commands or tokens.**

@@ -1,0 +1,24 @@
+# Code owners (GOVERNANCE.md): GitHub asks them to review the PRs that touch their paths.
+# The last matching pattern wins. Reviews from code owners are not required by the ruleset.
+#
+# A code owner needs Write access, or GitHub marks the line as invalid. Apeiv and m4r1k
+# have Triage today: their lines are commented out until they get Write.
+
+*                                                   @lollox80
+
+# SIP, door and actuators, phonebook: Lollo
+/custom_components/vimar_intercom/sip_*.py           @lollox80
+/custom_components/vimar_intercom/sdp.py             @lollox80
+/custom_components/vimar_intercom/lock.py            @lollox80
+/custom_components/vimar_intercom/button.py          @lollox80
+/custom_components/vimar_intercom/manifest.json      @lollox80
+/.github/                                            @lollox80
+
+# HomeKit and SRTP: m4r1k (with Write)
+# /custom_components/vimar_intercom/homekit_*.py     @m4r1k
+# /custom_components/vimar_intercom/srtp.py          @m4r1k
+
+# Card, /av and media: Apeiv (with Write)
+# /custom_components/vimar_intercom/www/             @Apeiv
+# /custom_components/vimar_intercom/av_*.py          @Apeiv
+# /custom_components/vimar_intercom/media_handler.py @Apeiv
