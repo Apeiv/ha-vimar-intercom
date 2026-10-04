@@ -12,6 +12,7 @@ import json
 import os
 import sys
 import types
+from pathlib import Path
 from urllib.parse import quote
 
 from custom_components.vimar_intercom import const as C
@@ -152,6 +153,10 @@ def open_av(views, hass, request=None, passive=False) -> asyncio.Task:
 
 # ─── aiohttp vero ──────────────────────────────────────────────────────────────
 
+def _translations(lang: str) -> dict:
+    return json.loads((Path(C.__file__).parent / "translations" / f"{lang}.json").read_text(encoding="utf-8"))
+
+
 async def start(rig):
     """Server vero su 127.0.0.1: le view, la pagina della card (/) e il suo hass finto
     (/state, /svc). Imposta rig.base, rig.views, rig.hass."""
@@ -175,10 +180,18 @@ async def start(rig):
             await hub.async_hangup()
             ok, msg = True, "Chiamata terminata"
         else:
-            ok, msg = await {"vimar_intercom.call": hub.async_call, "vimar_intercom.answer": hub.async_answer,
-                             "lock.unlock": hub.async_door, "button.press": hub.async_decline,
-                             "vimar_intercom.decline": hub.async_decline}[name]()
+            ok, msg, *code = await {"vimar_intercom.call": hub.async_call, "vimar_intercom.answer": hub.async_answer,
+                                    "lock.unlock": hub.async_door, "button.press": hub.async_decline,
+                                    "vimar_intercom.decline": hub.async_decline}[name]()
+            if name == "lock.unlock" and not ok:  # as HA's call_service error: English message plus the key
+                key, ph = f"door_{msg}", {"code": str(code[0])}
+                return web.json_response({"ok": False, "error": {
+                    "message": _translations("en")["exceptions"][key]["message"].format(**ph),
+                    "translation_domain": C.DOMAIN, "translation_key": key, "translation_placeholders": ph}})
         return web.json_response({"ok": ok, "result": msg})
+
+    async def translations(r):  # what hass.loadBackendTranslation fetches
+        return web.json_response(_translations(r.match_info["lang"]))
 
     av, aws = views.VimarAVStreamView(hass), views.VimarAudioWSView(hass)
     rings, photo = views.VimarRingsView(hass), views.VimarRingPhotoView(hass)
@@ -206,6 +219,7 @@ async def start(rig):
     app.router.add_static("/vimar_intercom", CARD_JS.parent)  # the card's modules, as HA serves www/
     app.router.add_get("/state", state)
     app.router.add_post("/svc/{d}/{s}", svc)
+    app.router.add_get("/translations/{lang}", translations)
     rig.http = web.AppRunner(app, handler_cancellation=True, shutdown_timeout=0.5)  # come HA
     await rig.http.setup()
     site = web.TCPSite(rig.http, "127.0.0.1", 0)

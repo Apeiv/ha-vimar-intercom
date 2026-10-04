@@ -221,9 +221,9 @@ def _register_services(hass: HomeAssistant) -> None:
 
     async def _svc_open_door(call: ServiceCall):
         hub = _entry_data(hass)["hub"]
-        ok, msg = await hub.async_door(
+        ok, result, code = await hub.async_door(
             target=call.data.get("target"), command=call.data.get("command"))
-        return {"ok": ok, "result": msg}
+        return {"ok": ok, "result": result, "code": code}
 
     async_register_admin_service(
         hass, DOMAIN, SERVICE_SEND_COMMAND, _svc_send_command,

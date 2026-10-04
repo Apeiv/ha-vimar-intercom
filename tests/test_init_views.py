@@ -289,10 +289,11 @@ def test_a_failed_switch_ends_the_call_and_an_exception_is_reported(views, monke
 
 def test_door_result_is_broadcast(views, monkeypatch):
     hub = ViewHub()
+    hub.results["door"] = (True, "opened", 200)
     assert _action(views, monkeypatch, hub, {"action": "door", "target": "55001"}) == [
-        {"type": "door", "msg": "door ok"}]
-    hub.results["door"] = (False, "403")
-    assert _action(views, monkeypatch, hub, {"action": "door"}) == [{"type": "error", "msg": "403"}]
+        {"type": "door", "msg": "opened", "code": 200}]
+    hub.results["door"] = (False, "error", 403)
+    assert _action(views, monkeypatch, hub, {"action": "door"}) == [{"type": "error", "msg": "error", "code": 403}]
     hub.results["door"] = RuntimeError("down")
     assert _action(views, monkeypatch, hub, {"action": "door"}) == [{"type": "error", "msg": "down"}]
 

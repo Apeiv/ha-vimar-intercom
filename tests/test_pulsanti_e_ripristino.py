@@ -45,8 +45,7 @@ sensor = importlib.import_module("custom_components.vimar_intercom.sensor")
 COMPONENT = Path(__file__).resolve().parents[1] / "custom_components" / "vimar_intercom"
 
 
-class _HAError(Exception):
-    pass
+from homeassistant.exceptions import HomeAssistantError as _HAError  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -68,7 +67,7 @@ class _Hub:
         return self.ok, "Nessuna chiamata in arrivo"
 
     async def async_door(self, target=None, command=None):
-        return self.ok, "Timeout"
+        return self.ok, "timeout", None
 
     async def async_call(self, target=None):
         return self.ok, "486"
