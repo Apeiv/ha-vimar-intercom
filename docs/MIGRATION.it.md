@@ -45,8 +45,8 @@ aggiungila di nuovo.
 
 - **Entità:** per Home Assistant sono entità nuove su un dispositivo nuovo, quindi nomi, aree e
   icone che avevi impostato sulle vecchie non passano. Anche gli entity id possono cambiare (la
-  vecchia porta era `lock.vimar_intercom_door`, la nuova si chiama *Serratura*): controlla i tuoi in
-  [Entità](ENTITIES.it.md). La cronologia passa solo dove un id viene uguale per caso.
+  telecamera, per dirne una, era `camera.vimar_intercom_intercom` e ora è `camera.intercom`):
+  controlla i tuoi in [Entità](ENTITIES.it.md). La cronologia passa solo dove un id viene uguale per caso.
 - **Servizi:** i vecchi `play_video_message`, `mark_video_message_read`, `delete_video_message`,
   `delete_all_video_messages` e `clear_missed_calls` qui non hanno ancora un equivalente. Questa
   integrazione ha `call`, `answer`, `decline`, `hangup`, `open_door` e qualche altro, elencati in
@@ -59,7 +59,7 @@ aggiungila di nuovo.
   `vimar_intercom_video_message` ora è `vimar_intercom_videomessage`, anche lui con un payload
   diverso. Dettagli in [Eventi](ENTITIES.it.md#eventi).
 - **Non ci sono (ancora):** l'elenco e la riproduzione dei videomessaggi, il contatore delle chiamate
-  perse (c'è invece un sensore dell'ultima chiamata persa), i pulsanti telecamera successiva/precedente
+  perse (il sensore dell'ultima chiamata persa ha un attributo `totale`, contato dall'avvio), i pulsanti telecamera successiva/precedente
   e il pulsante di riconnessione.
 - **Card della dashboard:** il tipo resta `custom:vimar-intercom-card` e si carica ancora da sola,
   senza niente da aggiungere in Risorse. Le opzioni però sono diverse (`title`, `device_id`,

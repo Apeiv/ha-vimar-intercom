@@ -43,8 +43,8 @@ integration only knows version 1 and has no migration for it, so the old entry s
 ## What changes
 
 - **Entities:** Home Assistant sees them as new entities on a new device, so names, areas and
-  icons you set on the old ones don't carry over. Entity ids may differ too (the old door was
-  `lock.vimar_intercom_door`, the new one is named *Serratura*): check yours against
+  icons you set on the old ones don't carry over. Entity ids may differ too (the camera, for one, was
+  `camera.vimar_intercom_intercom` and is now `camera.intercom`): check yours against
   [Entities](ENTITIES.md). History only carries over where an id happens to come out the same.
 - **Services:** the old `play_video_message`, `mark_video_message_read`, `delete_video_message`,
   `delete_all_video_messages` and `clear_missed_calls` have no equivalent here yet. This
@@ -56,8 +56,8 @@ integration only knows version 1 and has no migration for it, so the old entry s
   caller) sensor. `vimar_intercom_missed_call` exists but with a different payload, and the old
   `vimar_intercom_video_message` is now `vimar_intercom_videomessage`, also with a different
   payload. Details in [Events](ENTITIES.md#events).
-- **Not here (yet):** the video-message list and playback, the missed-calls counter (there is a
-  last-missed-call sensor instead), the next/previous camera buttons and the reconnect button.
+- **Not here (yet):** the video-message list and playback, the missed-calls counter (the last-missed-call
+  sensor has a `totale` attribute, counted since startup), the next/previous camera buttons and the reconnect button.
 - **Dashboard card:** the type is still `custom:vimar-intercom-card` and it still loads by itself,
   with nothing to add under Resources. The options are different, though (`title`, `device_id`,
   `show_actuators` and `hidden_entities` are ignored), so the simplest fix is to delete the old card
