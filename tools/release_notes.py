@@ -9,7 +9,7 @@ and is reported so the text can be fixed before the release.
 
     python tools/release_notes.py --version 1.0.20                      # print both, change nothing
     python tools/release_notes.py --version 1.0.20 --write-changelog --notes-file notes.md
-    python tools/release_notes.py --version 1.0.19.1 --range v1.0.19..hotfix/1.0.19.1   # a hotfix
+    python tools/release_notes.py --version 1.0.21 --prs 140            # a hotfix: the fix PR(s) by number
 
 Needs git and an authenticated `gh` (it reads the PR descriptions).
 """
@@ -138,14 +138,18 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--version", required=True, help="e.g. 1.0.20")
     ap.add_argument("--range", help="git range (default: <last tag>..origin/main)")
+    ap.add_argument("--prs", help="comma-separated PR numbers instead of a range (a hotfix cherry-picks its fix)")
     ap.add_argument("--repo", default="ha-vimar/ha-vimar-intercom")
     ap.add_argument("--date", default=datetime.date.today().isoformat())
     ap.add_argument("--write-changelog", action="store_true", help="insert the section into CHANGELOG.md")
     ap.add_argument("--notes-file", help="write the GitHub release notes there")
     args = ap.parse_args(argv)
 
-    rng = args.range or f"{_run('git', 'describe', '--tags', '--abbrev=0', 'origin/main').strip()}..origin/main"
-    numbers = merged_numbers(_run("git", "log", "--first-parent", "--merges", "--format=%s", rng))
+    if args.prs:
+        rng, numbers = "PRs given", [int(n) for n in args.prs.split(",") if n.strip()]
+    else:
+        rng = args.range or f"{_run('git', 'describe', '--tags', '--abbrev=0', 'origin/main').strip()}..origin/main"
+        numbers = merged_numbers(_run("git", "log", "--first-parent", "--merges", "--format=%s", rng))
     notes = collect(fetch_prs(numbers, args.repo))
     section = changelog_section(args.version, args.date, notes, args.repo)
     rel = release_notes(notes)

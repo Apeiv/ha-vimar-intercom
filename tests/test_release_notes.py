@@ -93,6 +93,19 @@ def test_only_merge_commits_of_prs_count():
     assert rn.merged_numbers(log) == [124, 116]
 
 
+def test_a_hotfix_takes_the_prs_given_without_reading_git(monkeypatch, capsys):
+    calls = []
+
+    def fake_run(*cmd):
+        calls.append(cmd)
+        return '{"number": 140, "title": "fix", "headRefName": "fix/door", "body": "Changelog: Bug fixes - Door"}'
+
+    monkeypatch.setattr(rn, "_run", fake_run)
+    assert rn.main(["--version", "1.0.21", "--prs", "140"]) == 0
+    assert all(c[0] == "gh" for c in calls), "no git log for a hotfix"
+    assert "Door (#140)" in capsys.readouterr().out
+
+
 def test_main_reads_git_and_gh_and_writes_the_files(tmp_path, monkeypatch, capsys):
     calls = []
 
