@@ -9,7 +9,8 @@ NAL del WebSocket su un canvas (`info().video === "canvas"`). `?nowc` toglie
 VideoDecoder (browser senza WebCodecs), `?badwc` ne mette uno che fallisce la
 configurazione (codec non supportato): in entrambi i casi la card deve tornare a /av.
 `?flakywc` ne mette uno che si rompe al 10° chunk (dati corrotti): la card resta sul
-canvas e riparte dal prossimo IDR.
+canvas e riparte dal prossimo IDR. `&slowwc` (via `query`) ne mette uno che per il primo
+secondo tiene i chunk in coda (decoder software a freddo, come sul runner della CI, #130).
 `?ios` dà alla pagina lo user agent di un iPhone. `?layout=sotto` (o popup) passa `layout` in setConfig. `ha-form` è un finto minimo (label +
 input/select nativi, `value-changed` come quello vero) per provare l'editor visuale.
 """
@@ -55,6 +56,18 @@ if (location.search.includes("flakywc") && window.VideoDecoder) {  // si rompe a
       if (++this._n === 10 && !T.wcBroken++) { super.close(); this._err(new DOMException("dati corrotti", "EncodingError")); return; }
       super.decode(c);
     }
+  };
+}
+if (location.search.includes("slowwc") && window.VideoDecoder) {  // parte lento: 1 s di chunk in coda
+  const VD = window.VideoDecoder;
+  window.VideoDecoder = class extends VD {
+    configure(c) {
+      super.configure(c);
+      this._held = [];
+      setTimeout(() => { const h = this._held; this._held = null; if (h && this.state === "configured") h.forEach((k) => super.decode(k)); }, 1000);
+    }
+    decode(c) { this._held ? this._held.push(c) : super.decode(c); }
+    get decodeQueueSize() { return (this._held?.length || 0) + super.decodeQueueSize; }
   };
 }
 if (window.AudioContext && navigator.mediaDevices) {  // microfono finto, con il tempo del permesso

@@ -821,6 +821,33 @@ def test_decoder_gets_avc_description_and_length_prefixed_nals(monkeypatch, engi
 
 
 @pytest.mark.parametrize("engine", ["chromium"], indirect=True)  # WebKit di Playwright: niente WebCodecs
+def test_decoder_lento_a_partire_non_perde_il_primo_gop(monkeypatch, engine):  # noqa: F811
+    """#130: in CI il decoder software parte lento e la coda passa 8 chunk prima del primo
+    fotogramma; il player buttava i P fino al prossimo IDR e il video partiva un GOP dopo
+    (3 s). Il decoder finto tiene la coda per 1 s: poi il video deve andare avanti, non
+    fermarsi a IDR + 8 P fino all'IDR dopo."""
+    if not hm.FFMPEG:
+        pytest.skip("serve ffmpeg per il video della targa finta")
+    aus = hm.access_units(45)  # IDR ogni 3 s, come la targa
+    monkeypatch.setattr(hm, "access_units", lambda gop=15: aus)
+
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            await rig.register()
+            rig.answer(media_on=True)
+            async with Card(rig, engine, query="&slowwc") as c:
+                await c.until(IDLE)
+                await c.tap("view")
+                await c.until("info().player?.frames > 0", 8)
+                await c.until("info().player?.frames >= 20", 2)  # ben prima dell'IDR dopo (3 s)
+                t, p = await c.T(), (await c.info())["player"]
+                assert p["resets"] == 0 and t["av"] == [] and not t["errors"], (p, t)
+                await c.tap("hangup")
+                await c.until(IDLE)
+    run(s())
+
+
+@pytest.mark.parametrize("engine", ["chromium"], indirect=True)  # WebKit di Playwright: niente WebCodecs
 def test_pacchetto_perso_a_meta_gop_niente_video_smerigliato(monkeypatch, engine):  # noqa: F811
     """Dal campo (40515 via cloud, 2026-09-28): un pacchetto RTP perso per strada dava un NAL
     col buco e il video smerigliato (righe nere, sbavate) fino all'IDR dopo, ~3 s. La targa
