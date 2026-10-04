@@ -264,12 +264,20 @@ async def _grab(q: asyncio.Queue) -> None:
     global last_jpeg, frames
     try:
         proc = await asyncio.create_subprocess_exec(
-            # Solo i fotogrammi completi (IDR, ~ogni 3 s): autonomi, quindi puliti
-            # anche dopo una perdita di pacchetti, che sui P-frame dà immagini
-            # sgranate. probesize minimo e un thread: il JPEG esce appena arriva l'IDR.
+            # JPEG solo dei fotogrammi completi (I/IDR, ~ogni 3 s): autonomi, quindi puliti
+            # anche dopo una perdita di pacchetti, che sui P-frame dà immagini sgranate.
+            # probesize minimo e un thread: il JPEG esce appena arriva l'IDR.
             "ffmpeg", "-loglevel", "error", "-probesize", "4096", "-analyzeduration", "0",
-            "-threads", "1", "-skip_frame", "nokey",
-            "-f", "h264", "-i", "pipe:0", "-pix_fmt", "yuvj420p",
+            "-threads", "1", "-f", "h264", "-i", "pipe:0",
+            # Si decodificano anche i P (~1% di un core) e li scarta il select: con
+            # -skip_frame nokey un decoder che riordina teneva l'IDR fino al successivo,
+            # mai con un IDR solo per squillo (#129).
+            "-vf", "select=eq(pict_type\\,I)",
+            # image2pipe va a fps costanti: duplicherebbe l'I per riempire i buchi.
+            "-fps_mode", "passthrough",
+            # Encoder: col frame threading terrebbe ogni JPEG fino al fotogramma dopo.
+            "-threads", "1",
+            "-pix_fmt", "yuvj420p",
             "-f", "image2pipe", "-c:v", "mjpeg", "-q:v", "5", "-flush_packets", "1", "pipe:1",
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except OSError as e:

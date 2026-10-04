@@ -26,12 +26,14 @@ ffmpeg_vero = [
 ]
 
 
-def _nals() -> list[bytes]:
-    """40 fotogrammi (4 s a 10 fps, IDR ogni 10), un NAL per fotogramma (niente slice),
-    SPS/PPS solo in testa: gli IDR dopo il primo si decodificano solo con quelli in cache."""
+def _nals(*x264: str) -> list[bytes]:
+    """40 fotogrammi (4 s a 10 fps; di default IDR ogni 10, baseline: `x264` li sostituisce),
+    un NAL per fotogramma (niente slice), SPS/PPS solo in testa: gli IDR dopo il primo si
+    decodificano solo con quelli in cache."""
     raw = subprocess.run(
         ["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=320x240:rate=10",
-         "-t", "4", "-g", "10", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-profile:v", "baseline", "-threads", "1",
+         "-t", "4", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-threads", "1",
+         *(x264 or ("-g", "10", "-profile:v", "baseline")),
          "-bsf:v", "h264_mp4toannexb", "-f", "h264", "pipe:1"],
         check=True, capture_output=True).stdout
     return [n for n in re.split(b"\x00\x00\x00\x01|\x00\x00\x01", raw) if n]
@@ -58,6 +60,27 @@ def test_grabber_tiene_l_ultimo_jpeg(monkeypatch):
     frame = asyncio.run(run())
     assert frame and frame[:2] == b"\xff\xd8" and frame[-2:] == b"\xff\xd9"
     assert frame_grabber.last_jpeg is None  # fine chiamata: niente foto vecchie
+
+
+@ffmpeg_vero[0]
+@ffmpeg_vero[1]
+def test_foto_dal_primo_idr_con_riordino_e_un_solo_idr():
+    """#129: un solo IDR per squillo (40517) e un decoder che riordina (qui B-frame): la
+    foto deve uscire dal primo IDR, con lo stdin di ffmpeg ancora aperto."""
+    nals = _nals("-g", "1000", "-sc_threshold", "0", "-profile:v", "main", "-bf", "1")
+    proto = SimpleNamespace(frame_sink=None, sps_pps=lambda own_only=False: None)
+
+    async def run():
+        frame_grabber.start(proto)
+        try:
+            await _feed(proto, nals[:12], fps=10)  # SPS, PPS, SEI, IDR e 8 P/B: ~1 s
+            return await frame_grabber.wait_frame(timeout=3)
+        finally:
+            frame_grabber.stop(proto)
+            await asyncio.sleep(0.1)  # lascia chiudere ffmpeg
+
+    frame = asyncio.run(run())
+    assert frame and frame[:2] == b"\xff\xd8"
 
 
 # ─── ffmpeg finto: un JPEG per ogni IDR, senza processo ──────────────────────────
