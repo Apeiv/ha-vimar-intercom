@@ -18,7 +18,7 @@
 - **Cloud phonebook**: needs a `token`. Plants that answer `GET_INIT_STATUS` with the long form hand it
   over directly, and the phonebook can then be downloaded with a single authenticated request — see
   [RUBRICA.md](RUBRICA.md) §0-bis, verified on a 40515. Since 1.0.12 the options menu does it:
-  **"Download the phonebook from the Vimar cloud"** ([#5](https://github.com/lollox80/ha-vimar-intercom/issues/5)); the token is read from the
+  **"Download the phonebook from the Vimar cloud"** ([#5](https://github.com/ha-vimar/ha-vimar-intercom/issues/5)); the token is read from the
   plant each time and never stored. Plants that answer with the short form (including the development
   one) don't carry a token: there use the download from the intercom on the LAN, or the manual extraction.
 - **By-me actuators** (e.g. stair lights on By-me home automation): these may not respond over SIP even

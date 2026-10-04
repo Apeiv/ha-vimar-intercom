@@ -21,7 +21,7 @@
 - **Rubrica cloud**: serve un `token`. Gli impianti che rispondono al `GET_INIT_STATUS` in forma lunga
   lo consegnano direttamente, e a quel punto la rubrica si scarica con una sola richiesta autenticata —
   vedi [RUBRICA.md](RUBRICA.md) §0-bis, verificato su un 40515. Dalla 1.0.12 lo fa il menu delle opzioni:
-  **"Scarica la rubrica dal cloud Vimar"** ([#5](https://github.com/lollox80/ha-vimar-intercom/issues/5)); il token si rilegge dall'impianto ogni
+  **"Scarica la rubrica dal cloud Vimar"** ([#5](https://github.com/ha-vimar/ha-vimar-intercom/issues/5)); il token si rilegge dall'impianto ogni
   volta e non viene salvato. Gli impianti che rispondono in forma corta (compreso quello di sviluppo) non
   hanno il token: lì si usa lo scaricamento dal citofono in LAN, o l'estrazione manuale.
 - **Attuatori By‑me** (es. luci scala di domotica By‑me): potrebbero non rispondere via SIP anche se elencati in rubrica.

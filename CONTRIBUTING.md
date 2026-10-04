@@ -26,7 +26,7 @@ in its description.
 ## Development setup
 
 ```bash
-git clone https://github.com/lollox80/ha-vimar-intercom
+git clone https://github.com/ha-vimar/ha-vimar-intercom
 cd ha-vimar-intercom
 pip install -r requirements-dev.txt
 ```

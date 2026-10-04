@@ -36,7 +36,7 @@ Impostazioni → Dispositivi e servizi → Aggiungi integrazione → **Vimar Int
   cloud/local proxy, GID, MAC, planttype.
 - **Manuale**: inserisci `sip_user`, `sip_password`, `sip_domain`, `cloud_proxy`.
 
-**Trovato in rete** (dalla 1.0.12, [#6](https://github.com/lollox80/ha-vimar-intercom/issues/6)): il Tab si annuncia via mDNS
+**Trovato in rete** (dalla 1.0.12, [#6](https://github.com/ha-vimar/ha-vimar-intercom/issues/6)): il Tab si annuncia via mDNS
 (`_eipvdes._tcp`, lo stesso servizio che cerca l'app VIEW) e Home Assistant lo propone tra i
 *Rilevati*. Servono ancora il QR o le credenziali (l'annuncio non porta segreti), ma l'indirizzo del
 citofono e il dominio SIP locale arrivano dal Tab stesso. Conta sugli impianti il cui QR dice
@@ -125,7 +125,7 @@ il Tab ti racconta di ritorno*.
   l'ha segnalato.
 
 Se lo fai funzionare su un modello diverso, o sullo stesso con risultati diversi, apri una
-[segnalazione di compatibilità hardware](https://github.com/lollox80/ha-vimar-intercom/issues/new?template=compatibility_report.yml) — anche
+[segnalazione di compatibilità hardware](https://github.com/ha-vimar/ha-vimar-intercom/issues/new?template=compatibility_report.yml) — anche
 i casi in cui ha funzionato tutto al primo colpo sono utili quanto quelli in cui si è rotto qualcosa.
 
 

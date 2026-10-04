@@ -37,7 +37,7 @@ Settings → Devices & services → Add integration → **Vimar Intercom**.
   cloud/local proxy, GID, MAC and plant type.
 - **Manual**: enter `sip_user`, `sip_password`, `sip_domain` and `cloud_proxy` yourself.
 
-**Found on the network** (since 1.0.12, [#6](https://github.com/lollox80/ha-vimar-intercom/issues/6)): the Tab announces itself over mDNS
+**Found on the network** (since 1.0.12, [#6](https://github.com/ha-vimar/ha-vimar-intercom/issues/6)): the Tab announces itself over mDNS
 (`_eipvdes._tcp`, the same service the VIEW app looks for), and Home Assistant shows it under
 *Discovered*. The QR or the credentials are still needed (the announcement carries no secret), but
 the intercom's address and the local SIP domain come from the Tab itself. This matters on plants
@@ -124,7 +124,7 @@ practical conclusion: *what matters is the address you send to, and how much the
 - Still open on the 40515: **voicemail switches on but not off**, under investigation by the reporter.
 
 Got it running on a different model, or on the same one with different results? Please open a
-[hardware compatibility report](https://github.com/lollox80/ha-vimar-intercom/issues/new?template=compatibility_report.yml) — reports where
+[hardware compatibility report](https://github.com/ha-vimar/ha-vimar-intercom/issues/new?template=compatibility_report.yml) — reports where
 everything just worked are as useful as the ones where something broke.
 
 
