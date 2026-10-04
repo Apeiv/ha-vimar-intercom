@@ -30,7 +30,7 @@
 | Intercom Squilli | `sensor` (contatore) | squilli dall'avvio |
 | Intercom Chiamate | `sensor` (contatore) | chiamate connesse |
 | Intercom Durata Ultima Chiamata | `sensor` (s) | durata ultima chiamata |
-| Intercom Ultima Apertura | `sensor` (timestamp) | ultima apertura porta (attr: targa, esito, contatore) |
+| Intercom Ultima Apertura | `sensor` (timestamp) | ultima apertura porta (attr: targa, esito come il `result` di `open_door`, codice SIP, contatore) |
 | Intercom Ultimo Comando | `sensor` | esito ultimo `send_command` |
 | Intercom Ultimo Messaggio Ricevuto | `sensor` | ultimo SIP MESSAGE dal citofono |
 

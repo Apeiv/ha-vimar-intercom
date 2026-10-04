@@ -140,8 +140,13 @@ const mkHass = (status, lastRing = {}, ringTime = null) => ({
     T.calls.push(d + "." + sv);
     if (["switch", "select", "text", "homeassistant"].includes(d)) { (T.settings ||= []).push([d, sv, data]); return { context: {} }; }
     const j = await (await fetch(`/svc/${d}/${sv}`, { method: "POST" })).json();
-    if (d === "lock" && !j.ok) throw new Error(j.result);
+    if (d === "lock" && !j.ok) throw j.error;  // as HA: {message (English), translation_key, ...}
     return { context: {}, response: j };
+  },
+  // as HA: the integration's strings in the user's language (it), looked up by full key
+  loadBackendTranslation: async () => {
+    const t = await (await fetch("/translations/it")).json();
+    return (k, p = {}) => k.split(".").slice(2).reduce((o, x) => o?.[x], t)?.replace(/{([a-z_]+)}/g, (_, n) => p[n]);
   },
   // come HA: firma anche la query; `?signs` numera le firme (x1, x2…) per distinguerle
   callWS: async (m) => ({ path: m.path + (m.path.includes("?") ? "&" : "?") + "authSig=x" + (QS.has("signs") ? (T.signs = (T.signs || 0) + 1) : "") }),

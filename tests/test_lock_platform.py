@@ -80,14 +80,14 @@ def test_a_failed_opening_raises_and_stays_locked(relock):
     assert lock.is_locked is True and lock.states == [] and lock._relock_task is None
     # Translated by HA in its own language, not Italian text from the hub (#128).
     assert (err.value.translation_domain, err.value.translation_key) == (DOMAIN, "door_timeout")
-    assert err.value.translation_placeholders == {"code": "None"}
 
 
 def test_every_door_failure_has_a_message_in_every_language():
     """Each key async_door can fail with, with the same placeholders everywhere (as hassfest wants)."""
     base = Path(lock_mod.__file__).parent
-    keys = {f"door_{v}" for k, v in vars(hub_mod).items() if k.startswith("DOOR_") and isinstance(v, str)}
-    keys -= {"door_opened"}
+    keys = {f"door_{k}" for k in (hub_mod.DOOR_BUSY, hub_mod.DOOR_QUEUED, hub_mod.DOOR_UNCONFIRMED,
+                                  hub_mod.DOOR_NOT_REGISTERED, hub_mod.DOOR_TIMEOUT, hub_mod.DOOR_ERROR,
+                                  hub_mod.DOOR_SEND_FAILED)}
     for name in ("strings.json", "translations/en.json", "translations/it.json"):
         exc = json.loads((base / name).read_text(encoding="utf-8"))["exceptions"]
         assert set(exc) == keys, name

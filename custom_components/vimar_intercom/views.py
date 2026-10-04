@@ -271,9 +271,9 @@ class VimarAudioWSView(HomeAssistantView):
             target = data.get("target")  # "55001" (esterno) or "55002" (interno)
             _LOGGER.info("Door action: target=%s", target)
             try:
-                ok, m, code = await hub.async_door(target=target)
+                ok, result, code = await hub.async_door(target=target)
                 t = "door" if ok else "error"
-                await self._broadcast({"type": t, "msg": m, "code": code})
+                await self._broadcast({"type": t, "msg": result, "code": code})
             except Exception as e:
                 await ws.send_str(json.dumps({"type": "error", "msg": str(e)}))
 

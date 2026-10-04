@@ -30,7 +30,7 @@
 | Intercom Rings | `sensor` (counter) | Rings since startup |
 | Intercom Calls | `sensor` (counter) | Connected calls |
 | Intercom Last Call Duration | `sensor` (s) | Duration of the last call |
-| Intercom Last Door Open | `sensor` (timestamp) | Last door opening (attributes: unit, outcome, counter) |
+| Intercom Last Door Open | `sensor` (timestamp) | Last door opening (attributes: unit, outcome as in `open_door`'s `result`, SIP code, counter) |
 | Intercom Last Command | `sensor` | Outcome of the last `send_command` |
 | Intercom Last Received Message | `sensor` | Last SIP MESSAGE from the intercom |
 
