@@ -150,12 +150,26 @@ def test_a_202_to_an_actuator_command_is_not_a_success_either(monkeypatch):
     async def s():
         async with Rig(monkeypatch, "tls") as rig:
             await rig.register()
-            _slow_relay(rig.peer, 202, "Accepted")  # real clock: 1.52 s, inside the 15 s timeout
+            _slow_relay(rig.peer, 202, "Accepted")  # real clock: 1.52 s, inside the timeout
             ok, msg = await rig.hub.async_send_command("OPEN_X", target="55003")
             await asyncio.sleep(0.5)  # room for a resend to show up
             signed = rig.peer.got(lambda m: is_("MESSAGE")(m) and "proxy-authorization" in m.hdrs)
             assert (ok, msg) == (False, hub_mod.DOOR_QUEUED), f"202 Accepted reported as a command done: {msg!r}"
             assert rig.hub.stats["last_command_result"] == hub_mod.DOOR_QUEUED
             assert len(signed) == 1
+
+    run(s())
+
+
+def test_a_late_200_to_an_actuator_command_is_a_command_done(monkeypatch):
+    """#140: the actuators, switches and send_command wait as long as the door over the cloud."""
+
+    async def s():
+        async with Rig(monkeypatch, "tls") as rig:
+            await rig.register()
+            _fast_clock(monkeypatch)
+            _slow_relay(rig.peer, 200, "OK")
+            ok, msg = await rig.hub.async_send_command("OPEN_X", target="55003")
+            assert ok, f"a 200 after {RELAY_DELAY} s reported as failed: {msg!r}"
 
     run(s())

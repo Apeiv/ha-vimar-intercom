@@ -364,6 +364,19 @@ def test_a_cancelled_door_caller_keeps_the_guard_until_the_message_ends(hub, mon
     assert asyncio.run(hub.async_door(target="55001"))[0], "the guard is released afterwards"
 
 
+def test_a_command_on_local_udp_still_waits_15_s(hub, monkeypatch):
+    sent = []
+
+    async def send_message(uri, body, extra_headers=None, timeout=None):
+        sent.append(timeout)
+        return True, "OK (200)", 200
+
+    monkeypatch.setattr(R, "USE_LOCAL_UDP", True)
+    monkeypatch.setattr(sip, "send_message", send_message)
+    assert asyncio.run(hub.async_send_command("PING", target="55001")) == (True, "OK (200)")
+    assert sent == [15]
+
+
 def test_a_command_that_raises_is_reported_as_a_failure(hub, monkeypatch):
     async def send_message(uri, body, extra_headers=None, timeout=15):
         raise OSError("socket closed")
