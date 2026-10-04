@@ -48,6 +48,7 @@ def start(video_proto) -> None:
     # foto già presa resta finché non ne esce una nuova (la chiamata è la stessa);
     # anche il clip dello squillo continua.
     _cancel(video_proto)
+    _LOGGER.debug("Foto: grabber avviato")
     _proto = video_proto
     q: asyncio.Queue = asyncio.Queue(maxsize=600)
     # SPS/PPS della chiamata prima: ffmpeg decodifica dal primo IDR anche se la
@@ -75,6 +76,7 @@ def _cancel(video_proto) -> None:
     if video_proto:
         video_proto.frame_sink = None
     if _grabber:
+        _LOGGER.debug("Foto: grabber fermato")
         _grabber.cancel()
         _grabber = None
 
@@ -269,7 +271,7 @@ async def _grab(q: asyncio.Queue) -> None:
             "-threads", "1", "-skip_frame", "nokey",
             "-f", "h264", "-i", "pipe:0", "-pix_fmt", "yuvj420p",
             "-f", "image2pipe", "-c:v", "mjpeg", "-q:v", "5", "-flush_packets", "1", "pipe:1",
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except OSError as e:
         _LOGGER.warning("Foto: ffmpeg non avviabile (%s)", e)
         return
@@ -282,7 +284,18 @@ async def _grab(q: asyncio.Queue) -> None:
         except (BrokenPipeError, ConnectionResetError):
             pass
 
+    err = b""  # ultimi byte di stderr; va letto sempre, o ffmpeg si blocca a pipe piena
+
+    async def drain():
+        nonlocal err
+        while chunk := await proc.stderr.read(4096):
+            err = (err + chunk)[-2048:]
+
     feeder = asyncio.create_task(feed())
+    drainer = asyncio.create_task(drain())
+    loop = asyncio.get_running_loop()
+    t0 = loop.time()
+    n = 0  # JPEG di questo grabber (frames vale per tutta la chiamata)
     buf = b""
     try:
         while chunk := await proc.stdout.read(65536):
@@ -295,10 +308,23 @@ async def _grab(q: asyncio.Queue) -> None:
                 if 0 <= start < end:
                     last_jpeg = buf[start:end + 2]
                     frames += 1
+                    n += 1
+                    _LOGGER.debug("Foto: JPEG di %d byte dopo %.1f s dall'avvio del grabber",
+                                  len(last_jpeg), loop.time() - t0)
                 buf = buf[end + 2:]
+        with contextlib.suppress(TimeoutError):  # stdout chiuso: sta uscendo, servono rc e coda di stderr
+            await asyncio.wait_for(asyncio.gather(proc.wait(), drainer), 2)
     finally:
         feeder.cancel()
+        drainer.cancel()
         proc.stdin.close()
-        if proc.returncode is None:
+        killed = proc.returncode is None
+        if killed:
             proc.kill()
             await proc.wait()
+        # Uscito da solo con errore e senza una foto: da vedere anche senza debug.
+        failed = bool(proc.returncode) and not killed and not n
+        _LOGGER.log(logging.WARNING if failed else logging.DEBUG,
+                    "Foto: ffmpeg %s (rc=%s, %d JPEG), stderr: %s",
+                    "terminato" if killed else "uscito", proc.returncode, n,
+                    err.decode(errors="replace").strip() or "-")
