@@ -313,7 +313,7 @@ def test_un_attuatore_in_coda_sul_relay_non_e_riuscito():
     hub = _Hub()
 
     async def queued(**_kw):
-        return False, button.DOOR_QUEUED
+        return False, button.QUEUED
 
     hub.async_send_command = queued
     b = button.VimarActuatorButton(hub, "e1", {"name": "Luce scala", "msg": "OPEN_2", "target": "55001"})

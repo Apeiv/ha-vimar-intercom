@@ -418,7 +418,7 @@ def test_voicemail_delay_select_sets_the_panel_value(ha_error, monkeypatch):
         asyncio.run(s.async_select_option("20"))
 
     async def queued(name, value):
-        return False, select.DOOR_QUEUED
+        return False, select.QUEUED
 
     hub.async_set_apt_param = queued
     with pytest.raises(_HAError) as err:

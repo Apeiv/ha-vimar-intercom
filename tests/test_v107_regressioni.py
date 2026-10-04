@@ -266,7 +266,7 @@ def test_install_e_idempotente(logger_isolato):
 
 def test_comando_in_coda_sul_relay_non_cambia_lo_stato():
     """Un 202 dal relay non è un comando riuscito: errore tradotto, stato fermo."""
-    sw = _switch(_Hub(ok=False, msg=hub_mod.DOOR_QUEUED))
+    sw = _switch(_Hub(ok=False, msg=hub_mod.QUEUED))
     with pytest.raises(_HAError) as err:
         asyncio.run(sw.async_turn_on())
     assert err.value.translation_key == "command_queued"

@@ -381,10 +381,10 @@ def test_a_queued_set_apt_param_still_waits_for_the_panels_reply(plain_hub, monk
     async def queued(**_kw):
         for reply in replies:
             asyncio.get_running_loop().call_soon(plain_hub._handle_incoming_message, reply)
-        return False, hub_mod.DOOR_QUEUED
+        return False, hub_mod.QUEUED
 
     monkeypatch.setattr("secrets.token_hex", lambda n: "abc")
     monkeypatch.setattr(plain_hub, "async_send_command", queued)
     assert asyncio.run(plain_hub.async_set_apt_param("vm_timeout", 30, timeout=1)) == (True, "ERR_NONE")
     replies.clear()
-    assert asyncio.run(plain_hub.async_set_apt_param("vm_timeout", 30, timeout=0.01)) == (False, hub_mod.DOOR_QUEUED)
+    assert asyncio.run(plain_hub.async_set_apt_param("vm_timeout", 30, timeout=0.01)) == (False, hub_mod.QUEUED)

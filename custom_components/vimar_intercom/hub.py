@@ -112,7 +112,8 @@ DOOR_TLS_TIMEOUT = 20  # door MESSAGE over the cloud: the relay answered after ~
 # "queued" and "unconfirmed" are not retried: the relay may still deliver them.
 DOOR_OPENED = "opened"
 DOOR_BUSY = "busy"
-DOOR_QUEUED = "queued"
+QUEUED = "queued"  # a 202: also the result of non-door commands
+DOOR_QUEUED = QUEUED
 DOOR_UNCONFIRMED = "unconfirmed"
 DOOR_NOT_REGISTERED = "not_registered"
 DOOR_TIMEOUT = "timeout"
@@ -1218,7 +1219,7 @@ class VimarIntercomHub(PlantMessages, RingMedia):
                 "Command to %s: the relay answered 202 Accepted (queued, no device confirmed it), reported as not done",
                 uri,
             )
-            ok, msg = False, DOOR_QUEUED
+            ok, msg = False, QUEUED
         self.stats["last_command_time"] = self._now()
         self.stats["last_command_body"] = body
         self.stats["last_command_target"] = target
@@ -1490,12 +1491,12 @@ class VimarIntercomHub(PlantMessages, RingMedia):
         try:
             ok, msg = await self.async_send_command(
                 body=body, target=R.PICG_TARGET, header_name="Panda", header_value="set")
-            if not ok and msg != DOOR_QUEUED:  # queued: the panel's own reply still decides
+            if not ok and msg != QUEUED:  # queued: the panel's own reply still decides
                 return False, msg
             try:
                 err = await asyncio.wait_for(fut, timeout)
             except TimeoutError:
-                return False, DOOR_QUEUED if not ok else "Nessuna risposta dal citofono"
+                return False, QUEUED if not ok else "Nessuna risposta dal citofono"
         finally:
             self._apt_param_waiters.pop(msgid, None)
         if err != "ERR_NONE":
@@ -1518,7 +1519,7 @@ class VimarIntercomHub(PlantMessages, RingMedia):
         if ok and code == 202:
             # 202 Accepted to a MESSAGE: the cloud relay took it but no device
             # did, so it holds it for later delivery (#14). Not an `exists`.
-            return "queued"
+            return QUEUED
         if ok:
             return "exists"            # 2xx: l'indirizzo esiste
         if code == 404:
