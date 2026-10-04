@@ -9,7 +9,7 @@ NAL del WebSocket su un canvas (`info().video === "canvas"`). `?nowc` toglie
 VideoDecoder (browser senza WebCodecs), `?badwc` ne mette uno che fallisce la
 configurazione (codec non supportato): in entrambi i casi la card deve tornare a /av.
 `?flakywc` ne mette uno che si rompe al 10° chunk (dati corrotti): la card resta sul
-canvas e riparte dal prossimo IDR. `&slowwc` (via `query`) ne mette uno che per il primo
+canvas e riparte dal prossimo IDR. `&swwc` forza hardwareAcceleration "prefer-software". `&slowwc` (via `query`) ne mette uno che per il primo
 secondo tiene i chunk in coda (decoder software a freddo, come sul runner della CI, #130).
 `?ios` dà alla pagina lo user agent di un iPhone. `?layout=sotto` (o popup) passa `layout` in setConfig. `ha-form` è un finto minimo (label +
 input/select nativi, `value-changed` come quello vero) per provare l'editor visuale.
@@ -28,6 +28,15 @@ PAGE = """<!doctype html><html><head><meta name="viewport" content="width=390"><
 window.T = { av: [], avBytes: 0, live: 0, created: [], rx: 0, ws: 0, sent: 0, frames: [],
              wsClosed: 0, calls: [], errors: [], gumDelay: 0, wcBroken: 0, gum: 0,
              wsOpenAt: 0, firstNalAt: 0, firstFrameAt: 0 };  // epoca in ms, del player corrente: latenza
+// Diagnostica del player (nei messaggi dei test, #130): decode [t, key, coda], fotogrammi [t, coda], NAL ricevuti
+// [t, tipo], transizioni di _skip [t, skip, coda, _out]; t in ms dall'apertura del WebSocket (diag()).
+const D = window.D = { dec: [], out: [], msg: [], skip: [], lastSkip: false };
+const lim = (a, x) => { if (a.length < 40) a.push(x); };
+window.diag = () => { const o = T.wsOpenAt, r = (t) => t && t - o, pl = card._player, d = pl?._dec;
+  return JSON.stringify({ cores: navigator.hardwareConcurrency, sw: location.search.includes("swwc"), state: d?.state,
+    q: d?.decodeQueueSize, out: pl?._out, nal: r(T.firstNalAt), frame: r(T.firstFrameAt),
+    msg: D.msg.map(([t, k]) => [r(t), k]), dec: D.dec.map(([t, k, q]) => [r(t), k, q]),
+    frm: D.out.map(([t, q]) => [r(t), q]), skip: D.skip.map(([t, ...x]) => [r(t), ...x]) }); };
 window.onerror = (m) => T.errors.push(String(m));
 window.addEventListener("unhandledrejection", (e) => T.errors.push("REJ " + e.reason));
 if (location.search.includes("insecure")) Object.defineProperty(window, "isSecureContext", { value: false });
@@ -35,9 +44,11 @@ if (location.search.includes("ios")) Object.defineProperty(navigator, "userAgent
 if (window.VideoDecoder) {  // sonda di latenza (il primo fotogramma dipinto), configurazioni e primo chunk
   const VD = window.VideoDecoder;
   window.VideoDecoder = class extends VD {
-    constructor(init) { super({ ...init, output: (f) => { T.firstFrameAt ||= Date.now(); init.output(f); } }); }
-    configure(c) { (T.vdCfg ||= []).push({ codec: c.codec, desc: [...new Uint8Array(c.description || [])], latency: c.optimizeForLatency, cs: c.colorSpace }); super.configure(c); }
-    decode(c) { if (!T.chunk) { const b = new Uint8Array(c.byteLength); c.copyTo(b); T.chunk = [c.type, ...b.slice(0, 5)]; } super.decode(c); }
+    constructor(init) { super({ ...init, output: (f) => { T.firstFrameAt ||= Date.now(); lim(D.out, [Date.now(), this.decodeQueueSize]); init.output(f); } }); }
+    configure(c) { if (location.search.includes("swwc")) c = { ...c, hardwareAcceleration: "prefer-software" };  // senza GPU, come in CI
+      (T.vdCfg ||= []).push({ codec: c.codec, desc: [...new Uint8Array(c.description || [])], latency: c.optimizeForLatency, cs: c.colorSpace }); super.configure(c); }
+    decode(c) { lim(D.dec, [Date.now(), c.type[0], this.decodeQueueSize]);
+      if (!T.chunk) { const b = new Uint8Array(c.byteLength); c.copyTo(b); T.chunk = [c.type, ...b.slice(0, 5)]; } super.decode(c); }
   };
 }
 if (location.search.includes("nowc")) window.VideoDecoder = undefined;
@@ -118,10 +129,16 @@ customElements.define("ha-form", class extends HTMLElement {
 const WS = window.WebSocket;
 window.WebSocket = class extends WS {
   constructor(u) { super(u); T.ws++;
-    T.wsOpenAt = T.firstNalAt = T.firstFrameAt = 0;  // WebSocket nuovo = player nuovo
+    T.wsOpenAt = T.firstNalAt = T.firstFrameAt = 0;
+    D.dec = []; D.out = []; D.msg = []; D.skip = []; D.lastSkip = false;  // WebSocket nuovo = player nuovo
     this.addEventListener("open", () => (T.wsOpenAt = Date.now()));
     this.addEventListener("message", (e) => { if (typeof e.data !== "string") T.rx++;
-      if (typeof e.data !== "string" && new Uint8Array(e.data, 0, 1)[0] === 3) T.firstNalAt ||= Date.now(); }); }
+      if (typeof e.data !== "string" && new Uint8Array(e.data, 0, 1)[0] === 3) T.firstNalAt ||= Date.now(); });
+    this.addEventListener("message", (e) => { if (typeof e.data === "string") return;
+      const h = new Uint8Array(e.data, 0, 6);
+      if (h[0] === 3) lim(D.msg, [Date.now(), h[5] & 0x1f]);  // video
+      setTimeout(() => { const p = card._player, s = !!p?._skip;  // dopo che il player ha letto il NAL
+        if (p && s !== D.lastSkip) { D.lastSkip = s; D.skip.push([Date.now(), +s, p._dec?.decodeQueueSize, p._out]); } }, 0); }); }
   send(b) { T.sent++; if (T.frames.length < 5 && b.byteLength) T.frames.push([new Uint8Array(b)[0], b.byteLength]); super.send(b); }
   close() { T.wsClosed++; super.close(); }
 };
@@ -242,6 +259,9 @@ class Card:
     async def T(self):
         return await self.page.evaluate("T")
 
+    async def diag(self):
+        return await self.page.evaluate("diag()")
+
     async def info(self):
         return await self.page.evaluate("info()")
 
@@ -252,5 +272,5 @@ class Card:
         end = asyncio.get_running_loop().time() + timeout
         while not await self.page.evaluate(js):
             if asyncio.get_running_loop().time() > end:
-                raise AssertionError(f"mai vero: {js} T={await self.T()} info={await self.info()}")
+                raise AssertionError(f"mai vero: {js} T={await self.T()} info={await self.info()} diag={await self.diag()}")
             await asyncio.sleep(0.05)
