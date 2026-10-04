@@ -427,6 +427,20 @@ def test_only_one_client_gets_the_replay(init, tmp_path):
     assert new.sent == [b"\x03gop"] and old.sent == [] and gone.sent == []
 
 
+def test_a_socket_that_asked_for_one_media_gets_only_that(init, tmp_path):
+    """The card opens one socket per player (?only=video, ?only=audio): each used to get
+    the other's media too, so the video went up twice. No ?only: everything."""
+    hass = _hass(tmp_path)
+    _setup(init, hass, _entry())
+    data = hass.data[init.DOMAIN]["e1"]
+    video, audio, both = _Client(), _Client(), _Client()
+    data["audio_ws_clients"].update({video, audio, both})
+    data["ws_wants"].update({video: b"\x03", audio: b"\x01"})
+    nal = b"\x03\x00\x00\x00\x01\x67s"
+    _send_all(b"\x01pcm", nal)
+    assert video.sent == [nal] and audio.sent == [b"\x01pcm"] and both.sent == [b"\x01pcm", nal]
+
+
 def test_a_full_client_queue_drops_its_backlog_and_waits_for_a_keyframe(init, tmp_path, monkeypatch):
     """A half GOP only smears: a client that fell behind loses its backlog and gets
     video again from the next SPS (sent before each IDR); its audio goes on."""

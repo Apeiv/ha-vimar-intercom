@@ -81,8 +81,9 @@ class _BackgroundTasks(list):
         self.append(name)
 
 
-def _hass(hub, clients=None):
-    data = {"e1": {"hub": hub, "audio_ws_clients": clients if clients is not None else set()}}
+def _hass(hub, clients=None, wants=None):
+    data = {"e1": {"hub": hub, "audio_ws_clients": clients if clients is not None else set(),
+                   "ws_wants": wants if wants is not None else {}}}
     return types.SimpleNamespace(data={"vimar_intercom": data} if hub else {},
                                  async_create_background_task=_BackgroundTasks())
 
@@ -99,14 +100,14 @@ def _msg(kind, data):
     return types.SimpleNamespace(type=kind, data=data)
 
 
-def _talk(views, monkeypatch, hub, messages, admin=True, query=None, clients=None):
+def _talk(views, monkeypatch, hub, messages, admin=True, query=None, clients=None, wants=None):
     """Opens /audio_ws, sends `messages`, closes; returns the socket and the JSON it got."""
     ws = views.new_ws()
     monkeypatch.setattr(views.web, "WebSocketResponse", lambda: ws)
     for m in messages:
         ws.inbox.put_nowait(m if isinstance(m, types.SimpleNamespace) else _msg("text", json.dumps(m)))
     ws.inbox.put_nowait(None)
-    hass = _hass(hub, clients)
+    hass = _hass(hub, clients, wants)
     asyncio.run(views.VimarAudioWSView(hass).get(Request(admin=admin, query=query)))
     return ws, [json.loads(s) for s in ws.sent if isinstance(s, str)]
 
@@ -129,6 +130,22 @@ def test_audio_ws_sends_the_state_and_replays_the_current_video(views, monkeypat
     # Through the client's own queue, not straight to its socket.
     assert replayed[0].func is media.ws_send_bytes and replayed[0].keywords == {"only": ws}
     assert clients == set()  # removed when it left
+
+
+def test_audio_ws_only_picks_the_media_and_the_video_replay(views, monkeypatch):
+    """?only=video: video only, GOP replay included; ?only=audio: no replay either.
+    Without it (the iOS app): everything, as before. Forgotten when the socket leaves."""
+    wants: dict = {}
+    seen = []  # a copy of `wants` at each replay: the socket's entry is gone once it leaves
+    monkeypatch.setattr(media, "video_proto",
+                        types.SimpleNamespace(replay_gop_ws=lambda send: seen.append(dict(wants))))
+    monkeypatch.setattr(media, "ws_send_bytes", lambda data, only=None: None)
+    ws, _ = _talk(views, monkeypatch, ViewHub(), [], query={"only": "video"}, wants=wants)
+    assert seen == [{ws: b"\x03"}] and wants == {}
+    _talk(views, monkeypatch, ViewHub(), [], query={"only": "audio"}, wants=wants)
+    assert len(seen) == 1 and wants == {}
+    _talk(views, monkeypatch, ViewHub(), [], wants=wants)
+    assert seen[1:] == [{}]
 
 
 def test_audio_ws_tells_a_new_client_that_the_panel_is_ringing(views, monkeypatch):

@@ -144,12 +144,20 @@ class VimarAudioWSView(HomeAssistantView):
         if not _user_allowed(request):
             await ws.close(code=1008, message=b"Not allowed")
             return ws
+        # ?only=video / ?only=audio: the card opens one socket per player and each
+        # dropped the other's media, so over the cloud the video went up twice.
+        # Without it (iOS app, other clients): everything, as before.
+        want = {"audio": b"\x01", "video": b"\x03"}.get(request.query.get("only"))
+        wants = _entry_data(self._hass).get("ws_wants", {})
+        if want:
+            wants[ws] = want
         clients = self._ws_clients
         clients.add(ws)
         _LOGGER.info("Audio WS client connected (%d total)", len(clients))
         # Video già in corso (squillo, chiamata): il GOP corrente subito, senza
         # aspettare il prossimo IDR. Anche per chi non è admin: è la vista della card.
-        if media.video_proto:
+        # ?only=audio: niente replay, sarebbero NAL scartati uno per uno per niente.
+        if media.video_proto and want != b"\x01":
             # Through this client's own queue, in order with the live NALs.
             media.video_proto.replay_gop_ws(functools.partial(media.ws_send_bytes, only=ws))
 
@@ -192,6 +200,7 @@ class VimarAudioWSView(HomeAssistantView):
             _LOGGER.error("Audio WS error: %s", e)
         finally:
             clients.discard(ws)
+            wants.pop(ws, None)
             _LOGGER.info("Audio WS client disconnected (%d remaining)", len(clients))
 
         return ws
