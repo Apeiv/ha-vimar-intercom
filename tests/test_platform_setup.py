@@ -7,15 +7,12 @@ import logging
 import types
 
 import pytest
+from homeassistant.exceptions import HomeAssistantError as _HAError
 
 from custom_components.vimar_intercom import button, camera, device, select, sensor, switch, text
 from custom_components.vimar_intercom import plant_state as S
 from custom_components.vimar_intercom import runtime as R
 from custom_components.vimar_intercom.const import DOMAIN, MODEL
-
-
-class _HAError(Exception):
-    pass
 
 
 class _Hub:
@@ -57,7 +54,7 @@ class _Hub:
 
     async def async_door(self, target=None, command=None):
         self.pressed.append(("door", target))
-        return self.ok, "200"
+        return self.ok, "opened", 200
 
     async def async_send_command(self, **kw):
         self.pressed.append(("command", kw["body"], kw["target"]))

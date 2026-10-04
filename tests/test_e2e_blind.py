@@ -106,7 +106,7 @@ def test_giornata_tipo_squillo_perso_poi_risposto_registro_e_stats(monkeypatch, 
             assert ok, msg
             ok200 = await rig.peer.wait_for(is_(code=200, cid="ring-amico"))
             rig.peer.request("ACK", "ring-amico", 1, "q", to_tag=ok200.h("to").split("tag=")[1])
-            ok, msg = await rig.hub.async_door()                  # target di default
+            ok, msg, _ = await rig.hub.async_door()                  # target di default
             assert ok, msg
             door = rig.peer.got(lambda m: m.kind == "MESSAGE" and m.body == "OPEN_2F")
             assert door and door[0].first.split()[1] == f"sip:55001@{DOMAIN}"
@@ -371,7 +371,7 @@ def test_porta_con_sfida_407_del_cloud(monkeypatch):
                     return
                 orig(raw)
             peer._on_raw = on_raw
-            ok, msg = await rig.hub.async_door(target="55001")
+            ok, msg, _ = await rig.hub.async_door(target="55001")
             assert ok, msg
             msgs = rig.peer.got(is_("MESSAGE"))
             assert len(msgs) == 2 and msgs[1].body == "OPEN_2F"
@@ -391,7 +391,7 @@ def test_porta_col_cloud_appena_caduto_si_riregistra_e_apre(monkeypatch):
             await wait_until(lambda: not sip.registered, 3)
             await asyncio.sleep(0.5)
             t0 = time.monotonic()
-            ok, msg = await asyncio.wait_for(rig.hub.async_door(target="55001"), 40)
+            ok, msg, _ = await asyncio.wait_for(rig.hub.async_door(target="55001"), 40)
             assert ok, msg
             assert rig.peer.got(lambda m: m.kind == "MESSAGE" and m.body == "OPEN_2F")
             assert time.monotonic() - t0 < 20, "porta aperta troppo tardi"

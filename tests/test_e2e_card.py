@@ -330,6 +330,24 @@ def test_microfono_permesso_negato_lo_dice(monkeypatch, ios):
     run(s())
 
 
+def test_apertura_fallita_mostra_l_errore_nella_lingua_dell_utente(monkeypatch, engine):  # noqa: F811
+    """HA sends the lock's error in English with its key: the card shows it in the user's language (#128)."""
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            await rig.register()
+
+            async def door(**_k):
+                return False, "timeout", None
+
+            monkeypatch.setattr(rig.hub, "async_door", door)
+            async with Card(rig, engine) as c:
+                await c.tap("open")
+                await c.tap("open")
+                await c.until("card.shadowRoot.querySelector('#open .lbl').textContent === 'Errore'")
+                assert (await c.info())["err"] == "Apertura non riuscita: nessuna risposta dal citofono"
+    run(s())
+
+
 def test_apri_doppio_tocco(monkeypatch, engine):  # noqa: F811
     async def s():
         async with Rig(monkeypatch, http=True) as rig:

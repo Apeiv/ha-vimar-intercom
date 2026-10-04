@@ -747,7 +747,7 @@ def test_apri_porta_durante_la_chiamata(monkeypatch):
             await rig.peer.wait_for(is_(code=183))
             assert (await rig.hub.async_answer())[0]
             await asyncio.sleep(0.3)                           # burst di INFO in corso
-            ok, msg = await rig.hub.async_door()
+            ok, msg, _ = await rig.hub.async_door()
             assert ok, msg
             assert rig.peer.got(lambda m: m.kind == "MESSAGE" and m.body == "OPEN_2F")
             assert (await rig.hub.async_door(command="OPEN_3F"))[0]   # senza target: command vale

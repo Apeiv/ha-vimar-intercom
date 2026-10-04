@@ -71,7 +71,7 @@ class FakeHub:
 
     async def async_door(self, target=None, command=None):
         self.calls.append(("door", target, command))
-        return True, "opened"
+        return True, "opened", 200
 
     def simulate_ring(self, duration):
         self.rings += 1
@@ -543,7 +543,7 @@ def test_call_services_reach_the_hub_and_report_the_outcome(svc):
     assert svc.run("answer") == {"ok": True, "result": "answered"}
     assert svc.run("decline") == {"ok": False, "result": "no ring"}
     assert svc.run("hangup") == {"ok": True, "result": "Chiamata terminata"}
-    assert svc.run("open_door", target="55003", command="OPEN") == {"ok": True, "result": "opened"}
+    assert svc.run("open_door", target="55003", command="OPEN") == {"ok": True, "result": "opened", "code": 200}
     assert svc.hub.calls[1:] == [("call", "55002"), ("answer",), ("decline",), ("hangup",),
                                  ("door", "55003", "OPEN")]
     assert svc.run("simulate_ring", duration=5.0) == {"ok": True, "result": "Squillo di prova"}
