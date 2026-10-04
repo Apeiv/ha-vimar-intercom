@@ -64,7 +64,7 @@ async def _open(monkeypatch, code, reason):
         await rig.register()
         _fast_clock(monkeypatch)
         _slow_relay(rig.peer, code, reason)
-        ok, msg = await rig.hub.async_door(target="55001")
+        ok, msg, _ = await rig.hub.async_door(target="55001")
         await asyncio.sleep(1)  # room for a retry to show up
         signed = rig.peer.got(lambda m: is_("MESSAGE")(m) and "proxy-authorization" in m.hdrs)
         return ok, msg, len(signed), rig.hub.stats["door_count"]
@@ -72,7 +72,7 @@ async def _open(monkeypatch, code, reason):
 
 def test_a_late_200_from_the_relay_is_an_open_door(monkeypatch):
     ok, msg, sent, count = run(_open(monkeypatch, 200, "OK"))
-    assert (ok, msg) == (True, "OK (200)")
+    assert (ok, msg) == (True, hub_mod.DOOR_OPENED)
     assert sent == 1, f"{sent} door commands sent: the door opens {sent} times"
     assert count == 1
 
@@ -123,7 +123,7 @@ async def _open_with_send_error(monkeypatch, signed):
         _fast_clock(monkeypatch)
         _slow_relay(rig.peer, None if signed else 200, "OK")
         _send_error(monkeypatch, signed)
-        ok, msg = await rig.hub.async_door(target="55001")
+        ok, msg, _ = await rig.hub.async_door(target="55001")
         await asyncio.sleep(1)
         signed_msgs = rig.peer.got(lambda m: is_("MESSAGE")(m) and "proxy-authorization" in m.hdrs)
         return ok, msg, len(signed_msgs)
@@ -139,5 +139,5 @@ def test_a_send_error_on_the_signed_message_over_the_cloud_is_not_retried(monkey
 def test_a_send_error_on_the_unsigned_message_is_still_retried(monkeypatch):
     """Nothing reached the relay yet: re-register and send it, as before."""
     ok, msg, sent = run(_open_with_send_error(monkeypatch, signed=False))
-    assert (ok, msg) == (True, "OK (200)")
+    assert (ok, msg) == (True, hub_mod.DOOR_OPENED)
     assert sent == 1

@@ -443,5 +443,28 @@
         "open": "Rispondi all'apertura"
       }
     }
+  },
+  "exceptions": {
+    "door_busy": {
+      "message": "Apertura non riuscita: un'altra apertura è in corso"
+    },
+    "door_queued": {
+      "message": "Apertura non confermata: il relay ha messo il comando in coda (202) e nessun dispositivo l'ha confermato"
+    },
+    "door_unconfirmed": {
+      "message": "Nessuna conferma dal relay: la porta potrebbe aprirsi lo stesso, attendi prima di riprovare"
+    },
+    "door_not_registered": {
+      "message": "Apertura non riuscita: il citofono non è registrato"
+    },
+    "door_timeout": {
+      "message": "Apertura non riuscita: nessuna risposta dal citofono"
+    },
+    "door_error": {
+      "message": "Apertura non riuscita: il citofono ha risposto con l'errore SIP {code}"
+    },
+    "door_send_failed": {
+      "message": "Apertura non riuscita: invio del comando fallito"
+    }
   }
 }

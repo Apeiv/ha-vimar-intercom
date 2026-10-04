@@ -747,13 +747,114 @@ def test_apri_porta_durante_la_chiamata(monkeypatch):
             await rig.peer.wait_for(is_(code=183))
             assert (await rig.hub.async_answer())[0]
             await asyncio.sleep(0.3)                           # burst di INFO in corso
-            ok, msg = await rig.hub.async_door()
+            ok, msg, _ = await rig.hub.async_door()
             assert ok, msg
             assert rig.peer.got(lambda m: m.kind == "MESSAGE" and m.body == "OPEN_2F")
             assert (await rig.hub.async_door(command="OPEN_3F"))[0]   # senza target: command vale
             assert rig.peer.got(lambda m: m.kind == "MESSAGE" and m.body == "OPEN_3F")
             assert rig.hub.status == "in_call"
             await rig.hub.async_hangup()
+    run(s())
+
+
+def test_rinnovo_register_durante_lo_squillo_cloud_non_tocca_lo_squillo(monkeypatch):
+    """Il keepalive rinnova il REGISTER mentre la targa suona (TLS, early media): lo squillo
+    resta, e il 200 OK parte sullo stesso dialogo del 183."""
+    async def s():
+        async with Rig(monkeypatch, "tls") as rig:
+            await rig.register()
+            rig.ring("ring-reg")
+            r183 = await rig.peer.wait_for(is_(code=183))
+            await wait_until(lambda: rig.rings == 1)
+            n = len(rig.peer.log)
+            await rig.hub._keepalive_tick()  # il giro dei 120 s, senza aspettarlo
+            await rig.peer.wait_for(lambda m: m.kind == "REGISTER" and "authorization" in m.hdrs, start=n)
+            assert sip.registered and not rig.hub.stats["register_failures"]  # il tick aspetta il 200
+            assert rig.hub.status == "ringing" and rig.hub.video_active
+            assert (await rig.hub.async_answer())[0]
+            ok200 = await rig.peer.wait_for(is_(code=200, cid="ring-reg"), start=n)
+            assert ok200.h("to").split("tag=")[1] == r183.h("to").split("tag=")[1]
+            await asyncio.sleep(0.3)
+            assert rig.hub.status == "in_call"
+            await rig.hub.async_hangup()
+            await rig.peer.wait_for(is_("BYE", cid="ring-reg"))
+    run(s())
+
+
+def test_cancel_del_ramo_doppio_prima_della_risposta_non_chiude_lo_squillo(monkeypatch):
+    """Il relay biforca lo squillo e annulla il ramo doppio prima che rispondiamo (il Tab ha
+    risposto e mollato, un retry del relay): quel CANCEL prende 481, lo squillo prosegue
+    e la risposta funziona. Gemello di test_squillo_biforcato_dal_relay_e_cancel_del_ramo_doppio, dove il CANCEL arriva dopo."""
+    async def s():
+        async with Rig(monkeypatch, "tls") as rig:
+            await rig.register()
+            real = rig.peer.fork_ring("ring-fk", "pnl", rig.peer.sdp())
+            await rig.peer.wait_for(is_(code=482))
+            await wait_until(lambda: rig.rings == 1)
+            n = len(rig.peer.log)
+            dup = next(m.branch for m in rig.peer.got(is_(code=482)))
+            rig.peer.request("CANCEL", "ring-fk", 1, "pnl", branch=dup)
+            r = await rig.peer.wait_for(is_(cseq="CANCEL"), start=n)
+            assert r.code == 481 and rig.hub.status == "ringing" and not rig.peer.got(is_(code=487))
+            assert (await rig.hub.async_answer())[0]
+            ok200 = await rig.peer.wait_for(is_(code=200, cid="ring-fk"), start=n)
+            assert ok200.branch == real
+            await asyncio.sleep(0.3)
+            assert rig.hub.status == "in_call" and rig.hub.stats["missed_count"] == 0
+            rig.bye(ok200)
+            await wait_until(lambda: rig.hub.status == "idle")
+    run(s())
+
+
+def test_cancel_incrociato_col_nostro_200_ok_poi_bye_del_relay(monkeypatch):
+    """Gara: il Tab risponde nello stesso istante. Il nostro 200 OK e il CANCEL del ramo vero
+    si incrociano (RFC 3261 9.2): 200 al CANCEL e nessun 487, la chiamata resta su finché il
+    relay non manda il BYE. Né ring_ended né chiamate perse, un solo call_ended."""
+    async def s():
+        async with Rig(monkeypatch, "tls") as rig:
+            await rig.register()
+            rig.ring("ring-glare")
+            await rig.peer.wait_for(is_(code=183))
+            await wait_until(lambda: rig.rings == 1)
+            assert (await rig.hub.async_answer())[0]
+            ok200 = await rig.peer.wait_for(is_(code=200, cid="ring-glare"))
+            n = len(rig.peer.log)
+            rig.peer.request("CANCEL", "ring-glare", 1, "pnl")
+            assert (await rig.peer.wait_for(is_(cseq="CANCEL"), start=n)).code == 200
+            await asyncio.sleep(0.3)
+            assert not rig.peer.got(is_(code=487)) and rig.hub.status == "in_call"
+            assert not rig.events("ring_ended")
+            # CSeq 2: il CANCEL aveva l'1
+            rig.peer.request("BYE", "ring-glare", 2, "pnl", to_tag=ok200.h("to").split("tag=")[1])
+            await wait_until(lambda: rig.hub.status == "idle", 3)
+            assert len(rig.events("call_ended")) == 1 and rig.hub.stats["missed_count"] == 0
+            assert media.audio_proto.remote_addr is None
+    run(s())
+
+
+def test_invite_ritrasmesso_durante_anteprima_lenta_riceve_183(monkeypatch):
+    """UDP locale: la targa ritrasmette l'INVITE mentre l'anteprima si sta ancora aprendo (la
+    ritrasmissione è mandata a mano). Un solo evento di squillo, una sola anteprima, e lo
+    stesso 183 un'altra volta."""
+    async def s():
+        async with Rig(monkeypatch) as rig:
+            await rig.register()
+            setup = media.setup_media
+
+            async def slow(*a, **k):
+                await asyncio.sleep(0.6)
+                await setup(*a, **k)
+            monkeypatch.setattr(media, "setup_media", slow)
+            raw = rig.ring("ring-rtx")
+            await rig.peer.wait_for(is_(code=183))
+            rig.peer.send(raw)
+            await wait_until(lambda: len(rig.peer.got(is_(code=183))) == 2, 2)
+            await wait_until(lambda: rig.rings == 1, 2)
+            await asyncio.sleep(0.5)
+            assert rig.rings == 1 and rig.hub.stats["ring_count"] == 1
+            assert rig.hub.status == "ringing" and media.video_proto.remote_addr
+            rig.peer.request("CANCEL", "ring-rtx", 1, "pnl")
+            await wait_until(lambda: rig.hub.status == "idle")
     run(s())
 
 

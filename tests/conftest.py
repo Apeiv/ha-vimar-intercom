@@ -90,6 +90,16 @@ class _SensorEntityDescription:
     native_unit_of_measurement: str | None = None
 
 
+class _HomeAssistantError(Exception):
+    """HA's signature: the integration's errors carry a translation key (#128)."""
+
+    def __init__(self, *args, translation_domain=None, translation_key=None, translation_placeholders=None):
+        super().__init__(*args)
+        self.translation_domain = translation_domain
+        self.translation_key = translation_key
+        self.translation_placeholders = translation_placeholders
+
+
 def _stub_ha() -> None:
     if "homeassistant" in sys.modules and not getattr(sys.modules["homeassistant"], "_is_stub", False):
         return  # HA vero installato
@@ -113,8 +123,9 @@ def _stub_ha() -> None:
     ha.core.callback = lambda f: f
     ha.core.SupportsResponse = types.SimpleNamespace(NONE="none", OPTIONAL="optional", ONLY="only")
     # Real exception classes: code under test raises them and tests expect them.
-    for exc in ("HomeAssistantError", "Unauthorized", "ConfigEntryNotReady"):
+    for exc in ("Unauthorized", "ConfigEntryNotReady"):
         setattr(ha.exceptions, exc, type(exc, (Exception,), {}))
+    ha.exceptions.HomeAssistantError = _HomeAssistantError
     ha.config_entries.ConfigEntry = _Any
     ha.config_entries.ConfigFlow = _ConfigFlow
     ha.config_entries.OptionsFlow = _Any

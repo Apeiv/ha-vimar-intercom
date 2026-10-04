@@ -69,7 +69,7 @@ class VimarIntercomLock(LockEntity):
     async def async_unlock(self, **kwargs) -> None:
         """Open the door via SIP MESSAGE."""
         # No command: the hub takes the door actuator's MSG from the phonebook (#58).
-        ok, msg = await self._hub.async_door(target=self._door_target)
+        ok, result, code = await self._hub.async_door(target=self._door_target)
         if ok:
             self._is_locked = False
             self.async_write_ha_state()
@@ -78,7 +78,9 @@ class VimarIntercomLock(LockEntity):
             self._relock_task = asyncio.create_task(self._auto_relock())
         else:
             # Errore al chiamante (card, automazione): prima la card mostrava "Aperto".
-            raise HomeAssistantError(f"Apertura non riuscita: {msg}")
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key=f"door_{result}", translation_placeholders={"code": str(code)}
+            )
 
     async def async_will_remove_from_hass(self) -> None:
         """Cancella il task di richiusura automatica se l'entità viene rimossa."""

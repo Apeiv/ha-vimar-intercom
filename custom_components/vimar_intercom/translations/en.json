@@ -443,5 +443,28 @@
         "open": "Answer when the view opens"
       }
     }
+  },
+  "exceptions": {
+    "door_busy": {
+      "message": "Door not opened: another door command is still in progress"
+    },
+    "door_queued": {
+      "message": "Door not confirmed: the relay queued the command (202) and no device confirmed it"
+    },
+    "door_unconfirmed": {
+      "message": "No confirmation from the relay: the door may still open, wait before trying again"
+    },
+    "door_not_registered": {
+      "message": "Door not opened: the intercom is not registered"
+    },
+    "door_timeout": {
+      "message": "Door not opened: no answer from the intercom"
+    },
+    "door_error": {
+      "message": "Door not opened: the intercom answered with SIP error {code}"
+    },
+    "door_send_failed": {
+      "message": "Door not opened: the command could not be sent"
+    }
   }
 }
