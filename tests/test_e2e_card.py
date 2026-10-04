@@ -330,7 +330,7 @@ def test_microfono_permesso_negato_lo_dice(monkeypatch, ios):
     run(s())
 
 
-def test_apertura_fallita_mostra_l_errore_cosi_com_e(monkeypatch, engine):  # noqa: F811
+def test_apertura_fallita_mostra_l_errore_nella_lingua_dell_utente(monkeypatch, engine):  # noqa: F811
     """HA sends the lock's error in English with its key: the card shows it in the user's language (#128)."""
     async def s():
         async with Rig(monkeypatch, http=True) as rig:
