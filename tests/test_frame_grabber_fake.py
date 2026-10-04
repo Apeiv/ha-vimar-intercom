@@ -4,6 +4,7 @@ and the cleanup. No ffmpeg needed (CI has none)."""
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from types import SimpleNamespace
 
@@ -59,10 +60,13 @@ class _Proc:
     """A fake ffmpeg. `on_wait` runs when the process is waited for (it writes
     the output file, as ffmpeg does when its stdin closes)."""
 
-    def __init__(self, rc=0, stdout=None, broken_stdin=False, stuck=False, on_wait=None):
+    def __init__(self, rc=0, stdout=None, broken_stdin=False, stuck=False, on_wait=None,
+                 stderr=b""):
         self.args = ()
         self.stdin = _Stdin(broken_stdin)
         self.stdout = stdout or _Stdout()
+        self.stderr = _Stdout([stderr] if stderr else ())
+        self.stderr.eof.set()  # EOF once the chunks are read
         self._rc = rc
         self.returncode = None
         self.killed = False
@@ -207,6 +211,55 @@ def test_a_grabber_whose_ffmpeg_does_not_start_leaves_no_photo(monkeypatch):
         return await fg.wait_frame(timeout=5)
 
     assert asyncio.run(run()) is None
+
+
+def _grab_logs(monkeypatch, caplog, proc, *, jpeg=False, cancel=False):
+    """Runs one grabber over `proc`; returns its log records."""
+    # once log_buffer.install() has run, the package logger has propagate=False: use a plain one
+    monkeypatch.setattr(fg, "_LOGGER", logging.getLogger("test_frame_grabber_log"))
+    caplog.set_level("DEBUG", logger="test_frame_grabber_log")
+    _spawner(monkeypatch, proc)
+
+    async def run():
+        fg.start(_proto(ps=(SPS, PPS)))
+        grabber = fg._grabber
+        if jpeg:
+            while fg.frames < 1:
+                await asyncio.sleep(0.01)
+        if cancel:
+            while not proc.args:  # let it start: a task cancelled before its first step never runs
+                await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            fg._cancel(None)
+        else:
+            proc.stdout.eof.set()
+        await asyncio.gather(grabber, return_exceptions=True)
+
+    asyncio.run(run())
+    return caplog.records
+
+
+def test_the_photo_decoder_logs_its_jpeg_and_exit(monkeypatch, caplog):
+    records = _grab_logs(monkeypatch, caplog, _Proc(stdout=_Stdout([JPEG]), stderr=b"fine"), jpeg=True)
+    text = caplog.text
+    assert "grabber avviato" in text and "JPEG di 12 byte" in text
+    assert "ffmpeg uscito (rc=0, 1 JPEG), stderr: fine" in text
+    assert not [r for r in records if r.levelname == "WARNING"]
+
+
+def test_an_ffmpeg_that_fails_before_any_photo_is_a_warning(monkeypatch, caplog):
+    records = _grab_logs(monkeypatch, caplog, _Proc(rc=1, stderr=b"Invalid data found"))
+    assert [r.getMessage() for r in records if r.levelname == "WARNING"] == [
+        "Foto: ffmpeg uscito (rc=1, 0 JPEG), stderr: Invalid data found"]
+
+
+def test_a_failure_after_a_photo_or_a_stop_is_not_a_warning(monkeypatch, caplog):
+    records = _grab_logs(monkeypatch, caplog, _Proc(rc=1, stdout=_Stdout([JPEG])), jpeg=True)
+    assert "(rc=1, 1 JPEG)" in caplog.text and not [r for r in records if r.levelname == "WARNING"]
+    caplog.clear()
+    records = _grab_logs(monkeypatch, caplog, _Proc(), cancel=True)
+    assert "grabber fermato" in caplog.text and "ffmpeg terminato (rc=-9, 0 JPEG)" in caplog.text
+    assert not [r for r in records if r.levelname == "WARNING"]
 
 
 def test_a_broken_pipe_to_the_grabber_ends_its_feeder_quietly(monkeypatch):
