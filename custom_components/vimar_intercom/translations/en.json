@@ -465,6 +465,9 @@
     },
     "door_send_failed": {
       "message": "Door not opened: the command could not be sent"
+    },
+    "command_queued": {
+      "message": "Command not confirmed: the relay queued it (202) and no device confirmed it"
     }
   }
 }

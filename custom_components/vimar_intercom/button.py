@@ -16,6 +16,7 @@ from . import runtime as R
 from .away_config import require_admin
 from .const import DOMAIN
 from .device import device_info
+from .hub import DOOR_QUEUED
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -264,5 +265,7 @@ class VimarActuatorButton(ButtonEntity):
         ok, msg = await self._hub.async_send_command(
             body=self._command, target=self._target,
             header_name="Panda", header_value="command")
+        if msg == DOOR_QUEUED:
+            raise HomeAssistantError(translation_domain=DOMAIN, translation_key="command_queued")
         if not ok:
             raise HomeAssistantError(f"{self._attr_name} non riuscito: {msg}")

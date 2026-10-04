@@ -306,3 +306,17 @@ def test_hub_decline_risponde_603_solo_se_squilla(monkeypatch):
     assert ok and inviati[0].startswith("SIP/2.0 603 Decline\r\n") and "Content-Length: 0" in inviati[0]
     ok, _ = asyncio.run(h.async_decline())   # ormai non squilla più
     assert not ok and len(inviati) == 1
+
+
+def test_un_attuatore_in_coda_sul_relay_non_e_riuscito():
+    """202 dal relay (#120 per la porta): errore tradotto, non «OK»."""
+    hub = _Hub()
+
+    async def queued(**_kw):
+        return False, button.DOOR_QUEUED
+
+    hub.async_send_command = queued
+    b = button.VimarActuatorButton(hub, "e1", {"name": "Luce scala", "msg": "OPEN_2", "target": "55001"})
+    with pytest.raises(_HAError) as err:
+        asyncio.run(b.async_press())
+    assert err.value.translation_key == "command_queued"

@@ -1209,9 +1209,16 @@ class VimarIntercomHub(PlantMessages, RingMedia):
         headers = {name: value} if name and value else None
         _LOGGER.info("Custom command: uri=%s body=%r headers=%s", uri, body, headers)
         try:
-            ok, msg = await sip.do_system_message(uri, body, extra_headers=headers)
+            ok, msg, code = await sip.send_message(uri, body, extra_headers=headers)
         except Exception as e:  # noqa: BLE001
-            ok, msg = False, str(e)
+            ok, msg, code = False, str(e), None
+        if code == 202:
+            # Same as the door: the relay holds it, no device confirmed it (#14). Not resent.
+            _LOGGER.warning(
+                "Command to %s: the relay answered 202 Accepted (queued, no device confirmed it), reported as not done",
+                uri,
+            )
+            ok, msg = False, DOOR_QUEUED
         self.stats["last_command_time"] = self._now()
         self.stats["last_command_body"] = body
         self.stats["last_command_target"] = target
@@ -1483,12 +1490,12 @@ class VimarIntercomHub(PlantMessages, RingMedia):
         try:
             ok, msg = await self.async_send_command(
                 body=body, target=R.PICG_TARGET, header_name="Panda", header_value="set")
-            if not ok:
+            if not ok and msg != DOOR_QUEUED:  # queued: the panel's own reply still decides
                 return False, msg
             try:
                 err = await asyncio.wait_for(fut, timeout)
             except TimeoutError:
-                return False, "Nessuna risposta dal citofono"
+                return False, DOOR_QUEUED if not ok else "Nessuna risposta dal citofono"
         finally:
             self._apt_param_waiters.pop(msgid, None)
         if err != "ERR_NONE":

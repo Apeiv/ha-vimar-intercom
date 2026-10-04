@@ -465,6 +465,9 @@
     },
     "door_send_failed": {
       "message": "Apertura non riuscita: invio del comando fallito"
+    },
+    "command_queued": {
+      "message": "Comando non confermato: il relay l'ha messo in coda (202) e nessun dispositivo l'ha confermato"
     }
   }
 }

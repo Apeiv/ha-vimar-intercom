@@ -290,10 +290,10 @@ def test_an_unreadable_apt_params_reply_resolves_no_waiter(plain_hub):
 
 def test_a_refused_set_apt_param_command_fails_without_waiting(plain_hub, monkeypatch):
     async def refused(uri, body, extra_headers=None, timeout=15):
-        return False, "403 Forbidden"
+        return False, "403 Forbidden", 403
 
     monkeypatch.setattr(R, "PICG_TARGET", "55002")
-    monkeypatch.setattr(sip, "do_system_message", refused)
+    monkeypatch.setattr(sip, "send_message", refused)
     ok, msg = asyncio.run(plain_hub.async_set_apt_param("vm_timeout", 30, timeout=0.01))
     assert (ok, msg) == (False, "403 Forbidden")
     assert plain_hub._apt_param_waiters == {}
@@ -372,3 +372,19 @@ def test_probe_outcomes(ok, msg, outcome):
 def test_the_last_message_is_redacted_and_parsed(plain_hub):
     plain_hub._update_stats("message", json.dumps({"x": 1}))
     assert plain_hub.stats["last_message_in"] == '{"x": 1}'
+
+
+def test_a_queued_set_apt_param_still_waits_for_the_panels_reply(plain_hub, monkeypatch):
+    """A 202 from the relay is not a failure here: the panel's ERR_NONE is the confirmation."""
+    replies = ['SET_APT_PARAMS_REPLY;{"MSGID":"abc","ERRCODE":"ERR_NONE"}']
+
+    async def queued(**_kw):
+        for reply in replies:
+            asyncio.get_running_loop().call_soon(plain_hub._handle_incoming_message, reply)
+        return False, hub_mod.DOOR_QUEUED
+
+    monkeypatch.setattr("secrets.token_hex", lambda n: "abc")
+    monkeypatch.setattr(plain_hub, "async_send_command", queued)
+    assert asyncio.run(plain_hub.async_set_apt_param("vm_timeout", 30, timeout=1)) == (True, "ERR_NONE")
+    replies.clear()
+    assert asyncio.run(plain_hub.async_set_apt_param("vm_timeout", 30, timeout=0.01)) == (False, hub_mod.DOOR_QUEUED)

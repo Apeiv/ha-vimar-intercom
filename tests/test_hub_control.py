@@ -365,10 +365,10 @@ def test_a_cancelled_door_caller_keeps_the_guard_until_the_message_ends(hub, mon
 
 
 def test_a_command_that_raises_is_reported_as_a_failure(hub, monkeypatch):
-    async def do_system_message(uri, body, extra_headers=None, timeout=15):
+    async def send_message(uri, body, extra_headers=None, timeout=15):
         raise OSError("socket closed")
 
-    monkeypatch.setattr(sip, "do_system_message", do_system_message)
+    monkeypatch.setattr(sip, "send_message", send_message)
     ok, msg = asyncio.run(hub.async_send_command("PING", target="55001"))
     assert (ok, msg) == (False, "socket closed")
     assert hub.stats["last_command_result"] == "socket closed"
