@@ -235,7 +235,7 @@ def test_the_gate_never_claims_to_be_locked(monkeypatch):
 
     class Hub:
         async def async_door(self, **_k):
-            return True, "OK (200)"
+            return True, "opened", 200
 
     a._hub, a._char_lock_current, a._char_lock_target = Hub(), Char(), Char()
     monkeypatch.setattr(hk, "GATE_RELOCK_SECONDS", 0)

@@ -3,16 +3,17 @@ and locks itself again after a few seconds; a failed opening is an error."""
 from __future__ import annotations
 
 import asyncio
+import json
+import re
 import types
+from pathlib import Path
 
 import pytest
+from homeassistant.exceptions import HomeAssistantError as _HAError
 
+from custom_components.vimar_intercom import hub as hub_mod
 from custom_components.vimar_intercom import lock as lock_mod
 from custom_components.vimar_intercom.const import DOMAIN
-
-
-class _HAError(Exception):
-    pass
 
 
 class _Hub:
@@ -22,7 +23,7 @@ class _Hub:
 
     async def async_door(self, target=None, command=None):
         self.doors.append((target, command))
-        return self.ok, "OK (200)" if self.ok else "Timeout"
+        return (True, "opened", 200) if self.ok else (False, "timeout", None)
 
 
 @pytest.fixture
@@ -74,9 +75,25 @@ def test_unlock_opens_the_default_door_then_relocks_after_five_seconds(relock):
 
 def test_a_failed_opening_raises_and_stays_locked(relock):
     lock = _lock(_Hub(ok=False))
-    with pytest.raises(_HAError, match="Timeout"):
+    with pytest.raises(_HAError) as err:
         asyncio.run(lock.async_unlock())
     assert lock.is_locked is True and lock.states == [] and lock._relock_task is None
+    # Translated by HA in its own language, not Italian text from the hub (#128).
+    assert (err.value.translation_domain, err.value.translation_key) == (DOMAIN, "door_timeout")
+    assert err.value.translation_placeholders == {"code": "None"}
+
+
+def test_every_door_failure_has_a_message_in_every_language():
+    """Each key async_door can fail with, with the same placeholders everywhere (as hassfest wants)."""
+    base = Path(lock_mod.__file__).parent
+    keys = {f"door_{v}" for k, v in vars(hub_mod).items() if k.startswith("DOOR_") and isinstance(v, str)}
+    keys -= {"door_opened"}
+    for name in ("strings.json", "translations/en.json", "translations/it.json"):
+        exc = json.loads((base / name).read_text(encoding="utf-8"))["exceptions"]
+        assert set(exc) == keys, name
+        for key, v in exc.items():
+            placeholders = set(re.findall(r"{(\w+)}", v["message"]))
+            assert placeholders == ({"code"} if key == "door_error" else set()), (name, key)
 
 
 def test_a_second_unlock_restarts_the_relock_timer(relock):

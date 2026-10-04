@@ -330,6 +330,24 @@ def test_microfono_permesso_negato_lo_dice(monkeypatch, ios):
     run(s())
 
 
+def test_apertura_fallita_mostra_l_errore_cosi_com_e(monkeypatch, engine):  # noqa: F811
+    """The lock's error is already in HA's language: no Italian prefix in front of it (#128)."""
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            await rig.register()
+
+            async def door(**_k):
+                return False, "timeout", None
+
+            monkeypatch.setattr(rig.hub, "async_door", door)
+            async with Card(rig, engine) as c:
+                await c.tap("open")
+                await c.tap("open")
+                await c.until("card.shadowRoot.querySelector('#open .lbl').textContent === 'Errore'")
+                assert (await c.info())["err"] == "Door not opened: no answer from the intercom"
+    run(s())
+
+
 def test_apri_doppio_tocco(monkeypatch, engine):  # noqa: F811
     async def s():
         async with Rig(monkeypatch, http=True) as rig:

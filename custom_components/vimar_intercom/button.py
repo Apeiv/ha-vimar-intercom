@@ -201,11 +201,13 @@ class VimarDoorButton(ButtonEntity):
         self._attr_device_info = device_info(entry_id)
 
     async def async_press(self) -> None:
-        ok, msg = await self._hub.async_door(target=self._target)
+        ok, msg, code = await self._hub.async_door(target=self._target)
         if not ok:
             # Come la serratura: un errore visibile, non un «premuto» con la porta
             # chiusa e la riga nel log (issue #23).
-            raise HomeAssistantError(f"Apertura non riuscita: {msg}")
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key=f"door_{msg}", translation_placeholders={"code": str(code)}
+            )
 
 
 class VimarTestRingButton(ButtonEntity):

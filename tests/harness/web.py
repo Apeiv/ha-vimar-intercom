@@ -12,6 +12,7 @@ import json
 import os
 import sys
 import types
+from pathlib import Path
 from urllib.parse import quote
 
 from custom_components.vimar_intercom import const as C
@@ -175,9 +176,12 @@ async def start(rig):
             await hub.async_hangup()
             ok, msg = True, "Chiamata terminata"
         else:
-            ok, msg = await {"vimar_intercom.call": hub.async_call, "vimar_intercom.answer": hub.async_answer,
-                             "lock.unlock": hub.async_door, "button.press": hub.async_decline,
-                             "vimar_intercom.decline": hub.async_decline}[name]()
+            ok, msg, *code = await {"vimar_intercom.call": hub.async_call, "vimar_intercom.answer": hub.async_answer,
+                                    "lock.unlock": hub.async_door, "button.press": hub.async_decline,
+                                    "vimar_intercom.decline": hub.async_decline}[name]()
+            if name == "lock.unlock" and not ok:  # as HA: the lock's error, translated (en)
+                exc = json.loads((Path(C.__file__).parent / "translations" / "en.json").read_text(encoding="utf-8"))
+                msg = exc["exceptions"][f"door_{msg}"]["message"].format(code=code[0])
         return web.json_response({"ok": ok, "result": msg})
 
     av, aws = views.VimarAVStreamView(hass), views.VimarAudioWSView(hass)

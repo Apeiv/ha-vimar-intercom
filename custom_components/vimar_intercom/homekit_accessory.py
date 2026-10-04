@@ -388,13 +388,13 @@ class VimarDoorbell(Camera):
     async def _open_gate(self) -> None:
         """Pulse the strike. Report unlocked, then unknown (never locked), and
         reset the target so the next tap opens again."""
-        ok, msg = await self._hub.async_door()
+        ok, msg, code = await self._hub.async_door()
         if ok:
             _LOGGER.info("HomeKit: gate opened")
             self._char_lock_current.set_value(LOCK_UNSECURED)
             await asyncio.sleep(GATE_RELOCK_SECONDS)
         else:
-            _LOGGER.error("HomeKit: opening the gate failed: %s", msg)
+            _LOGGER.error("HomeKit: opening the gate failed: %s %s", msg, code)
         self._char_lock_target.set_value(LOCK_SECURED)
         self._char_lock_current.set_value(LOCK_UNKNOWN)
 

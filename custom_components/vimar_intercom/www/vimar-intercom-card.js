@@ -879,7 +879,7 @@ class VimarIntercomCard extends CardAudio(HTMLElement) {
       this._icon(b, "mdi:check");
       this._label(b, "Aperto");
     } catch (e) {
-      this._err.textContent = `Apertura non riuscita: ${e.message || e}`;
+      this._err.textContent = e.message || e;  // the integration's error, already in HA's language (#128)
       b.className = "bad";
       this._icon(b, "mdi:alert-circle-outline");
       this._label(b, "Errore");

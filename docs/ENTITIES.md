@@ -45,7 +45,7 @@
 | `vimar_intercom.call` | SIP call to an outdoor unit or monitor | `target` |
 | `vimar_intercom.answer` | Answers the incoming call | — |
 | `vimar_intercom.hangup` | Ends the active call | — |
-| `vimar_intercom.open_door` | Door open command. Without `command`: the body of the phonebook's door actuator for that panel, else `OPEN_2F`; a given `command` must be `OPEN` / `OPEN_*`. Without `target` it goes to `door_target` | `target`, `command` |
+| `vimar_intercom.open_door` | Door open command. Without `command`: the body of the phonebook's door actuator for that panel, else `OPEN_2F`; a given `command` must be `OPEN` / `OPEN_*`. Without `target` it goes to `door_target`. Response: `ok`, `result` (`opened`, `busy`, `queued`, `unconfirmed`, `not_registered`, `timeout`, `error`, `send_failed`) and the SIP `code` | `target`, `command` |
 | `vimar_intercom.fetch_local` | HTTP Digest GET against the Tab's local interface (home mode). Admins and automations only | `path`, `save_as`, `host`, `scheme` |
 | `vimar_intercom.find_sga` | Finds the PICG by probing a range of addresses ([#14](https://github.com/lollox80/ha-vimar-intercom/issues/14)). Admins and automations only | `start`, `end`, `targets`, `probe`, `delay`, `reply_wait`, `sip_timeout`, `apply`, `apply_sga` |
 | `vimar_intercom.simulate_ring` | Test ring (admin): a whole ring without the panel and with no SIP traffic. The state goes to ringing (card, sensors), the doorbell event and the start webhook fire, and after `duration` seconds it ends like an unanswered ring (end webhook). It cannot be answered, the away message ignores it, a real ring replaces it, and it stays out of the ring log | `duration` (1 to 90 s, default 20) |
