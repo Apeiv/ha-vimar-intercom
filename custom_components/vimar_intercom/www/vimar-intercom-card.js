@@ -879,10 +879,14 @@ class VimarIntercomCard extends CardAudio(HTMLElement) {
       this._icon(b, "mdi:check");
       this._label(b, "Aperto");
     } catch (e) {
-      let m = `Apertura non riuscita: ${e.message || e}`;
+      let m = e.translation_key ? e.message : `Apertura non riuscita: ${e.message || e}`;
       if (e.translation_key) {  // HA's message is in English: translate it as the frontend does (#128)
         const k = `component.${e.translation_domain}.exceptions.${e.translation_key}.message`;
-        try { m = (await this._hass.loadBackendTranslation("exceptions", e.translation_domain))(k, e.translation_placeholders) || m; } catch {}
+        const late = new Promise((_, no) => setTimeout(no, 2000));  // a dropped WS must not keep the button spinning
+        try {
+          m = (await Promise.race([this._hass.loadBackendTranslation("exceptions", e.translation_domain), late]))(
+            k, e.translation_placeholders) || m;
+        } catch {}
       }
       this._err.textContent = m;
       b.className = "bad";
