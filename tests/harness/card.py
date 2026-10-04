@@ -32,7 +32,7 @@ window.T = { av: [], avBytes: 0, live: 0, created: [], rx: 0, ws: 0, sent: 0, fr
 // [t, tipo], transizioni di _skip [t, skip, coda, _out]; t in ms dall'apertura del WebSocket (diag()).
 const D = window.D = { dec: [], out: [], msg: [], skip: [], lastSkip: false };
 const lim = (a, x) => { if (a.length < 40) a.push(x); };
-window.diag = () => { const o = T.wsOpenAt, r = (t) => t && t - o, pl = card._player, d = pl?._dec;
+window.diag = () => { const o = T.wsOpenAt, r = (t) => t && t - o, pl = window.card?._player, d = pl?._dec;
   return JSON.stringify({ cores: navigator.hardwareConcurrency, sw: location.search.includes("swwc"), state: d?.state,
     q: d?.decodeQueueSize, out: pl?._out, nal: r(T.firstNalAt), frame: r(T.firstFrameAt),
     msg: D.msg.map(([t, k]) => [r(t), k]), dec: D.dec.map(([t, k, q]) => [r(t), k, q]),
@@ -134,10 +134,10 @@ window.WebSocket = class extends WS {
     this.addEventListener("open", () => (T.wsOpenAt = Date.now()));
     this.addEventListener("message", (e) => { if (typeof e.data !== "string") T.rx++;
       if (typeof e.data !== "string" && new Uint8Array(e.data, 0, 1)[0] === 3) T.firstNalAt ||= Date.now(); });
-    this.addEventListener("message", (e) => { if (typeof e.data === "string") return;
+    this.addEventListener("message", (e) => { if (typeof e.data === "string" || e.data.byteLength < 6) return;  // too short for a NAL header: no RangeError
       const h = new Uint8Array(e.data, 0, 6);
       if (h[0] === 3) lim(D.msg, [Date.now(), h[5] & 0x1f]);  // video
-      setTimeout(() => { const p = card._player, s = !!p?._skip;  // dopo che il player ha letto il NAL
+      setTimeout(() => { const p = window.card?._player, s = !!p?._skip;  // dopo che il player ha letto il NAL (a campione, due transizioni nello stesso tick si perdono)
         if (p && s !== D.lastSkip) { D.lastSkip = s; D.skip.push([Date.now(), +s, p._dec?.decodeQueueSize, p._out]); } }, 0); }); }
   send(b) { T.sent++; if (T.frames.length < 5 && b.byteLength) T.frames.push([new Uint8Array(b)[0], b.byteLength]); super.send(b); }
   close() { T.wsClosed++; super.close(); }
@@ -260,7 +260,10 @@ class Card:
         return await self.page.evaluate("T")
 
     async def diag(self):
-        return await self.page.evaluate("diag()")
+        try:
+            return await self.page.evaluate("diag()")
+        except Exception as e:  # noqa: BLE001 - a closed page must not hide the original failure
+            return f"diag non disponibile: {e}"
 
     async def info(self):
         return await self.page.evaluate("info()")
