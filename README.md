@@ -41,6 +41,8 @@ What changes from one plant to another: [Configuration](https://github.com/ha-vi
 Requires Home Assistant 2025.10 or later and ffmpeg on the host. Manual installation, every option and
 the phonebook: [Configuration](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/docs/CONFIGURATION.md).
 
+Coming from the original noiseheroes-lab integration? Remove it first: [Migration](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/docs/MIGRATION.md).
+
 ## What you get
 
 - **Doorbell**: an event entity and ring sensors for your automations; optionally a photo and a short
@@ -67,6 +69,7 @@ the phonebook: [Configuration](https://github.com/ha-vimar/ha-vimar-intercom/blo
 | [Echo Show as an intercom](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/docs/SCRYPTED-ALEXA.md) | Step by step: Echo Show watches, calls and talks to the panel through Scrypted |
 | [Phonebook](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/docs/RUBRICA.md) | Where `rubrica.db` comes from and what it contains |
 | [Troubleshooting](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/docs/TROUBLESHOOTING.md) | Known limitations and how to read the logs |
+| [Migration](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/docs/MIGRATION.md) | Moving over from the original noiseheroes-lab integration |
 | [Changelog](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/CHANGELOG.md) | What changed in each release |
 
 ## Support and contributing

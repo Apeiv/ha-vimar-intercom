@@ -41,6 +41,8 @@ Cosa cambia da un impianto all'altro: [Configurazione](https://github.com/ha-vim
 Serve Home Assistant 2025.10 o successivo e ffmpeg sull'host. Installazione manuale, tutte le opzioni e
 la rubrica: [Configurazione](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/docs/CONFIGURATION.it.md).
 
+Arrivi dall'integrazione originale di noiseheroes-lab? Prima toglila: [Migrazione](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/docs/MIGRATION.it.md).
+
 ## Cosa ottieni
 
 - **Squillo**: un'entità evento e i sensori dello squillo per le tue automazioni; a scelta una foto e
@@ -67,6 +69,7 @@ la rubrica: [Configurazione](https://github.com/ha-vimar/ha-vimar-intercom/blob/
 | [Echo Show come citofono](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/docs/SCRYPTED-ALEXA.it.md) | Passo per passo: l'Echo Show guarda, chiama e parla con la targa tramite Scrypted |
 | [Rubrica](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/docs/RUBRICA.md) | Da dove viene `rubrica.db` e cosa contiene (in inglese) |
 | [Problemi e log](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/docs/TROUBLESHOOTING.it.md) | Limiti noti e come leggere i log |
+| [Migrazione](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/docs/MIGRATION.it.md) | Passare dall'integrazione originale di noiseheroes-lab a questa |
 | [Changelog](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/CHANGELOG.md) | Cosa è cambiato in ogni versione (in inglese) |
 
 ## Supporto e contributi
