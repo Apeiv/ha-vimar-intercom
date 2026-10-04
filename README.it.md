@@ -29,6 +29,8 @@ Cosa cambia da un impianto all'altro: [Configurazione](https://github.com/ha-vim
 
 ## Installazione
 
+Arrivi dall'integrazione originale di noiseheroes-lab? Prima toglila: [Migrazione](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/docs/MIGRATION.it.md).
+
 1. Premi il pulsante **Apri in HACS** qui sopra (oppure: HACS → menu ⋮ → *Repository personalizzati* →
    aggiungi `https://github.com/ha-vimar/ha-vimar-intercom`, categoria *Integrazione*).
 2. Installa **Vimar Intercom** e riavvia Home Assistant.
@@ -40,8 +42,6 @@ Cosa cambia da un impianto all'altro: [Configurazione](https://github.com/ha-vim
 
 Serve Home Assistant 2025.10 o successivo e ffmpeg sull'host. Installazione manuale, tutte le opzioni e
 la rubrica: [Configurazione](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/docs/CONFIGURATION.it.md).
-
-Arrivi dall'integrazione originale di noiseheroes-lab? Prima toglila: [Migrazione](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/docs/MIGRATION.it.md).
 
 ## Cosa ottieni
 
