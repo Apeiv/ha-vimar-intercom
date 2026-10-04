@@ -1755,6 +1755,58 @@ def test_websocket_video_caduto_di_continuo_riapre_con_attesa_crescente(monkeypa
     run(s())
 
 
+@pytest.mark.parametrize("engine", ["chromium"], indirect=True)
+def test_due_card_sullo_stesso_squillo_una_risponde_l_altra_segue(monkeypatch, engine):  # noqa: F811
+    """Due telefoni con la card sullo stesso squillo: uno risponde, l'altro passa a "In chiamata"
+    senza più "Rispondi" (non si risponde due volte) e il suo "Riaggancia" chiude per entrambi."""
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            await rig.register()
+            async with Card(rig, engine) as a, Card(rig, engine) as b:
+                rig.ring("ring-two")
+                for c in (a, b):
+                    await c.until("info().pill === 'Suonano alla porta' && info().video === 'canvas'")
+                await a.tap("talk")
+                await a.until("info().pill === 'In chiamata'")
+                await b.until("info().pill === 'In chiamata' && info().talk === 'Microfono'")
+                await b.tap("talk")  # è "Microfono": non una seconda risposta
+                await asyncio.sleep(1)
+                assert rig.services.count("vimar_intercom.answer") == 1, rig.services
+                assert len(rig.peer.got(is_(code=200, cid="ring-two"))) == 1
+                await b.tap("hangup")
+                await rig.peer.wait_for(is_("BYE", cid="ring-two"))
+                for c in (a, b):
+                    await c.until(IDLE + " && info().audio === 'off'")
+                assert not (await a.T())["errors"] and not (await b.T())["errors"]
+    run(s())
+
+
+def test_riaggancia_mentre_la_targa_chiude_lascia_la_card_tranquilla(monkeypatch, engine):  # noqa: F811
+    """"Riaggancia" nell'istante in cui la targa chiude la visione: la card torna a riposo una
+    volta sola, senza errori né seconde chiamate, e "Vedi esterno" funziona subito dopo."""
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            await rig.register()
+            rig.answer()
+            async with Card(rig, engine, webcodecs=False) as c:
+                await c.until(IDLE)
+                await c.tap("view")
+                await c.until("info().pill === 'In chiamata'")
+                rig.bye(rig.peer.got(is_("INVITE"))[0])  # il BYE della targa parte un attimo prima del tocco
+                await c.tap("hangup")
+                await c.until(IDLE)
+                await asyncio.sleep(2)
+                assert (await c.info())["err"] == ""
+                assert rig.hub.status == "idle" and len(rig.peer.got(is_("INVITE"))) == 1
+                rig.answer()
+                await c.tap("view")
+                await c.until("info().pill === 'In chiamata'")
+                await c.tap("hangup")
+                await c.until(IDLE)
+                assert not (await c.T())["errors"]
+    run(s())
+
+
 # ─── Fill / Fit (#42) ────────────────────────────────────────────────────────
 
 FIT_MODE = "card._videoBox.firstElementChild?.cfg?.fit_mode"
