@@ -416,6 +416,14 @@ def test_voicemail_delay_select_sets_the_panel_value(ha_error, monkeypatch):
     hub.ok = False
     with pytest.raises(_HAError, match="Timeout"):
         asyncio.run(s.async_select_option("20"))
+
+    async def queued(name, value):
+        return False, select.QUEUED
+
+    hub.async_set_apt_param = queued
+    with pytest.raises(_HAError) as err:
+        asyncio.run(s.async_select_option("20"))
+    assert err.value.translation_key == "command_queued"
     asyncio.run(s.async_will_remove_from_hass())
     assert hub.state_cbs == []
 

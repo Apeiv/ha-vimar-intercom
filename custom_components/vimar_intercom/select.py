@@ -27,6 +27,7 @@ from . import runtime as R
 from .away_config import NONE_OPTION, ensure_dir, list_files, messages_dir, require_admin, set_away
 from .const import DOMAIN
 from .device import device_info
+from .hub import QUEUED
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -104,6 +105,8 @@ class VimarVmTimeoutSelect(SelectEntity):
         if option not in self.options:
             raise HomeAssistantError(f"Valore non ammesso dal citofono: {option}")
         ok, msg = await self._hub.async_set_apt_param("vm_timeout", int(option))
+        if msg == QUEUED:
+            raise HomeAssistantError(translation_domain=DOMAIN, translation_key="command_queued")
         if not ok:
             raise HomeAssistantError(f"Ritardo segreteria non cambiato: {msg}")
         self.async_write_ha_state()

@@ -41,7 +41,7 @@
 
 | Service | Description | Fields |
 |---|---|---|
-| `vimar_intercom.send_command` | Arbitrary SIP MESSAGE (for testing). Admins and automations only | `body`, `target`, `header_name`, `header_value` |
+| `vimar_intercom.send_command` | Arbitrary SIP MESSAGE (for testing). Admins and automations only. Response: `ok`, `result`; a `202` from the cloud relay is `ok: false`, `result: queued` (not delivered yet) | `body`, `target`, `header_name`, `header_value` |
 | `vimar_intercom.call` | SIP call to an outdoor unit or monitor | `target` |
 | `vimar_intercom.answer` | Answers the incoming call | — |
 | `vimar_intercom.hangup` | Ends the active call | — |

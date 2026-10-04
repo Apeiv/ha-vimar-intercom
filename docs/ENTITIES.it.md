@@ -41,7 +41,7 @@
 
 | Servizio | Descrizione | Campi |
 |---|---|---|
-| `vimar_intercom.send_command` | SIP MESSAGE arbitrario (per test). Solo amministratori e automazioni | `body`, `target`, `header_name`, `header_value` |
+| `vimar_intercom.send_command` | SIP MESSAGE arbitrario (per test). Solo amministratori e automazioni. Risposta: `ok`, `result`; un `202` dal relay cloud è `ok: false`, `result: queued` (non ancora consegnato) | `body`, `target`, `header_name`, `header_value` |
 | `vimar_intercom.call` | Chiamata SIP verso una targa/monitor | `target` |
 | `vimar_intercom.answer` | Risponde alla chiamata in arrivo | — |
 | `vimar_intercom.hangup` | Termina la chiamata attiva | — |

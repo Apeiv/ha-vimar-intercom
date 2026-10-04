@@ -141,3 +141,21 @@ def test_a_send_error_on_the_unsigned_message_is_still_retried(monkeypatch):
     ok, msg, sent = run(_open_with_send_error(monkeypatch, signed=False))
     assert (ok, msg) == (True, hub_mod.DOOR_OPENED)
     assert sent == 1
+
+
+def test_a_202_to_an_actuator_command_is_not_a_success_either(monkeypatch):
+    """The phonebook actuators, the switches and send_command (async_send_command) get
+    the same 202 as the door: queued at the relay, not done, and sent only once."""
+
+    async def s():
+        async with Rig(monkeypatch, "tls") as rig:
+            await rig.register()
+            _slow_relay(rig.peer, 202, "Accepted")  # real clock: 1.52 s, inside the 15 s timeout
+            ok, msg = await rig.hub.async_send_command("OPEN_X", target="55003")
+            await asyncio.sleep(0.5)  # room for a resend to show up
+            signed = rig.peer.got(lambda m: is_("MESSAGE")(m) and "proxy-authorization" in m.hdrs)
+            assert (ok, msg) == (False, hub_mod.DOOR_QUEUED), f"202 Accepted reported as a command done: {msg!r}"
+            assert rig.hub.stats["last_command_result"] == hub_mod.DOOR_QUEUED
+            assert len(signed) == 1
+
+    run(s())

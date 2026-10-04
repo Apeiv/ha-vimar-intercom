@@ -12,6 +12,8 @@ import logging
 import pytest
 
 hub_mod = pytest.importorskip("custom_components.vimar_intercom.hub")
+from homeassistant.exceptions import HomeAssistantError as _HAError  # noqa: E402
+
 from custom_components.vimar_intercom import const as C  # noqa: E402
 from custom_components.vimar_intercom import log_buffer, log_redact  # noqa: E402
 from custom_components.vimar_intercom import sip_client as sip  # noqa: E402
@@ -74,11 +76,11 @@ def test_call_info_chiavi_minuscole(hub):
 def _cattura(monkeypatch):
     got = {}
 
-    async def _dsm(uri, body, extra_headers=None):
+    async def _send(uri, body, extra_headers=None):
         got["h"] = extra_headers
-        return True, "OK (200)"
+        return True, "OK (200)", 200
 
-    monkeypatch.setattr(sip, "do_system_message", _dsm)
+    monkeypatch.setattr(sip, "send_message", _send)
     return got
 
 
@@ -128,12 +130,13 @@ switch_mod = _import_switch()
 class _Hub:
     away_enabled = False
 
-    def __init__(self, ok, reale=None):
+    def __init__(self, ok, reale=None, msg=None):
         self.stats = {"voicemail": reale}
         self._ok = ok
+        self._msg = msg or ("OK (200)" if ok else "Non registrato")
 
     async def async_send_command(self, **_kw):
-        return self._ok, "OK (200)" if self._ok else "Non registrato"
+        return self._ok, self._msg
 
     async def async_request_status(self):
         pass
@@ -143,10 +146,6 @@ class _Hub:
 
     def on_voicemail_on(self):
         pass
-
-
-class _HAError(Exception):
-    pass
 
 
 def _switch(hub):
@@ -263,3 +262,12 @@ def test_install_e_idempotente(logger_isolato):
     nostri = [h for h in log.handlers
               if isinstance(h, (log_buffer.DebugBufferHandler, log_buffer.ForwardToRootHandler))]
     assert len(nostri) == 2
+
+
+def test_comando_in_coda_sul_relay_non_cambia_lo_stato():
+    """Un 202 dal relay non è un comando riuscito: errore tradotto, stato fermo."""
+    sw = _switch(_Hub(ok=False, msg=hub_mod.QUEUED))
+    with pytest.raises(_HAError) as err:
+        asyncio.run(sw.async_turn_on())
+    assert err.value.translation_key == "command_queued"
+    assert sw.is_on is None

@@ -329,9 +329,9 @@ def test_only_a_plant_id_on_the_plant_domain_is_accepted(hub, monkeypatch, targe
 
     async def message(uri, body, extra_headers=None):
         sent.append(uri)
-        return True, "OK"
+        return True, "OK", 200
 
-    monkeypatch.setattr(sip, "do_system_message", message)
+    monkeypatch.setattr(sip, "send_message", message)
     ok, _ = asyncio.run(hub.async_send_command("X", target=target))
     assert not ok and sent == []
 
@@ -345,9 +345,9 @@ def test_a_plant_id_on_any_plant_domain_is_sent(hub, monkeypatch, domain_attr):
 
     async def message(uri, body, extra_headers=None):
         sent.append(uri)
-        return True, "OK"
+        return True, "OK", 200
 
-    monkeypatch.setattr(sip, "do_system_message", message)
+    monkeypatch.setattr(sip, "send_message", message)
     ok, _ = asyncio.run(hub.async_send_command("X", target="sip:55001@plant.example"))
     assert ok and sent == ["sip:55001@plant.example"]
 

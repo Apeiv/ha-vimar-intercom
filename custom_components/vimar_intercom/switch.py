@@ -44,6 +44,7 @@ from .const import (
     SEGRETERIA_ON,
 )
 from .device import device_info
+from .hub import QUEUED
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -223,6 +224,8 @@ class VimarModeSwitch(SwitchEntity, RestoreEntity):
         _LOGGER.info("%s %s → ok=%s msg=%s", self._attr_name,
                      "ON" if new_state else "OFF", ok, msg)
         self.async_write_ha_state()
+        if msg == QUEUED:
+            raise HomeAssistantError(translation_domain=DOMAIN, translation_key="command_queued")
         if not ok:
             raise HomeAssistantError(f"{self._attr_name}: comando non riuscito ({msg})")
         # Il Tab di solito annuncia il cambio da solo; chi non lo fa può comunque

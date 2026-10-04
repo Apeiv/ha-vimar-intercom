@@ -299,7 +299,7 @@ def test_a_door_command_that_never_got_through_is_retried_over_the_cloud(hub, mo
     [
         ((False, "Errore: 408", 408), (True, hub_mod.DOOR_OPENED, 200), 2),  # no relay on UDP: the door said no
         ((False, "Errore: 504", 504), (True, hub_mod.DOOR_OPENED, 200), 2),
-        ((True, "OK (202)", 202), (False, hub_mod.DOOR_QUEUED, 202), 1),
+        ((True, "OK (202)", 202), (False, hub_mod.QUEUED, 202), 1),
     ],
 )
 def test_on_local_udp_a_408_or_504_is_retried_and_a_202_is_not_an_open(hub, monkeypatch, first, result, sent_count):
@@ -365,10 +365,10 @@ def test_a_cancelled_door_caller_keeps_the_guard_until_the_message_ends(hub, mon
 
 
 def test_a_command_that_raises_is_reported_as_a_failure(hub, monkeypatch):
-    async def do_system_message(uri, body, extra_headers=None, timeout=15):
+    async def send_message(uri, body, extra_headers=None, timeout=15):
         raise OSError("socket closed")
 
-    monkeypatch.setattr(sip, "do_system_message", do_system_message)
+    monkeypatch.setattr(sip, "send_message", send_message)
     ok, msg = asyncio.run(hub.async_send_command("PING", target="55001"))
     assert (ok, msg) == (False, "socket closed")
     assert hub.stats["last_command_result"] == "socket closed"

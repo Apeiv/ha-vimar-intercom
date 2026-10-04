@@ -87,7 +87,7 @@ def test_every_door_failure_has_a_message_in_every_language():
     base = Path(lock_mod.__file__).parent
     keys = {f"door_{k}" for k in (hub_mod.DOOR_BUSY, hub_mod.DOOR_QUEUED, hub_mod.DOOR_UNCONFIRMED,
                                   hub_mod.DOOR_NOT_REGISTERED, hub_mod.DOOR_TIMEOUT, hub_mod.DOOR_ERROR,
-                                  hub_mod.DOOR_SEND_FAILED)}
+                                  hub_mod.DOOR_SEND_FAILED)} | {"command_queued"}
     for name in ("strings.json", "translations/en.json", "translations/it.json"):
         exc = json.loads((base / name).read_text(encoding="utf-8"))["exceptions"]
         assert set(exc) == keys, name
