@@ -330,6 +330,24 @@ def test_microfono_permesso_negato_lo_dice(monkeypatch, ios):
     run(s())
 
 
+def test_apertura_fallita_mostra_l_errore_nella_lingua_dell_utente(monkeypatch, engine):  # noqa: F811
+    """HA sends the lock's error in English with its key: the card shows it in the user's language (#128)."""
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            await rig.register()
+
+            async def door(**_k):
+                return False, "timeout", None
+
+            monkeypatch.setattr(rig.hub, "async_door", door)
+            async with Card(rig, engine) as c:
+                await c.tap("open")
+                await c.tap("open")
+                await c.until("card.shadowRoot.querySelector('#open .lbl').textContent === 'Errore'")
+                assert (await c.info())["err"] == "Apertura non riuscita: nessuna risposta dal citofono"
+    run(s())
+
+
 def test_apri_doppio_tocco(monkeypatch, engine):  # noqa: F811
     async def s():
         async with Rig(monkeypatch, http=True) as rig:
@@ -1203,8 +1221,11 @@ def test_impostazioni_carica_il_file_audio(monkeypatch, engine, tmp_path, layout
         async with Rig(monkeypatch, http=True) as rig:
             entry = types.SimpleNamespace(entry_id="e1", options={})
             rig.hass.config = types.SimpleNamespace(media_dirs={"local": str(tmp_path)})
+            # What views._loaded_entry calls since a4ef6c5: the entry whose hub is in
+            # hass.data ("e1" in harness/web.py).
             rig.hass.config_entries = types.SimpleNamespace(
-                async_loaded_entries=lambda d: [entry], async_update_entry=lambda e, options: setattr(e, "options", options))
+                async_get_entry=lambda eid: entry if eid == "e1" else None,
+                async_update_entry=lambda e, options: setattr(e, "options", options))
             monkeypatch.setattr(R, "AWAY_MESSAGE_FILE", "")
             await rig.register()
             async with Card(rig, engine, layout=layout, query=query) as c:
@@ -1752,6 +1773,58 @@ def test_websocket_video_caduto_di_continuo_riapre_con_attesa_crescente(monkeypa
                 ws_n = (await c.T())["ws"]
                 await asyncio.sleep(1.5)
                 assert (await c.T())["ws"] == ws_n, "il player chiuso non deve riaprire"
+    run(s())
+
+
+@pytest.mark.parametrize("engine", ["chromium"], indirect=True)
+def test_due_card_sullo_stesso_squillo_una_risponde_l_altra_segue(monkeypatch, engine):  # noqa: F811
+    """Due telefoni con la card sullo stesso squillo: uno risponde, l'altro passa a "In chiamata"
+    senza più "Rispondi" (non si risponde due volte) e il suo "Riaggancia" chiude per entrambi."""
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            await rig.register()
+            async with Card(rig, engine) as a, Card(rig, engine) as b:
+                rig.ring("ring-two")
+                for c in (a, b):
+                    await c.until("info().pill === 'Suonano alla porta' && info().video === 'canvas'")
+                await a.tap("talk")
+                await a.until("info().pill === 'In chiamata'")
+                await b.until("info().pill === 'In chiamata' && info().talk === 'Microfono'")
+                await b.tap("talk")  # è "Microfono": non una seconda risposta
+                await asyncio.sleep(1)
+                assert rig.services.count("vimar_intercom.answer") == 1, rig.services
+                assert len(rig.peer.got(is_(code=200, cid="ring-two"))) == 1
+                await b.tap("hangup")
+                await rig.peer.wait_for(is_("BYE", cid="ring-two"))
+                for c in (a, b):
+                    await c.until(IDLE + " && info().audio === 'off'")
+                assert not (await a.T())["errors"] and not (await b.T())["errors"]
+    run(s())
+
+
+def test_riaggancia_mentre_la_targa_chiude_lascia_la_card_tranquilla(monkeypatch, engine):  # noqa: F811
+    """"Riaggancia" nell'istante in cui la targa chiude la visione: la card torna a riposo una
+    volta sola, senza errori né seconde chiamate, e "Vedi esterno" funziona subito dopo."""
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            await rig.register()
+            rig.answer()
+            async with Card(rig, engine, webcodecs=False) as c:
+                await c.until(IDLE)
+                await c.tap("view")
+                await c.until("info().pill === 'In chiamata'")
+                rig.bye(rig.peer.got(is_("INVITE"))[0])  # il BYE della targa parte un attimo prima del tocco
+                await c.tap("hangup")
+                await c.until(IDLE)
+                await asyncio.sleep(2)
+                assert (await c.info())["err"] == ""
+                assert rig.hub.status == "idle" and len(rig.peer.got(is_("INVITE"))) == 1
+                rig.answer()
+                await c.tap("view")
+                await c.until("info().pill === 'In chiamata'")
+                await c.tap("hangup")
+                await c.until(IDLE)
+                assert not (await c.T())["errors"]
     run(s())
 
 

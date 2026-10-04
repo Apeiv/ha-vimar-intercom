@@ -165,6 +165,7 @@ SENSORS: tuple[VimarSensorDescription, ...] = (
             "target": sip_id_name(hub.stats.get("last_door_target")),
             "target_id": hub.stats.get("last_door_target"),
             "esito": hub.stats.get("last_door_result"),
+            "codice": hub.stats.get("last_door_code"),
             "comando": hub.stats.get("last_door_command"),
             "origine_comando": hub.stats.get("last_door_command_source"),
             "aperture": hub.stats.get("door_count"),
