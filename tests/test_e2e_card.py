@@ -1203,8 +1203,11 @@ def test_impostazioni_carica_il_file_audio(monkeypatch, engine, tmp_path, layout
         async with Rig(monkeypatch, http=True) as rig:
             entry = types.SimpleNamespace(entry_id="e1", options={})
             rig.hass.config = types.SimpleNamespace(media_dirs={"local": str(tmp_path)})
+            # What views._loaded_entry calls since a4ef6c5: the entry whose hub is in
+            # hass.data ("e1" in harness/web.py).
             rig.hass.config_entries = types.SimpleNamespace(
-                async_loaded_entries=lambda d: [entry], async_update_entry=lambda e, options: setattr(e, "options", options))
+                async_get_entry=lambda eid: entry if eid == "e1" else None,
+                async_update_entry=lambda e, options: setattr(e, "options", options))
             monkeypatch.setattr(R, "AWAY_MESSAGE_FILE", "")
             await rig.register()
             async with Card(rig, engine, layout=layout, query=query) as c:
