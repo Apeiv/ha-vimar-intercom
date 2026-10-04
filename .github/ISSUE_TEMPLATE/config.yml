@@ -1,11 +1,11 @@
 blank_issues_enabled: false
 contact_links:
   - name: Question / how do I…
-    url: https://github.com/lollox80/ha-vimar-intercom/discussions/categories/q-a
+    url: https://github.com/ha-vimar/ha-vimar-intercom/discussions/categories/q-a
     about: For questions about setup and use, ask in the Q&A category of Discussions. Issues are for bugs and hardware reports.
   - name: General chat
     url: https://community.home-assistant.io/t/vimar-tab5s-up-2-wire-wifi-elvox-40515/833805
     about: For general chat about Vimar/Elvox intercoms in Home Assistant, use the Home Assistant Community thread.
   - name: Security vulnerability (private)
-    url: https://github.com/lollox80/ha-vimar-intercom/security/advisories/new
+    url: https://github.com/ha-vimar/ha-vimar-intercom/security/advisories/new
     about: Please report security problems privately here, not in a public issue. See SECURITY.md.

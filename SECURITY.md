@@ -5,7 +5,7 @@
 **Please do not open a public issue for security problems.**
 
 Use GitHub's private vulnerability reporting instead:
-[Report a vulnerability](https://github.com/lollox80/ha-vimar-intercom/security/advisories/new)
+[Report a vulnerability](https://github.com/ha-vimar/ha-vimar-intercom/security/advisories/new)
 (or the **Security** tab → **Report a vulnerability**). Only the maintainer sees the report.
 
 Please include, when you can:

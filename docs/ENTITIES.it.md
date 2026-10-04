@@ -16,9 +16,9 @@
 | Apri Porta | `button` | Come la serratura: il comando porta della rubrica (altrimenti `OPEN_2F`) verso `door_target` |
 | Squillo di prova | `button` (diagnostica) | Uno squillo completo senza la targa, come `vimar_intercom.simulate_ring` con i 20 s predefiniti: per provare automazioni e notifiche. Non parte durante una chiamata o uno squillo veri |
 | *Attuatori dinamici* | `button` | Uno per voce in `options["actuators"]` (F1/F2, luci scala, relè…); invia `MSG` con `Panda: command` |
-| Segreteria | `switch` | `VOICEMAIL;ON/OFF` (Panda: blue) verso l'SGA; stato letto dagli annunci del Tab e da `GET_INIT_STATUS`, chiesto dopo ogni comando. Il valore comandato si vede per 10 s al massimo: senza conferma lo stato diventa *sconosciuto* ([#9](https://github.com/lollox80/ha-vimar-intercom/issues/9)) |
+| Segreteria | `switch` | `VOICEMAIL;ON/OFF` (Panda: blue) verso l'SGA; stato letto dagli annunci del Tab e da `GET_INIT_STATUS`, chiesto dopo ogni comando. Il valore comandato si vede per 10 s al massimo: senza conferma lo stato diventa *sconosciuto* ([#9](https://github.com/ha-vimar/ha-vimar-intercom/issues/9)) |
 | Non Disturbare | `switch` | `DND;ON/OFF` (Panda: blue) verso l'SGA; stesse regole della Segreteria |
-| Segreteria · ritardo | `select` | Solo sugli impianti con la risposta lunga di `GET_INIT_STATUS`: `vm_timeout`, uno dei `vm_timeout_values` dichiarati dall'impianto, scritto con `SET_APT_PARAMS` ([#4](https://github.com/lollox80/ha-vimar-intercom/issues/4)). Sugli impianti con la risposta corta non compare |
+| Segreteria · ritardo | `select` | Solo sugli impianti con la risposta lunga di `GET_INIT_STATUS`: `vm_timeout`, uno dei `vm_timeout_values` dichiarati dall'impianto, scritto con `SET_APT_PARAMS` ([#4](https://github.com/ha-vimar/ha-vimar-intercom/issues/4)). Sugli impianti con la risposta corta non compare |
 | Intercom SIP | `binary_sensor` | Registrazione SIP attiva (connectivity) |
 | Intercom In Call | `binary_sensor` | Chiamata attiva |
 | Intercom Squillo | `binary_sensor` | ON mentre una targa chiama (attr: chiamante) |
@@ -47,7 +47,7 @@
 | `vimar_intercom.hangup` | Termina la chiamata attiva | — |
 | `vimar_intercom.open_door` | Comando di apertura. Senza `command`: quello dell'attuatore porta della rubrica per quella targa, altrimenti `OPEN_2F`; un `command` dato deve essere `OPEN` / `OPEN_*`. Senza `target` va a `door_target`. Risposta: `ok`, `result` (`opened`, `busy`, `queued`, `unconfirmed`, `not_registered`, `timeout`, `error`, `send_failed`) e il `code` SIP | `target`, `command` |
 | `vimar_intercom.fetch_local` | GET HTTP Digest verso l'interfaccia locale del Tab (home mode). Solo amministratori e automazioni | `path`, `save_as`, `host`, `scheme` |
-| `vimar_intercom.find_sga` | Cerca il PICG interrogando una serie di indirizzi ([#14](https://github.com/lollox80/ha-vimar-intercom/issues/14)). Solo amministratori e automazioni | `start`, `end`, `targets`, `probe`, `delay`, `reply_wait`, `sip_timeout`, `apply`, `apply_sga` |
+| `vimar_intercom.find_sga` | Cerca il PICG interrogando una serie di indirizzi ([#14](https://github.com/ha-vimar/ha-vimar-intercom/issues/14)). Solo amministratori e automazioni | `start`, `end`, `targets`, `probe`, `delay`, `reply_wait`, `sip_timeout`, `apply`, `apply_sga` |
 | `vimar_intercom.simulate_ring` | Squillo di prova (admin): uno squillo completo senza la targa e senza traffico SIP. Lo stato passa a squilla (card, sensori), partono l'evento campanello e il webhook di inizio, e dopo `duration` secondi finisce come uno squillo senza risposta (webhook di fine). Non si può rispondere, il messaggio di assenza lo ignora, uno squillo vero lo sostituisce e non finisce nel registro squilli | `duration` (da 1 a 90 s, predefinito 20) |
 
 Esempio (Strumenti per sviluppatori → Azioni):

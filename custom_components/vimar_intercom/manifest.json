@@ -13,10 +13,10 @@
     "network",
     "zeroconf"
   ],
-  "documentation": "https://github.com/lollox80/ha-vimar-intercom/blob/main/README.md",
+  "documentation": "https://github.com/ha-vimar/ha-vimar-intercom/blob/main/README.md",
   "integration_type": "hub",
   "iot_class": "local_push",
-  "issue_tracker": "https://github.com/lollox80/ha-vimar-intercom/issues",
+  "issue_tracker": "https://github.com/ha-vimar/ha-vimar-intercom/issues",
   "requirements": [
     "pycryptodome>=3.19.0"
   ],

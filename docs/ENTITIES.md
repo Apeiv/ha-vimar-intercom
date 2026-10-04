@@ -16,9 +16,9 @@
 | Open Door | `button` | Same as the lock: the phonebook's door command (else `OPEN_2F`) to `door_target` |
 | Test ring | `button` (diagnostic) | A whole ring without the panel, as `vimar_intercom.simulate_ring` with its default 20 s: try your ring automations and notifications. Fails while a real call or ring is in progress |
 | *Dynamic actuators* | `button` | One per entry in `options["actuators"]` (F1/F2, stair lights, relays…); sends `MSG` with `Panda: command` |
-| Voicemail | `switch` | `VOICEMAIL;ON/OFF` (Panda: blue) to the SGA; state read from the Tab's announcements and from `GET_INIT_STATUS`, asked after every command. The commanded value is shown for 10 s at most: with no confirmation the state becomes *unknown* ([#9](https://github.com/lollox80/ha-vimar-intercom/issues/9)) |
+| Voicemail | `switch` | `VOICEMAIL;ON/OFF` (Panda: blue) to the SGA; state read from the Tab's announcements and from `GET_INIT_STATUS`, asked after every command. The commanded value is shown for 10 s at most: with no confirmation the state becomes *unknown* ([#9](https://github.com/ha-vimar/ha-vimar-intercom/issues/9)) |
 | Do Not Disturb | `switch` | `DND;ON/OFF` (Panda: blue) to the SGA; same rules as Voicemail |
-| Voicemail · delay | `select` | Only on plants that send the long `GET_INIT_STATUS` reply: `vm_timeout`, one of the plant's own `vm_timeout_values`, written with `SET_APT_PARAMS` ([#4](https://github.com/lollox80/ha-vimar-intercom/issues/4)). It does not appear on plants with the short reply |
+| Voicemail · delay | `select` | Only on plants that send the long `GET_INIT_STATUS` reply: `vm_timeout`, one of the plant's own `vm_timeout_values`, written with `SET_APT_PARAMS` ([#4](https://github.com/ha-vimar/ha-vimar-intercom/issues/4)). It does not appear on plants with the short reply |
 | Intercom SIP | `binary_sensor` | SIP registration active (connectivity) |
 | Intercom In Call | `binary_sensor` | A call is up |
 | Intercom Ringing | `binary_sensor` | ON while an outdoor unit is calling (attribute: caller) |
@@ -47,7 +47,7 @@
 | `vimar_intercom.hangup` | Ends the active call | — |
 | `vimar_intercom.open_door` | Door open command. Without `command`: the body of the phonebook's door actuator for that panel, else `OPEN_2F`; a given `command` must be `OPEN` / `OPEN_*`. Without `target` it goes to `door_target`. Response: `ok`, `result` (`opened`, `busy`, `queued`, `unconfirmed`, `not_registered`, `timeout`, `error`, `send_failed`) and the SIP `code` | `target`, `command` |
 | `vimar_intercom.fetch_local` | HTTP Digest GET against the Tab's local interface (home mode). Admins and automations only | `path`, `save_as`, `host`, `scheme` |
-| `vimar_intercom.find_sga` | Finds the PICG by probing a range of addresses ([#14](https://github.com/lollox80/ha-vimar-intercom/issues/14)). Admins and automations only | `start`, `end`, `targets`, `probe`, `delay`, `reply_wait`, `sip_timeout`, `apply`, `apply_sga` |
+| `vimar_intercom.find_sga` | Finds the PICG by probing a range of addresses ([#14](https://github.com/ha-vimar/ha-vimar-intercom/issues/14)). Admins and automations only | `start`, `end`, `targets`, `probe`, `delay`, `reply_wait`, `sip_timeout`, `apply`, `apply_sga` |
 | `vimar_intercom.simulate_ring` | Test ring (admin): a whole ring without the panel and with no SIP traffic. The state goes to ringing (card, sensors), the doorbell event and the start webhook fire, and after `duration` seconds it ends like an unanswered ring (end webhook). It cannot be answered, the away message ignores it, a real ring replaces it, and it stays out of the ring log | `duration` (1 to 90 s, default 20) |
 
 Example (Developer tools → Actions):
