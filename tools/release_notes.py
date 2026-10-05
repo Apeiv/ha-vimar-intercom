@@ -144,6 +144,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--write-changelog", action="store_true", help="insert the section into CHANGELOG.md")
     ap.add_argument("--notes-file", help="write the GitHub release notes there")
     args = ap.parse_args(argv)
+    # The notes carry "⚠": a Windows console (cp1252) can't print it and the run died there.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
 
     if args.prs:
         rng, numbers = "PRs given", [int(n) for n in args.prs.split(",") if n.strip()]

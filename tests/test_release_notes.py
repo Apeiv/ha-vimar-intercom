@@ -106,6 +106,19 @@ def test_a_hotfix_takes_the_prs_given_without_reading_git(monkeypatch, capsys):
     assert "Door (#140)" in capsys.readouterr().out
 
 
+def test_main_prints_the_warning_sign_on_a_cp1252_console(monkeypatch):
+    """On Windows stdout is cp1252 and "⚠" raised UnicodeEncodeError before anything was written."""
+    import io
+    out = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+    monkeypatch.setattr(sys, "stdout", out)
+    monkeypatch.setattr(rn, "_run", lambda *cmd: (
+        '{"number": 7, "title": "t", "headRefName": "fix/x",'
+        ' "body": "Changelog: Bug fixes - x\\nBefore you update: y"}'))
+    assert rn.main(["--version", "1.0.20", "--prs", "7"]) == 0
+    out.flush()
+    assert "⚠ Before you update".encode() in out.buffer.getvalue()
+
+
 def test_main_reads_git_and_gh_and_writes_the_files(tmp_path, monkeypatch, capsys):
     calls = []
 
