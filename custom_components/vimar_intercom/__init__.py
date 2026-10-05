@@ -191,7 +191,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # enqueue, so a slow phone loses its own frames and nobody else waits for it.
     senders: dict[web.WebSocketResponse, tuple[asyncio.Queue, asyncio.Task]] = {}
     resync: set[web.WebSocketResponse] = set()  # backlog dropped: no video until a keyframe
+    # ?only=audio|video (views.py): the one media type a socket wants, b"\x01" or b"\x03".
+    wants: dict[web.WebSocketResponse, bytes] = {}
     hass.data[DOMAIN][entry.entry_id]["ws_senders"] = senders
+    hass.data[DOMAIN][entry.entry_id]["ws_wants"] = wants
 
     async def _drain(ws, queue: asyncio.Queue):
         try:
@@ -206,7 +209,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             senders.pop(ws)[1].cancel()
             resync.discard(ws)
         for ws in audio_ws_clients:
-            if only is not None and ws is not only:
+            if (only is not None and ws is not only) or wants.get(ws, data[:1]) != data[:1]:
                 continue
             if ws not in senders:
                 queue = asyncio.Queue(maxsize=WS_CLIENT_QUEUE)

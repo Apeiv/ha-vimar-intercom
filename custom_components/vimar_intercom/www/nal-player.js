@@ -41,7 +41,7 @@ class NalPlayer {
 
   async _open() {
     try {
-      const { path } = await this._hass.callWS({ type: "auth/sign_path", path: "/api/vimar_intercom/audio_ws" });
+      const { path } = await this._hass.callWS({ type: "auth/sign_path", path: "/api/vimar_intercom/audio_ws?only=video" });
       if (this._closed) return;
       const ws = (this._ws = new WebSocket(location.origin.replace(/^http/, "ws") + path));
       ws.binaryType = "arraybuffer";

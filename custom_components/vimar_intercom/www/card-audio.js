@@ -162,7 +162,7 @@ const CardAudio = (Base) => class extends Base {
     try {
       const ctx = await this._unlockedContext();
       if (!ctx) return;
-      const { path } = await this._hass.callWS({ type: "auth/sign_path", path: "/api/vimar_intercom/audio_ws" });
+      const { path } = await this._hass.callWS({ type: "auth/sign_path", path: "/api/vimar_intercom/audio_ws?only=audio" });
       // Stato cambiato nell'attesa: uscito dalla card, o (solo per l'automatico) l'anteprima
       // non serve più (config spenta dall'editor, oppure il parlato vero l'ha scavalcata).
       if (!this.isConnected || this._ws || (auto && !this._cfg.listen_on_ring)) return ctx.close();
@@ -193,7 +193,7 @@ const CardAudio = (Base) => class extends Base {
     // WebSocket orfano (chi la chiama spegne il microfono).
     if (!this.isConnected) throw new Error("card chiusa");
     // WebSocket con percorso firmato: il browser non può mandare il token negli header.
-    const { path } = await this._hass.callWS({ type: "auth/sign_path", path: "/api/vimar_intercom/audio_ws" });
+    const { path } = await this._hass.callWS({ type: "auth/sign_path", path: "/api/vimar_intercom/audio_ws?only=audio" });
     const ws = new WebSocket(location.origin.replace(/^http/, "ws") + path);
     this._ws = ws;  // da qui _stopAudio lo chiude anche se qualcosa sotto fallisce
     ws.binaryType = "arraybuffer";
