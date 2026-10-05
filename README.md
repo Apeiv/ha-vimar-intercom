@@ -29,6 +29,8 @@ What changes from one plant to another: [Configuration](https://github.com/ha-vi
 
 ## Installation
 
+Coming from the original noiseheroes-lab integration? Remove it first: [Migration](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/docs/MIGRATION.md).
+
 1. Click the **Open in HACS** button above (or: HACS → ⋮ menu → *Custom repositories* → add
    `https://github.com/ha-vimar/ha-vimar-intercom`, category *Integration*).
 2. Install **Vimar Intercom** and restart Home Assistant.
@@ -67,6 +69,7 @@ the phonebook: [Configuration](https://github.com/ha-vimar/ha-vimar-intercom/blo
 | [Echo Show as an intercom](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/docs/SCRYPTED-ALEXA.md) | Step by step: Echo Show watches, calls and talks to the panel through Scrypted |
 | [Phonebook](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/docs/RUBRICA.md) | Where `rubrica.db` comes from and what it contains |
 | [Troubleshooting](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/docs/TROUBLESHOOTING.md) | Known limitations and how to read the logs |
+| [Migration](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/docs/MIGRATION.md) | Moving over from the original noiseheroes-lab integration |
 | [Changelog](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/CHANGELOG.md) | What changed in each release |
 
 ## Support and contributing

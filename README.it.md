@@ -29,6 +29,8 @@ Cosa cambia da un impianto all'altro: [Configurazione](https://github.com/ha-vim
 
 ## Installazione
 
+Arrivi dall'integrazione originale di noiseheroes-lab? Prima toglila: [Migrazione](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/docs/MIGRATION.it.md).
+
 1. Premi il pulsante **Apri in HACS** qui sopra (oppure: HACS → menu ⋮ → *Repository personalizzati* →
    aggiungi `https://github.com/ha-vimar/ha-vimar-intercom`, categoria *Integrazione*).
 2. Installa **Vimar Intercom** e riavvia Home Assistant.
@@ -67,6 +69,7 @@ la rubrica: [Configurazione](https://github.com/ha-vimar/ha-vimar-intercom/blob/
 | [Echo Show come citofono](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/docs/SCRYPTED-ALEXA.it.md) | Passo per passo: l'Echo Show guarda, chiama e parla con la targa tramite Scrypted |
 | [Rubrica](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/docs/RUBRICA.md) | Da dove viene `rubrica.db` e cosa contiene (in inglese) |
 | [Problemi e log](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/docs/TROUBLESHOOTING.it.md) | Limiti noti e come leggere i log |
+| [Migrazione](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/docs/MIGRATION.it.md) | Passare dall'integrazione originale di noiseheroes-lab a questa |
 | [Changelog](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/CHANGELOG.md) | Cosa è cambiato in ogni versione (in inglese) |
 
 ## Supporto e contributi
