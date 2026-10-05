@@ -1,0 +1,20 @@
+# Monthly, so updates come in one batch and go through the merge queue with the rest.
+# Dependabot's PRs have no "Changelog:" line: the "PR text" check skips them (pr-text.yml),
+# and the release tool files them under Other changes.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: ci
+  - package-ecosystem: pip  # requirements-dev.txt (test and lint tools)
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      dev-tools:
+        patterns: ["*"]
+    commit-message:
+      prefix: chore
