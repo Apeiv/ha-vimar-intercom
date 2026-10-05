@@ -20,7 +20,7 @@
   "requirements": [
     "pycryptodome>=3.19.0"
   ],
-  "version": "1.0.19",
+  "version": "1.0.20",
   "zeroconf": [
     "_eipvdes._tcp.local."
   ]
