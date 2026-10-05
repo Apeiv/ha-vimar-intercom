@@ -6,6 +6,51 @@ Italian and are kept as they were written.
 
 ## [Unreleased]
 
+## [1.0.20] - 2026-10-05
+
+> **⚠ Before you update**
+>
+> - Home Assistant 2025.10 or newer is now required ([#127](https://github.com/ha-vimar/ha-vimar-intercom/pull/127))
+> - automations that read the `open_door` response (`result`) or the "Ultima Apertura" `esito` attribute now get a key instead of Italian text: `opened`, `busy`, `queued`, `unconfirmed`, `not_registered`, `timeout`, `error` or `send_failed`, plus the SIP code in `code` / `codice` ([#132](https://github.com/ha-vimar/ha-vimar-intercom/pull/132)).
+> - automations reading the `send_command` response or the "Last Command" sensor get `ok: false` and `queued` where a 202 used to give `ok: true` and `OK (202)` ([#139](https://github.com/ha-vimar/ha-vimar-intercom/pull/139)).
+
+### Enhancements
+
+- The card no longer receives every media twice over the network: less upload from home when you watch the intercom remotely ([#142](https://github.com/ha-vimar/ha-vimar-intercom/pull/142)).
+
+### Bug fixes
+
+- The status sensor no longer goes "offline" in the middle of a call or a ring while a registration renewal is retried ([#119](https://github.com/ha-vimar/ha-vimar-intercom/pull/119)).
+- Opening the door over the cloud no longer sends a second open command after a timeout; the card asks you to wait before trying again ([#120](https://github.com/ha-vimar/ha-vimar-intercom/pull/120)).
+- A "202 Accepted" answer to a door command is no longer counted as an open door ([#120](https://github.com/ha-vimar/ha-vimar-intercom/pull/120)).
+- A stray video packet from the cloud relay no longer freezes the HA camera, go2rtc, Frigate or HomeKit picture for several seconds ([#121](https://github.com/ha-vimar/ha-vimar-intercom/pull/121)).
+- Video and audio no longer fail for the rest of a call when the cloud relay jumps the packet numbers right before a wrap, and reordered packets no longer move the SRTP window ([#122](https://github.com/ha-vimar/ha-vimar-intercom/pull/122)).
+- The card now says why the microphone can't start (permission denied, Home Assistant opened over HTTP, or no microphone in the app) instead of doing nothing ([#124](https://github.com/ha-vimar/ha-vimar-intercom/pull/124)).
+- Door command errors (lock, Open Door buttons, card) now follow the Home Assistant language instead of always being in Italian ([#132](https://github.com/ha-vimar/ha-vimar-intercom/pull/132)).
+- Light, relay and switch commands the cloud relay only queued (202) are no longer reported as done ([#139](https://github.com/ha-vimar/ha-vimar-intercom/pull/139)).
+- The ring photo is taken from the first keyframe, so it shows up about 3 s sooner and also on panels that send a single keyframe per ring ([#141](https://github.com/ha-vimar/ha-vimar-intercom/pull/141)).
+- Over the cloud, commands (phonebook actuators, voicemail and DND switches, voicemail delay, send_command) now wait 20 s like the door, so a late answer from the relay is no longer reported as a failure ([#143](https://github.com/ha-vimar/ha-vimar-intercom/pull/143)).
+
+### Documentation
+
+- docs(github): issue templates point to Discussions Q&A ([#116](https://github.com/ha-vimar/ha-vimar-intercom/pull/116))
+- docs(contributing): version bump only in release PRs ([#118](https://github.com/ha-vimar/ha-vimar-intercom/pull/118))
+- Links point to the new ha-vimar organisation ([#136](https://github.com/ha-vimar/ha-vimar-intercom/pull/136))
+- Migration notes for users of the original noiseheroes integration ([#147](https://github.com/ha-vimar/ha-vimar-intercom/pull/147))
+
+### Other changes
+
+- test(homekit): give the port reservation test its own clock ([#117](https://github.com/ha-vimar/ha-vimar-intercom/pull/117))
+- ci: declare read-only permissions in the Validate workflow ([#125](https://github.com/ha-vimar/ha-vimar-intercom/pull/125))
+- Changelog entries now come from the PR descriptions; PR template and CI check for them ([#126](https://github.com/ha-vimar/ha-vimar-intercom/pull/126))
+- Home Assistant 2025.10 or newer is now required; CI runs on Python 3.13 and 3.14 ([#127](https://github.com/ha-vimar/ha-vimar-intercom/pull/127))
+- Regression tests for cloud and local ring edge cases (renewal during a ring, forked and crossed CANCELs, retransmitted INVITE, two cards, crossed hang-ups) ([#131](https://github.com/ha-vimar/ha-vimar-intercom/pull/131))
+- The `open_door` response and the last door sensor report a result key (`opened`, `busy`, `timeout`, ...) and the SIP code instead of Italian text ([#132](https://github.com/ha-vimar/ha-vimar-intercom/pull/132)).
+- Card upload tests follow the config entry lookup used since 1.0.19 ([#133](https://github.com/ha-vimar/ha-vimar-intercom/pull/133))
+- The ring photo decoder now logs what it does (debug log), to help find why a ring sometimes has no photo ([#134](https://github.com/ha-vimar/ha-vimar-intercom/pull/134)).
+- GOVERNANCE.md and CODEOWNERS: roles, who tests what, reviews, releases ([#137](https://github.com/ha-vimar/ha-vimar-intercom/pull/137))
+- Release notes and the changelog are composed from the PR descriptions (tools/release_notes.py) ([#138](https://github.com/ha-vimar/ha-vimar-intercom/pull/138))
+
 ## [1.0.19] - 2026-10-02
 
 ### Added
