@@ -76,7 +76,7 @@ def test_call_info_chiavi_minuscole(hub):
 def _cattura(monkeypatch):
     got = {}
 
-    async def _send(uri, body, extra_headers=None):
+    async def _send(uri, body, extra_headers=None, timeout=15):
         got["h"] = extra_headers
         return True, "OK (200)", 200
 

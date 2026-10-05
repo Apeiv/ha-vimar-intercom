@@ -327,7 +327,7 @@ def test_only_a_plant_id_on_the_plant_domain_is_accepted(hub, monkeypatch, targe
     monkeypatch.setattr(hub_mod.R, "SIP_DOMAIN", "d")
     sent = []
 
-    async def message(uri, body, extra_headers=None):
+    async def message(uri, body, extra_headers=None, timeout=15):
         sent.append(uri)
         return True, "OK", 200
 
@@ -343,7 +343,7 @@ def test_a_plant_id_on_any_plant_domain_is_sent(hub, monkeypatch, domain_attr):
     monkeypatch.setattr(hub_mod.R, domain_attr, "plant.example")
     sent = []
 
-    async def message(uri, body, extra_headers=None):
+    async def message(uri, body, extra_headers=None, timeout=15):
         sent.append(uri)
         return True, "OK", 200
 
@@ -357,7 +357,7 @@ def test_a_status_refresh_is_not_recorded_as_the_users_command(hub, monkeypatch)
     monkeypatch.setattr(hub_mod.R, "PICG_TARGET", "55001")
     sent = []
 
-    async def message(uri, body, extra_headers=None):
+    async def message(uri, body, extra_headers=None, timeout=15):
         sent.append((uri, body, extra_headers))
         return True, "OK"
 

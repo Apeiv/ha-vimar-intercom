@@ -107,7 +107,14 @@ def _uri_to_id(uri: str | None) -> str | None:
 
 
 MAX_CALL_DURATION = 300  # 5 minutes — auto-hangup safety net
-DOOR_TLS_TIMEOUT = 20  # door MESSAGE over the cloud: the relay answered after ~15.2 s in #14
+DOOR_TLS_TIMEOUT = 20  # MESSAGE over the cloud: the relay answered after ~15.2 s in #14
+
+
+def _message_timeout() -> int:
+    """A command MESSAGE's wait: send_message's default 15 s on local UDP, DOOR_TLS_TIMEOUT over the cloud."""
+    return 15 if R.USE_LOCAL_UDP else DOOR_TLS_TIMEOUT
+
+
 # async_door's result keys, translated where shown (exceptions in strings.json, #128).
 # "queued" and "unconfirmed" are not retried: the relay may still deliver them.
 DOOR_OPENED = "opened"
@@ -1153,9 +1160,10 @@ class VimarIntercomHub(PlantMessages, RingMedia):
         relay (forwarded, the door did not answer in time) may still reach the
         door: the relay can answer late (#14: 202 after ~15.2 s). sip.NOT_SENT and
         other final codes are retried."""
-        timeout = 15 if R.USE_LOCAL_UDP else DOOR_TLS_TIMEOUT  # 15: send_message's default
         try:
-            ok, msg, code = await sip.send_message(uri, body, extra_headers={"Panda": "command"}, timeout=timeout)
+            ok, msg, code = await sip.send_message(
+                uri, body, extra_headers={"Panda": "command"}, timeout=_message_timeout()
+            )
         except OSError as e:
             # Retried. TLS: unsigned leg, assumes the relay always 407s it rather than forwarding.
             # UDP: same exposure as the UDP timeout retry, accepted.
@@ -1210,7 +1218,7 @@ class VimarIntercomHub(PlantMessages, RingMedia):
         headers = {name: value} if name and value else None
         _LOGGER.info("Custom command: uri=%s body=%r headers=%s", uri, body, headers)
         try:
-            ok, msg, code = await sip.send_message(uri, body, extra_headers=headers)
+            ok, msg, code = await sip.send_message(uri, body, extra_headers=headers, timeout=_message_timeout())
         except Exception as e:  # noqa: BLE001
             ok, msg, code = False, str(e), None
         if code == 202:
