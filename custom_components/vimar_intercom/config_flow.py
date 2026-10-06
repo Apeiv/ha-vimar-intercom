@@ -449,8 +449,8 @@ class VimarIntercomConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._moved: tuple | None = None
 
     # ─── Discovery mDNS (_eipvdes._tcp) ─────────────────────────────────────
-    # Nessun import di ZeroconfServiceInfo: sta in helpers.service_info.zeroconf
-    # solo da HA 2024.12, e il minimo è 2024.7 (review della vecchia PR #7).
+    # Nessun import di ZeroconfServiceInfo (helpers.service_info.zeroconf): non serve
+    # il tipo e i test, che girano senza HA, non hanno bisogno di un altro stub.
     # Servono solo .host e .properties.
 
     async def async_step_zeroconf(self, discovery_info) -> FlowResult:
