@@ -181,3 +181,148 @@ def test_the_header_is_still_hidden_with_spaces_or_tabs_before_it():
                     "Proxy-Authorization:\tDigest nonce=\"n\"\r\n")
     assert "abcdef0123" not in out and "nonce" not in out
     assert "Authorization: ***" in out and "Proxy-Authorization:\t***" in out
+
+
+# ─── plant data in the logs (#146): what users paste in issues ─────────────
+
+@pytest.fixture
+def plant():
+    """The identity runtime.configure registers, forgotten after the test."""
+    lr.forget_plant_values()
+    lr.remember_plant_value("id", "7712345")
+    lr.remember_plant_value("imei", "358240051111110")
+    lr.remember_plant_value("uuid", "0f8fad5b-d9cb-469f-a165-70867728950e")
+    lr.remember_plant_value("name", "Casa Rossi HA")
+    yield
+    lr.forget_plant_values()
+
+
+def test_the_account_values_are_masked_wherever_they_appear(plant):
+    out = lr.redact_plant("REGISTER sip:7712345@example.invalid target=7712345 "
+                          "+sip.instance=\"<urn:uuid:0f8fad5b-d9cb-469f-a165-70867728950e>\" "
+                          "from Casa Rossi HA, imei 358240051111110")
+    for value in ("7712345", "358240051111110", "0f8fad5b", "Casa Rossi"):
+        assert value not in out
+    assert "REGISTER sip:" in out
+
+
+def test_a_masked_value_stays_recognisable_and_keeps_its_last_digits(plant):
+    first, second = lr.redact_plant("id 7712345"), lr.redact_plant("again 7712345")
+    tag = first.removeprefix("id ")
+    assert tag == second.removeprefix("again ") and tag.startswith("id…45#")
+
+
+def test_a_registered_number_inside_a_longer_one_is_left_alone(plant):
+    assert lr.redact_plant("cseq 977123456") == "cseq 977123456"
+
+
+def test_short_values_and_the_default_name_are_not_registered():
+    lr.forget_plant_values()
+    lr.remember_plant_value("id", "101")
+    lr.remember_plant_value("name", "Home Assistant")
+    lr.remember_plant_value("name", "")
+    try:
+        assert lr.redact_plant("101 Home Assistant") == "101 Home Assistant"
+    finally:
+        lr.forget_plant_values()
+
+
+@pytest.mark.parametrize("ip, masked", [("192.168.1.23", "192.x.x.23"), ("10.0.0.5", "10.x.x.5"),
+                                        ("172.20.4.7", "172.x.x.7"), ("100.72.3.9", "100.x.x.9")])
+def test_private_addresses_keep_only_the_first_and_last_octet(ip, masked):
+    assert lr.redact_plant(f"Via: SIP/2.0/UDP {ip}:5060;rport") == f"Via: SIP/2.0/UDP {masked}:5060;rport"
+
+
+@pytest.mark.parametrize("text", ["127.0.0.1:8123", "8.8.8.8", "fw 2.15.0.3", "172.32.0.1", "1192.168.1.1"])
+def test_loopback_public_addresses_and_versions_stay(text):
+    assert lr.redact_plant(text) == text
+
+
+def test_the_identity_headers_are_masked_without_registration():
+    lr.forget_plant_values()
+    raw = "MESSAGE sip:55001@d SIP/2.0\r\nMobile-IMEI: 123456789012345\r\nMyName: Telefono di Anna\r\n"
+    out = lr.redact_plant(raw)
+    assert "123456789012345" not in out and "Anna" not in out
+    assert "Mobile-IMEI: imei…45#" in out and "MyName: name#" in out
+    one_line = lr.redact_plant(repr(raw))
+    assert "123456789012345" not in one_line and "Anna" not in one_line
+
+
+@pytest.mark.parametrize("text, hidden", [
+    ('GET_NICKS_REPLY;[{"ROLE": "PICG", "EXT": "55001", "NAME": "Casa Bianchi"}]', "Bianchi"),
+    ("{'name': 'Mario Verdi', 'msg': 'OPEN_3'}", "Verdi"),
+    ('MISSED_CALL;{"SIP_ID": "7798765", "TS": 1}', "7798765"),
+    ('{"NICK": "Papà"}', "Papà"),
+    ('From: "Giulia Neri" <sip:7798765@d>;tag=1', "Neri"),
+])
+def test_names_and_caller_ids_in_plant_messages(text, hidden):
+    assert hidden not in lr.redact_plant(text)
+
+
+def test_what_debugging_needs_stays_readable(plant):
+    text = ("SIP/2.0 404 Not Found\r\nCSeq: 2 MESSAGE\r\nINVITE sip:55001@d SIP/2.0\r\n"
+            'GET_NICKS_REPLY;[{"ROLE": "PICG", "EXT": "55001"}] NAL 5 IDR 1280x720 rtt=35 ms port 5060 '
+            "OPEN_2F to 55002, code 200, after 1.25 s")
+    assert lr.redact_plant(text) == text
+
+
+def test_empty_text_passes_through():
+    assert lr.redact_plant("") == "" and lr.redact_plant(None) is None
+
+
+def test_redact_plant_never_raises(monkeypatch):
+    monkeypatch.setattr(lr, "_PRIVATE_IP", None)
+    assert lr.redact_plant("192.168.1.1") == lr.MASK
+
+
+def test_hostile_text_stays_fast_through_the_plant_masking(plant):
+    """redact_plant runs after redact() has cut the line to MAX_LEN, on the logging thread."""
+    import time
+    for text in ('"name": "' * 1_800, '"x" ' * 4_000, "MyName:" * 2_300, "192.168." * 2_000,
+                 "\nMobile-IMEI: " * 1_100, "7712345" * 2_300):
+        text = lr.redact(text)
+        start = time.perf_counter()
+        lr.redact_plant(text)
+        assert time.perf_counter() - start < 1.0  # quadratic would take seconds
+
+
+def test_a_tag_is_keyed_so_it_cannot_be_brute_forced_back(monkeypatch):
+    """A plain 16-bit hash plus the last two digits gave a 7-digit SIP id back in a second."""
+    import hashlib
+    plain = hashlib.sha256(b"7712345").hexdigest()[:4]
+    monkeypatch.setattr(lr, "_TAG_KEY", b"k" * 16)
+    first = lr._tag("id", "7712345")
+    monkeypatch.setattr(lr, "_TAG_KEY", b"j" * 16)
+    assert lr._tag("id", "7712345") != first and not first.endswith(plain)
+
+
+@pytest.mark.parametrize("text, hidden", [
+    ("Via: SIP/2.0/TLS 192.0.2.20:5061;rport=4100;received=203.0.113.77", "203.0.113.77"),
+    ("Contact: <sip:7798765@198.51.100.4:39012;transport=tls>;expires=600", "198.51.100.4"),
+    ('Contact: <sip:x@h>;+sip.instance="<urn:uuid:9d1e7a52-3b5c-4e2f-8a61-0c4f5e6d7b8a>"', "9d1e7a52"),
+    ("{'sip_id': 7798765, 'ts': 1}", "7798765"),
+    ('"SIP_ID": 7798765', "7798765"),
+    (repr("MESSAGE x\r\nMyName: Casa dell'Anna\r\n"), "Anna"),
+])
+def test_public_addresses_instance_ids_and_unquoted_ids(text, hidden):
+    assert hidden not in lr.redact_plant(text)
+
+
+@pytest.mark.parametrize("text", ['MISSED_CALL;{"SIP_ID": "55001", "TS": 1}', "{'sip_id': 55001}",
+                                  "MyName: Home Assistant", 'From: "Home Assistant" <sip:x@d>',
+                                  "Route: <sip:ipvdes.vimar.cloud;transport=tls;lr>"])
+def test_panel_extensions_the_default_name_and_the_relay_stay(text):
+    assert lr.redact_plant(text) == text
+
+
+def test_the_closing_quote_of_a_repr_survives_the_header_tag():
+    out = lr.redact_plant(repr("MyName: Anna"))
+    assert out.startswith("'MyName: name#") and out.endswith("'")
+
+
+def test_a_header_followed_by_a_long_run_of_spaces_stays_fast():
+    import time
+    text = "MyName: a" + " " * 16_000 + "x"
+    start = time.perf_counter()
+    lr.redact_plant(text)
+    assert time.perf_counter() - start < 0.5  # the old lookahead took ~10^8 steps

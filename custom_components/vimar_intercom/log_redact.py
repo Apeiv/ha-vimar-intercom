@@ -29,11 +29,35 @@ Cosa viene oscurato:
 
 Il nome della chiave resta visibile — serve a capire cosa stava succedendo —
 mentre il valore diventa `***`.
+
+`redact_plant()` is the second layer, for the log only (#146): the plant data users
+would otherwise remove by hand before pasting a log in an issue. Each value becomes a
+short tag that is the same on every line of a run (`id…45#9f1c`, `name#71aa`), so a log
+can still be followed:
+
+* the account's SIP id, IMEI, UUID, MyName and SIP domains, registered by
+  `runtime.configure()` and masked wherever they appear;
+* the `MyName` and `Mobile-IMEI` headers, whatever their value;
+* names and caller ids in plant messages (`"NAME"`, `"NICK"`, `"SIP_ID"`, a dict's
+  `'name'`) and the display name before a `<sip:` URI;
+* a device's `urn:uuid:` instance id;
+* private IPv4 addresses, down to their first and last octet (`192.x.x.23`), and any
+  address after `received=` or as the host of a SIP URI (the home's public address, the
+  other phones' Contacts).
+
+The panels' extensions (`55001`, also as a `SIP_ID`), SIP methods and codes, ports and
+timings stay: they are what a log is read for. `redact()` alone still feeds the *Last Received Message*
+sensor, which shows the plant's own message.
 """
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import re
+import secrets
+
+from .const import MY_NAME
 
 MASK = "***"
 
@@ -130,5 +154,145 @@ def redact(text: str) -> str:
         if len(out) > MAX_LEN:
             out = f"{out[:MAX_LEN]}... [{len(out) - MAX_LEN} characters cut]"
         return out
+    except Exception:  # noqa: BLE001 - mai far fallire il logging
+        return MASK
+
+
+# ─── plant data (#146) ───────────────────────────────────────────────────────
+
+# Shorter values would match too much (a registered "101" is every 101 in the log).
+_MIN_PLANT_VALUE = 4
+
+# A SIP_ID this short is a panel's or a monitor's extension (55001): it stays readable.
+_PANEL_EXT_MAX = 5
+
+# Tags are keyed with a key drawn at start-up: a value gets the same tag for the whole run,
+# but a tag can't be turned back into a 7-digit SIP id or an IMEI by trying every value,
+# as 16 bits of a plain hash could. After a restart the tags change.
+_TAG_KEY = secrets.token_bytes(16)
+
+
+def _tag(kind: str, value: str) -> str:
+    """Stable short tag. Ids keep their last two digits, to tell two of them apart."""
+    digest = hmac.new(_TAG_KEY, value.encode("utf-8"), hashlib.sha256).hexdigest()[:4]
+    tail = f"…{value[-2:]}" if value.isdigit() else ""
+    return f"{kind}{tail}#{digest}"
+
+
+# value -> tag, and one pattern over all of them (longest first), swapped as a pair so
+# a logging thread never sees one without the other.
+_plant: tuple[dict[str, str], re.Pattern | None] = ({}, None)
+
+
+def set_plant_values(pairs, *, keep: bool = False) -> None:
+    """Mask these `(kind, value)` pairs in every later log line, in place of the ones
+    before (or on top of them with `keep`), swapped in one go: no line in between goes
+    out with nothing masked. Short values and the default MyName are left out."""
+    global _plant
+    tags = dict(_plant[0]) if keep else {}
+    for kind, value in pairs:
+        value = str(value or "").strip()
+        if len(value) >= _MIN_PLANT_VALUE and value != MY_NAME:
+            tags.setdefault(value, _tag(kind, value))
+    if not tags:
+        _plant = ({}, None)
+        return
+    alts = "|".join(re.escape(v) for v in sorted(tags, key=len, reverse=True))
+    _plant = (tags, re.compile(rf"(?<![0-9A-Za-z])(?:{alts})(?![0-9A-Za-z])"))
+
+
+def remember_plant_value(kind: str, value: str | None) -> None:
+    """Mask `value` too, keeping what is registered."""
+    set_plant_values([(kind, value)], keep=True)
+
+
+def forget_plant_values() -> None:
+    global _plant
+    _plant = ({}, None)
+
+
+_IPV4 = r"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}"
+
+
+def _short_ip(ip: str) -> str:
+    parts = ip.split(".")
+    return f"{parts[0]}.x.x.{parts[3]}"
+
+
+# Any address, public too, where it can only be a phone's or the home's: the address the
+# relay saw us from (`received=`) and the host of a SIP URI (`sip:7712345@203.0.113.9`,
+# the other phones' Contacts in a REGISTER answer).
+_RECEIVED = re.compile(rf"(?i)(\breceived=)({_IPV4})")
+_URI_HOST = re.compile(rf"(?i)(\bsips?:[^@\s<>\"';,]{{1,64}}@)({_IPV4})")
+
+# Elsewhere only private addresses: 10/8, 100.64/10 (carrier NAT), 169.254/16, 172.16/12,
+# 192.168/16, checked in _mask_ip. Not after or before a digit or a dot, so `1192.168.1.1`
+# and `2.15.0.3.1` are not addresses.
+_PRIVATE_IP = re.compile(r"(?<![\d.])(10|100|169|172|192)\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?!\.?\d)")
+
+
+def _mask_ip(m: re.Match) -> str:
+    first, second = int(m.group(1)), int(m.group(2))
+    private = {10: True, 100: 64 <= second <= 127, 169: second == 254, 172: 16 <= second <= 31,
+               192: second == 168}[first]
+    if not private or max(int(g) for g in m.groups()) > 255:
+        return m.group(0)
+    return _short_ip(m.group(0))
+
+
+# A device's instance id, in a Contact (`+sip.instance="<urn:uuid:…>"`).
+_URN_UUID = re.compile(r"(?i)(urn:uuid:)([0-9a-f-]{8,64})")
+
+# `MyName: …` / `Mobile-IMEI: …`, as a header line or inside a message logged with %r
+# (there it follows a written `\n`, a letter for `\b`). The value runs to the end of the
+# line or to a backslash; the closing quote of a %r is put back after the tag.
+_IDENTITY_HEADER = re.compile(r"(?im)(?:(?<=\\n)|(?<![\w-]))(myname|mobile-imei)([ \t]*:[ \t]*)([^\r\n\\]+)")
+
+
+def _mask_header(m: re.Match) -> str:
+    value = m.group(3)
+    core = value.rstrip(" \t'\"")
+    if not core or core == MY_NAME:
+        return m.group(0)
+    kind = "imei" if m.group(1).lower() == "mobile-imei" else "name"
+    return f"{m.group(1)}{m.group(2)}{_tag(kind, core)}{value[len(core):]}"
+
+
+# A name or caller id in a plant message: `"NAME": "…"`, `'name': '…'`, `"SIP_ID": 7798765`.
+_NAME_FIELD = re.compile(
+    r"(?i)([\"'])(name|nick|nickname|myname|sip_id)\1(\s*:\s*)(?:([\"'])(.*?)\4|(\d+))"
+)
+
+
+def _mask_field(m: re.Match) -> str:
+    quote, value = (m.group(4), m.group(5)) if m.group(6) is None else ("", m.group(6))
+    is_id = m.group(2).lower() == "sip_id"
+    if not value or value == MY_NAME or (is_id and value.isdigit() and len(value) <= _PANEL_EXT_MAX):
+        return m.group(0)
+    return (f"{m.group(1)}{m.group(2)}{m.group(1)}{m.group(3)}"
+            f"{quote}{_tag('id' if is_id else 'name', value)}{quote}")
+
+
+# The display name of a SIP address: `From: "Anna" <sip:…>`.
+_DISPLAY_NAME = re.compile(r"\"([^\"\r\n]+)\"(?=\s*<sips?:)")
+
+
+def redact_plant(text: str) -> str:
+    """`text` with the plant data above replaced by tags. Never raises."""
+    if not text:
+        return text
+    try:
+        # The shapes first: a registered value they tag gets the same tag as below.
+        out = _IDENTITY_HEADER.sub(_mask_header, text)
+        out = _NAME_FIELD.sub(_mask_field, out)
+        out = _DISPLAY_NAME.sub(lambda m: m.group(0) if m.group(1) == MY_NAME
+                                else f'"{_tag("name", m.group(1))}"', out)
+        out = _URN_UUID.sub(lambda m: f"{m.group(1)}{_tag('uuid', m.group(2))}", out)
+        tags, known = _plant
+        if known:
+            out = known.sub(lambda m: tags[m.group(0)], out)
+        out = _RECEIVED.sub(lambda m: f"{m.group(1)}{_short_ip(m.group(2))}", out)
+        out = _URI_HOST.sub(lambda m: f"{m.group(1)}{_short_ip(m.group(2))}", out)
+        return _PRIVATE_IP.sub(_mask_ip, out)
     except Exception:  # noqa: BLE001 - mai far fallire il logging
         return MASK

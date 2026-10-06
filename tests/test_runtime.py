@@ -82,3 +82,58 @@ def test_reconfigure_resets_previous_override():
     assert runtime.SGA_TARGET == const.SGA_TARGET
 
 
+
+
+def test_configure_hands_the_identity_to_the_log_masking():
+    """#146: the account's SIP id, IMEI, UUID and name never reach a log line in clear."""
+    from custom_components.vimar_intercom import log_redact
+    runtime.configure({"sip_user": "7712345", "sip_domain": "d", "device_imei": "358240051111110",
+                       "device_uuid": "0f8fad5b-d9cb-469f-a165-70867728950e", "device_name": "Casa Rossi HA"})
+    try:
+        out = log_redact.redact_plant("7712345 358240051111110 0f8fad5b-d9cb-469f-a165-70867728950e Casa Rossi HA")
+        for value in ("7712345", "358240051111110", "0f8fad5b", "Rossi"):
+            assert value not in out
+        runtime.configure({"sip_user": "7799999", "sip_domain": "d"})
+        assert "7712345" in log_redact.redact_plant("7712345"), "a reconfigure forgets the old identity"
+    finally:
+        log_redact.forget_plant_values()
+
+
+def test_configure_masks_the_sip_domain_in_its_three_forms():
+    """PROTOCOL §4-bis: the cloud domain whole, without `.<cproxy>`, and with `.` → `_`."""
+    from custom_components.vimar_intercom import log_redact
+    runtime.configure({"sip_user": "7712345", "sip_domain": "d", "cloud_proxy": "relay.example",
+                       "cloud_domain": "home42.plant.relay.example", "local_domain": "192.168.1.50"})
+    out = log_redact.redact_plant("sip:x@home42.plant.relay.example /domains/home42.plant/ "
+                                  "home42_plant_rubrica via relay.example")
+    assert "home42" not in out and "relay.example" in out
+
+
+def test_a_local_domain_that_is_an_address_is_left_to_the_address_masking():
+    """Some Tab 5S have 127.0.0.1 as their local domain: it must not turn every loopback
+    line into a domain tag, and the Tab's IP keeps its address shape."""
+    from custom_components.vimar_intercom import log_redact
+    runtime.configure({"sip_user": "7712345", "sip_domain": "d", "local_domain": "127.0.0.1"})
+    assert log_redact.redact_plant("http://127.0.0.1:8123") == "http://127.0.0.1:8123"
+    runtime.configure({"sip_user": "7712345", "sip_domain": "d", "local_domain": "192.168.1.50"})
+    assert log_redact.redact_plant("sip:55001@192.168.1.50") == "sip:55001@192.x.x.50"
+
+
+def test_configure_masks_the_intercom_mac_however_it_is_written():
+    from custom_components.vimar_intercom import log_redact
+    runtime.configure({"sip_user": "7712345", "sip_domain": "d", "mac": "00:1A:2B:3C:4D:5E"})
+    out = log_redact.redact_plant("mac 00:1A:2B:3C:4D:5E 00:1a:2b:3c:4d:5e 001A2B3C4D5E 001a2b3c4d5e")
+    assert "4D:5E" not in out and "4d:5e" not in out and "3C4D5E" not in out and "3c4d5e" not in out
+
+
+def test_a_reconfigure_swaps_the_values_in_one_go(monkeypatch):
+    """Forget-then-remember left a moment with nothing masked: one assignment now."""
+    from custom_components.vimar_intercom import log_redact
+    runtime.configure({"sip_user": "7712345", "sip_domain": "d"})
+    seen = []
+    real = log_redact.set_plant_values
+    monkeypatch.setattr(log_redact, "set_plant_values", lambda *a, **k: (seen.append(a), real(*a, **k)))
+    monkeypatch.setattr(log_redact, "forget_plant_values", lambda: seen.append("forget"))
+    runtime.configure({"sip_user": "7799999", "sip_domain": "d"})
+    assert len(seen) == 1 and "forget" not in seen
+    assert "7799999" not in log_redact.redact_plant("7799999")

@@ -18,6 +18,7 @@ import secrets as _secrets
 import uuid as _uuid
 
 from . import const as _const
+from . import log_redact as _log_redact
 from . import plant_state as _plant_state
 
 _LOGGER = _logging.getLogger(__name__)
@@ -372,6 +373,23 @@ def configure(data: dict) -> None:
     # Same for the /av key: an entry without one gets an ephemeral key, never a
     # shared or empty one (empty would make every key "valid").
     AV_KEY = str(data.get("av_key") or "").strip() or new_av_key()
+    # The account's identity, masked in every log line from now on (#146), in place of
+    # the previous one. The GID stays out: a small integer, it would match any number.
+    plant = [("id", SIP_USER), ("imei", DEVICE_IMEI), ("uuid", DEVICE_UUID), ("name", DEVICE_NAME)]
+    mac = str(MAC_CITOFONO or "").strip()
+    bare = _re.sub(r"[^0-9A-Fa-f]", "", mac)
+    for form in {mac, mac.lower(), mac.upper(), bare, bare.lower(), bare.upper()}:
+        plant.append(("mac", form))
+    # The SIP domains name the plant (the cloud one is also the Digest realm and username),
+    # in the three forms of PROTOCOL §4-bis: whole, without `.<cproxy>`, with `.` → `_`.
+    # A domain that is an address (a local one can be the Tab's IP, or 127.0.0.1) is left
+    # to the address masking.
+    for domain in (CLOUD_DOMAIN, LOCAL_DOMAIN, SIP_DOMAIN):
+        short = domain.removesuffix(f".{SIP_PROXY}") if SIP_PROXY else domain
+        for form in {domain, short, short.replace(".", "_")}:
+            if form != SIP_PROXY and not _re.fullmatch(r"[\d._]+", form):
+                plant.append(("domain", form))
+    _log_redact.set_plant_values(plant)
 
     # What the plant said in the previous session: media encryption is forgotten,
     # the detected model starts again from the entry.
