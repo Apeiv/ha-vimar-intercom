@@ -40,7 +40,7 @@ jobs:
           python-version: "3.13"
       # Pinned so that a new ruff release cannot turn the CI red on its own;
       # bump it on purpose together with the fixes it asks for.
-      - run: pip install ruff==0.16.9
+      - run: pip install ruff==0.16.10
       - run: ruff check .
 
   tests:
