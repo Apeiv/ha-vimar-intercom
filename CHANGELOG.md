@@ -6,6 +6,28 @@ Italian and are kept as they were written.
 
 ## [Unreleased]
 
+## [1.0.21] - 2026-10-07
+
+### Documentation
+
+- The entity list in the docs now covers every entity and action, with the key at the end of each unique id ([#156](https://github.com/ha-vimar/ha-vimar-intercom/pull/156)).
+- New troubleshooting table by symptom and a phonebook guide (which way works on your plant: intercom, cloud, file, by hand); clearer setup texts on the pairing QR and the SIP credentials ([#144](https://github.com/ha-vimar/ha-vimar-intercom/issues/144)) ([#158](https://github.com/ha-vimar/ha-vimar-intercom/pull/158)).
+- The troubleshooting guide lists the plant data the logs now mask (addresses, SIP ids, GID, …), what is not masked yet, and that the pairing QR code must never be attached to an issue ([#162](https://github.com/ha-vimar/ha-vimar-intercom/pull/162)).
+
+### Security
+
+- Debug logs now also mask the plant's private IP addresses, the account's SIP id, IMEI and device name, and names and caller ids from the phonebook, so a log needs far less cleaning before it is shared in an issue ([#157](https://github.com/ha-vimar/ha-vimar-intercom/pull/157)).
+- The logs now also mask the other phones' ids in SIP addresses, public addresses in the Via header and in SIP addresses without a user, and the apartment GID ([#159](https://github.com/ha-vimar/ha-vimar-intercom/pull/159)).
+- On Home Assistant running on Windows, uploading the away message no longer writes through a symlink left in the messages folder (follow-up to [#91](https://github.com/ha-vimar/ha-vimar-intercom/pull/91)) ([#160](https://github.com/ha-vimar/ha-vimar-intercom/pull/160)).
+
+### Other changes
+
+- ci: bump actions/checkout from 4 to 7 ([#150](https://github.com/ha-vimar/ha-vimar-intercom/pull/150))
+- ci: bump actions/setup-python from 5 to 7 ([#151](https://github.com/ha-vimar/ha-vimar-intercom/pull/151))
+- chore: bump the dev-tools group with 7 updates ([#152](https://github.com/ha-vimar/ha-vimar-intercom/pull/152))
+- Code kept for Home Assistant versions older than 2025.10 removed ([#155](https://github.com/ha-vimar/ha-vimar-intercom/pull/155))
+- A test keeps docs/ENTITIES.md in line with the entities and actions in the code ([#156](https://github.com/ha-vimar/ha-vimar-intercom/pull/156)).
+
 ## [1.0.20] - 2026-10-05
 
 > **⚠ Before you update**
