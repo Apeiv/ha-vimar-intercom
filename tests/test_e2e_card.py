@@ -1221,10 +1221,9 @@ def test_impostazioni_carica_il_file_audio(monkeypatch, engine, tmp_path, layout
         async with Rig(monkeypatch, http=True) as rig:
             entry = types.SimpleNamespace(entry_id="e1", options={})
             rig.hass.config = types.SimpleNamespace(media_dirs={"local": str(tmp_path)})
-            # What views._loaded_entry calls since a4ef6c5: the entry whose hub is in
-            # hass.data ("e1" in harness/web.py).
+            # What views._loaded_entry asks Home Assistant for: the loaded entry of the domain.
             rig.hass.config_entries = types.SimpleNamespace(
-                async_get_entry=lambda eid: entry if eid == "e1" else None,
+                async_loaded_entries=lambda domain: [entry] if domain == "vimar_intercom" else [],
                 async_update_entry=lambda e, options: setattr(e, "options", options))
             monkeypatch.setattr(R, "AWAY_MESSAGE_FILE", "")
             await rig.register()

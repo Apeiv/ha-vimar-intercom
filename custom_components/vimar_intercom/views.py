@@ -393,13 +393,8 @@ def _save_body(body: bytes | bytearray, folder: str | None, name: str) -> str:
 
 
 def _loaded_entry(hass):
-    """The config entry that is set up (its hub is in hass.data). Not
-    ConfigEntries.async_loaded_entries: that is HA 2025.x, and hacs.json still says 2024.7.
-    """
-    for entry_id in hass.data.get(DOMAIN, {}):
-        if (entry := hass.config_entries.async_get_entry(entry_id)) is not None:
-            return entry
-    return None
+    """The config entry that is set up, or None (only one is allowed, ADR-22)."""
+    return next(iter(hass.config_entries.async_loaded_entries(DOMAIN)), None)
 
 
 class VimarAwayUploadView(HomeAssistantView):

@@ -8,7 +8,7 @@ ffmpeg come un file, con lo stesso tetto di 30 s. Il PCM resta in cache per
 all'avvio di HA (salvare le opzioni ricarica l'entry) e, se manca ancora, allo
 squillo. Se il TTS fallisce (nessun motore, rete) si lascia squillare.
 
-API pubblica di HA (2024.7 e successive): tts.generate_media_source_id e
+API pubblica di HA (presente in tutte le versioni supportate, 2025.10+): tts.generate_media_source_id e
 tts.async_get_media_source_audio.
 """
 from __future__ import annotations
