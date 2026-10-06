@@ -403,6 +403,31 @@ def test_an_upload_never_writes_through_a_dangling_symlink(of, tmp_path):
     assert (folder / "msg-2.wav").read_bytes() == b"new"
 
 
+def test_an_upload_skips_a_dangling_symlink_without_o_nofollow(of, monkeypatch, tmp_path):
+    """Windows has no O_NOFOLLOW, and there O_CREAT|O_EXCL on a dangling symlink creates
+    its target. Emulated here so it runs on Linux too: the link must be skipped before
+    os.open is ever called on it."""
+    src = tmp_path / "msg.wav"
+    src.write_bytes(b"new")
+    folder, target = tmp_path / "messaggi", tmp_path / "planted.wav"
+    folder.mkdir()
+    try:
+        os.symlink(target, folder / "msg.wav")
+    except OSError:
+        pytest.skip("symlinks need privileges on this system")
+    monkeypatch.delattr(os, "O_NOFOLLOW", raising=False)
+    real_open = os.open
+
+    def windows_open(path, flags, mode=0o777):
+        # What Windows does: follow the link, then O_EXCL only checks the target.
+        return real_open(os.path.realpath(path), flags, mode)
+
+    monkeypatch.setattr(of.away_config.os, "open", windows_open)
+    assert of.away_config.save_upload(str(src), str(folder)) == str(folder / "msg-2.wav")
+    assert not target.exists()
+    assert (folder / "msg-2.wav").read_bytes() == b"new"
+
+
 def test_webhook_urls_must_be_http(of):
     result = _settings(of, {"ring_webhook_url": "ftp://192.0.2.5/x",
                             "ring_end_webhook_url": "https://example.test/end"})
