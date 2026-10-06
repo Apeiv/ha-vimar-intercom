@@ -79,6 +79,24 @@ logger:
 ```
 
 Entrambe le destinazioni oscurano password, risposte digest, token della rubrica e chiavi SRTP
-prima di scrivere. Le risposte attese al keepalive SIP (l'OPTIONS periodico) sono a `DEBUG`: non
+prima di scrivere. **(1.0.21+)** Oscurano anche i dati dell'impianto (la 1.0.20 non ancora)
+([#157](https://github.com/ha-vimar/ha-vimar-intercom/pull/157),
+[#159](https://github.com/ha-vimar/ha-vimar-intercom/pull/159)), così un log va ripulito molto meno prima di allegarlo a una issue:
+
+- **Indirizzi IP**: quelli privati ovunque, quelli pubblici dove possono essere solo tuoi o di un telefono
+  (`received=`, l'host di un URI SIP, l'hop di un `Via`). Restano il primo e l'ultimo numero: `192.x.x.23`.
+- **Id SIP**: quello di Home Assistant e quelli degli altri telefoni e dispositivi negli URI SIP (`<sip:id…45#9f1c@…>`).
+  L'interno breve di una targa come `55001` resta leggibile: è quello che dice di quale targa parla una riga.
+- **Il GID dell'appartamento** (`gid#xxxx`), il MAC del citofono, i domini SIP, IMEI e UUID del dispositivo, il nome del
+  dispositivo e i nomi della rubrica.
+
+Un'etichetta come `id…45#9f1c` tiene solo le ultime due cifre ed è uguale per lo stesso valore finché Home Assistant
+non si riavvia, così due righe sullo stesso dispositivo si riconoscono ancora. Non è ancora coperto tutto: gli indirizzi
+IPv6, quelli dentro le righe SDP e STUN e un id usato come nome visualizzato senza virgolette
+(`From: 7798765 <sip:…>`) restano come sono, quindi rileggi un log prima di pubblicarlo.
+
+**Il QR e il suo contenuto non vanno mai allegati**, né la foto né il testo: contiene la password SIP.
+
+Le risposte attese al keepalive SIP (l'OPTIONS periodico) sono a `DEBUG`: non
 serve alcun filtro `logger:` per tenere pulito il log.
 

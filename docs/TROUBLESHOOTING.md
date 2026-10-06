@@ -75,6 +75,25 @@ logger:
 ```
 
 Both destinations mask passwords, digest responses, phonebook tokens and SRTP keys before writing.
+**(1.0.21+)** They also mask the plant's data (1.0.20 does not yet)
+([#157](https://github.com/ha-vimar/ha-vimar-intercom/pull/157),
+[#159](https://github.com/ha-vimar/ha-vimar-intercom/pull/159)), so a log needs far less cleaning before it goes into an issue:
+
+- **IP addresses**: private ones everywhere, public ones where they can only be yours or a phone's (`received=`, the
+  host of a SIP URI, the hop of a `Via`). They keep the first and last number: `192.x.x.23`.
+- **SIP ids**: Home Assistant's own and the other phones' and devices' in SIP URIs (`<sip:id…45#9f1c@…>`). A panel's
+  short extension such as `55001` stays readable, since it is what tells you which panel a line is about.
+- **The apartment's GID** (`gid#xxxx`), the intercom's MAC, the SIP domains, the device IMEI and UUID, the device
+  name and the names in the phonebook.
+
+A tag such as `id…45#9f1c` keeps only the last two digits and is the same for the same value until Home Assistant
+restarts, so two lines about the same device can still be matched. Not everything is covered yet: IPv6 addresses, the
+addresses inside SDP and STUN lines, and an id used as an unquoted display name (`From: 7798765 <sip:…>`) stay as
+they are, so read a log before posting it.
+
+**The pairing QR code and its content must never be attached**, neither the picture nor the text: it holds the SIP
+password.
+
 The SIP keepalive's expected replies (the periodic OPTIONS) are logged at `DEBUG`, so no `logger:`
 filter is needed to keep the log quiet.
 
