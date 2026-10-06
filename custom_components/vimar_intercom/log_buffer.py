@@ -18,7 +18,8 @@ fisso a DEBUG e l'inoltro fisso a WARNING: attivare il debug dall'interfaccia
 non portava nel log di HA nessuna riga in più.
 
 Entrambe le destinazioni passano da `redact()`: il log di HA finisce nei
-report allegati alle issue, esattamente come il buffer.
+report allegati alle issue, esattamente come il buffer. Then from `redact_plant()`
+(#146): IPs, ids and names of the plant, which users used to remove by hand.
 """
 
 from __future__ import annotations
@@ -26,13 +27,14 @@ from __future__ import annotations
 import logging
 from collections import deque
 
-from .log_redact import redact
+from .log_redact import redact, redact_plant
 
 LOGGER_NAME = "custom_components.vimar_intercom"
 LEVEL_PIN = 1
 # A whole call at debug level (ring, answer, media, hang-up) is about two
 # thousand lines: 200 kept only its last seconds.
 MAX_LINES = 3000
+_FORMATTER = logging.Formatter()
 
 # Bounded: the oldest line drops out on its own. The list it replaces cut its
 # head with `del debug_log[:k]`, which moved every other line on each append.
@@ -49,7 +51,7 @@ class DebugBufferHandler(logging.Handler):
 
     def emit(self, record):
         try:
-            debug_log.append(redact(self.format(record)))
+            debug_log.append(redact_plant(redact(self.format(record))))
         except Exception:  # noqa: BLE001 - mai far fallire il logging
             pass
 
@@ -72,8 +74,15 @@ class ForwardToRootHandler(logging.Handler):
             return
         try:
             clean = logging.makeLogRecord(record.__dict__)
-            clean.msg = redact(record.getMessage())
-            clean.args = None
+            # The traceback too: HA would format it from exc_info, past both masks
+            # (an OSError carries the address it failed on).
+            text = record.getMessage()
+            if record.exc_info:
+                text += "\n" + _FORMATTER.formatException(record.exc_info)
+            if record.stack_info:
+                text += "\n" + _FORMATTER.formatStack(record.stack_info)
+            clean.msg = redact_plant(redact(text))
+            clean.args = clean.exc_info = clean.exc_text = clean.stack_info = None
         except Exception:  # noqa: BLE001 - meglio perdere la riga che mostrarla in chiaro
             return
         logging.getLogger().handle(clean)
