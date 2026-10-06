@@ -107,6 +107,8 @@ it is not obvious, a comment with the reason.
 - English for new code comments, docstrings, docs, commit messages and PR text. Existing
   Italian comments may stay. `README.it.md` stays Italian and is updated alongside `README.md`.
 - UI strings in sync across `strings.json`, `translations/en.json`, `translations/it.json`.
+- A new entity (by its unique id key) or action needs a row in `docs/ENTITIES.md` and `.it.md`:
+  `tests/test_entities_doc.py` fails otherwise.
 - PRs do not edit `CHANGELOG.md`: it is written at release time from the PR descriptions. Every PR has
   one or more `Changelog: <section> - <what the user sees>` lines (Enhancements, Bug fixes,
   Documentation, Security, Other changes) or `Changelog: none`, and a `Before you update: ...` line
