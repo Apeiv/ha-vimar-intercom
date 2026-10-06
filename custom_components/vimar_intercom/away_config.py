@@ -69,7 +69,11 @@ def save_upload(src, folder: str | None, name: str | None = None) -> str:
     while True:
         # O_EXCL: solo un file nuovo. Un symlink (anche rotto) o un file comparso dopo
         # un controllo non viene mai scritto attraverso: si passa al nome dopo.
+        # Windows has no O_NOFOLLOW and its O_EXCL follows a dangling symlink, creating
+        # the target: a link is skipped before os.open ever sees it.
         try:
+            if os.path.islink(dest):
+                raise FileExistsError(dest)
             fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o666)
         except FileExistsError:
             if stat.S_ISREG(os.lstat(dest).st_mode) and filecmp.cmp(src, dest, shallow=False):
