@@ -3,21 +3,21 @@
     "step": {
       "user": {
         "title": "Vimar Intercom",
-        "description": "Add the Vimar Elvox video intercom. SIP credentials are built-in."
+        "description": "Add the Vimar Elvox video intercom. The SIP credentials are inside the pairing QR code: with the QR you don't need to type them."
       },
       "qr": {
         "title": "Scan pairing QR code",
-        "description": "Paste the text of the pairing QR code printed on the intercom box. On error: {error_detail}",
+        "description": "Paste the text of the pairing QR code (the one the intercom or the VIEW app shows): read it with a QR scanner app and paste what it shows, not a photo. On error: {error_detail}",
         "data": {
           "qr_text": "QR text"
         },
         "data_description": {
-          "qr_text": "The textual content of the QR code (e.g. ID=12345&PROXY=...)."
+          "qr_text": "One long encoded (Base64) string, exactly as the QR scanner shows it. It holds the SIP password: don't use an online decoder."
         }
       },
       "manual": {
         "title": "SIP credentials",
-        "description": "Enter the SIP credentials for your Vimar intercom.",
+        "description": "Only if you can't use the QR: these are the values inside the decoded pairing QR code (ID, PWD, DOMAIN, CPROXY).",
         "data": {
           "sip_user": "SIP ID (user)",
           "sip_password": "SIP password",
@@ -25,10 +25,10 @@
           "cloud_proxy": "Cloud proxy"
         },
         "data_description": {
-          "sip_user": "The numeric SIP ID of your intercom.",
-          "sip_password": "The SIP password (visible in the pairing QR code).",
-          "sip_domain": "The Vimar cloud SIP domain (e.g. ipvdes.vimar.cloud).",
-          "cloud_proxy": "The cloud SIP proxy. Default: ipvdes.vimar.cloud."
+          "sip_user": "The credential's SIP ID (ID in the decoded QR): the place Home Assistant takes on the intercom.",
+          "sip_password": "The credential's SIP password (PWD in the decoded QR; the QR text does not show it in clear).",
+          "sip_domain": "The credential's SIP domain (DOMAIN in the decoded QR; if it is 127.0.0.1, as on a 40515, use CDOMAIN). Not the cloud proxy.",
+          "cloud_proxy": "The cloud SIP proxy (CPROXY in the decoded QR). Default: ipvdes.vimar.cloud."
         }
       },
       "network": {
@@ -61,7 +61,7 @@
       "required": "This field is required.",
       "invalid_ip": "Invalid IP address.",
       "invalid_device_name": "Invalid name: 1 to 64 printable characters, no control characters.",
-      "sip_registration_failed": "SIP registration failed. Check that the intercom IP is correct and reachable from HA."
+      "sip_registration_failed": "SIP registration failed over both local UDP and cloud TLS. Check that the intercom IP is right and reachable from HA, and that the credentials are the QR's (domain included)."
     },
     "abort": {
       "already_configured": "Device is already configured.",
@@ -207,9 +207,9 @@
       "rubrica_no_actuators": "No actuators found for the specified GID. See description above.",
       "invalid_target": "Invalid value: digits only (e.g. 55001).",
       "invalid_url": "Invalid URL: it must start with http:// or https:// and have a host.",
-      "no_local_proxy": "The intercom address is missing: set it under \"Network settings and actuators\".",
+      "no_local_proxy": "The intercom address is missing: set it under \"Network and actuator settings\".",
       "rest_auth_failed": "The intercom rejected the SIP credentials, or does not expose this API. Note: it answers 401 in both cases.",
-      "rest_unavailable": "The intercom is not reachable over HTTP on the local network. If the system only works through the cloud, use the file import instead.",
+      "rest_unavailable": "The intercom is not reachable over HTTP on the local network. If the system only works through the cloud, use “Download the phonebook from the Vimar cloud” or the file import instead.",
       "file_not_allowed": "File outside the folders Home Assistant may read: add its folder to allowlist_external_dirs or use a media folder.",
       "text_too_long": "Text too long: 255 characters at most.",
       "file_not_found": "File not found: use the full path, e.g. /config/media/citofono/messaggio.mp3.",

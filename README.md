@@ -67,8 +67,9 @@ the phonebook: [Configuration](https://github.com/ha-vimar/ha-vimar-intercom/blo
 | [HomeKit](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/docs/HOMEKIT.md) | The native Apple Home doorbell |
 | [External systems](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/docs/EXTERNAL.md) | Scrypted, Alexa, Echo Show, go2rtc, Frigate |
 | [Echo Show as an intercom](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/docs/SCRYPTED-ALEXA.md) | Step by step: Echo Show watches, calls and talks to the panel through Scrypted |
-| [Phonebook](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/docs/RUBRICA.md) | Where `rubrica.db` comes from and what it contains |
-| [Troubleshooting](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/docs/TROUBLESHOOTING.md) | Known limitations and how to read the logs |
+| [Getting the phonebook](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/docs/PHONEBOOK.md) | Which way works on your plant: intercom on the LAN, cloud token, `rubrica.db` file, by hand |
+| [Phonebook internals](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/docs/RUBRICA.md) | Where `rubrica.db` comes from and what it contains (in Italian) |
+| [Troubleshooting](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/docs/TROUBLESHOOTING.md) | Symptom → cause → what to do, known limitations, how to read the logs |
 | [Migration](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/docs/MIGRATION.md) | Moving over from the original noiseheroes-lab integration |
 | [Changelog](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/CHANGELOG.md) | What changed in each release |
 

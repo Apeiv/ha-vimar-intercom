@@ -2,6 +2,30 @@
 
 🇬🇧 *[English](TROUBLESHOOTING.md)* · [← README](../README.it.md)
 
+## Per sintomo
+
+Prima guarda la versione (Impostazioni → Dispositivi e servizi → Vimar Intercom): molti di questi sono
+corretti in una release, indicata nella colonna *Cosa fare*. Poi attiva il log di debug (vedi
+[Logging](#logging)) e riproduci il problema una volta. Non è qui? Apri una issue con quel log.
+
+| Sintomo | Causa probabile | Cosa fare | Issue |
+|---|---|---|---|
+| Configurazione: «QR non valido o non riconosciuto» | Quello incollato non è il testo del QR di abbinamento: una foto, un link, una riga `ID=…` scritta a mano. Il testo è un'unica lunga stringa codificata | Leggi il codice con un'app per QR e incolla esattamente quello che mostra. Il motivo è dopo «In caso di errore:» nel modulo | — |
+| Configurazione: «Registrazione SIP fallita» su un impianto cloud (Tab 5S Up 40515); il log mostra un REGISTER verso `…@127.0.0.1` | Il QR porta `domain=127.0.0.1`; il dominio dell'account è il `cdomain` | 1.0.1 o successiva, rifai la configurazione dal QR. Con le credenziali a mano usa il `cdomain`, non `127.0.0.1` né il proxy cloud | [#1](https://github.com/ha-vimar/ha-vimar-intercom/issues/1) |
+| Segreteria o non disturbare rispondono `200 OK` ma non cambia nulla; la richiesta di stato non ha risposta | Comandi mandati all'SGA/PICG sbagliato. `55001` esiste su molti impianti ma non sempre è l'SGA | Prendi la rubrica ([PHONEBOOK.it.md](PHONEBOOK.it.md)), o imposta SGA/PICG a mano; per trovarli, il servizio `find_sga` | [#10](https://github.com/ha-vimar/ha-vimar-intercom/issues/10), [#14](https://github.com/ha-vimar/ha-vimar-intercom/issues/14) |
+| L'app VIEW mostra «Configurazione appartamento modificata» | Ogni `GET_INIT_STATUS` mandato al vero SGA la fa comparire (visto due volte; il perché non si sa) | In `find_sga` lascia la sonda di default (`get_nicks`), che sull'impianto di riferimento non genera notifiche | [#10](https://github.com/ha-vimar/ha-vimar-intercom/issues/10), [#14](https://github.com/ha-vimar/ha-vimar-intercom/issues/14) |
+| Il comando porta viene accettato ma la porta non si apre | Mandato alla targa sbagliata o con il comando sbagliato. Su un 2FV2 la porta la apre la targa della riga dell'attuatore porta (`GID_PE`), non l'SGA | 1.0.19 o successiva (la porta usa il comando dell'impianto); importa la rubrica, o imposta *Targa che apre la porta* | [#10](https://github.com/ha-vimar/ha-vimar-intercom/issues/10), [#58](https://github.com/ha-vimar/ha-vimar-intercom/issues/58) |
+| `queued` / `202 Accepted` nei log o nel sensore *Intercom Ultimo Comando* | Il relay cloud ha accettato il comando ma non ne ha confermato la consegna; la sua risposta può arrivare dopo ~15 s | 1.0.20 o successiva: un 202 risulta `queued`, non eseguito, e i comandi via cloud aspettano 20 s. Controlla se è successo prima di riprovare | [#120](https://github.com/ha-vimar/ha-vimar-intercom/pull/120), [#139](https://github.com/ha-vimar/ha-vimar-intercom/pull/139), [#140](https://github.com/ha-vimar/ha-vimar-intercom/issues/140) |
+| Porta e attuatori dicono «Non registrato» per ore dopo un calo di rete (cloud) | Due cicli di riconnessione giravano insieme | 1.0.10 o successiva | [#23](https://github.com/ha-vimar/ha-vimar-intercom/issues/23) |
+| Camera: `404` da `55100`, niente video | La targa video di default non esiste sull'impianto | Importa la rubrica (imposta *Targa video*) o impostala a mano. Dalla 1.0.15 il campo vuoto usa la targa che ha suonato per ultima con il video | [#3](https://github.com/ha-vimar/ha-vimar-intercom/issues/3), [#129](https://github.com/ha-vimar/ha-vimar-intercom/issues/129) |
+| Clip dello squillo salvata ma niente foto (Tab 7S 40517, cloud) | In analisi: la foto aspettava un secondo keyframe e questa targa forse ne manda uno solo | 1.0.20 o successiva (foto dal primo keyframe, decoder nel log di debug). Se manca ancora: aggiungi alla issue il log di debug di uno squillo | [#129](https://github.com/ha-vimar/ha-vimar-intercom/issues/129) (aperta) |
+| Né anteprima né foto mentre suona, solo dopo la risposta | L'impianto non manda early media | Limite noto, niente da correggere lato HA | — |
+| «AV stream: call not established after 25s» subito dopo un riaggancio (UDP locale) | La targa era ancora occupata con la chiamata precedente | 1.0.17 o successiva | [#41](https://github.com/ha-vimar/ha-vimar-intercom/issues/41) |
+| Una dashboard aperta richiama la targa ~10 s dopo il riaggancio | La guardia dei 5 s si spostava a ogni riconnessione rifiutata | 1.0.19 o successiva | [#57](https://github.com/ha-vimar/ha-vimar-intercom/issues/57) |
+| Uno squillo senza risposta continua a suonare in HA fino a 90 s | La targa smette dopo ~30 s senza mandare un CANCEL | 1.0.19 o successiva | [#60](https://github.com/ha-vimar/ha-vimar-intercom/issues/60) |
+| Il microfono non fa niente | Il lettore video di HA non ha microfono; il browser lo permette solo in HTTPS | Parla da `custom:vimar-intercom-card`, aperta in HTTPS | — |
+| Lo scaricamento della rubrica non funziona (dal citofono o dal cloud) | Il Tab non risponde in HTTP in LAN (40515), o l'impianto non manda il token cloud (40507) | Segui l'albero in [PHONEBOOK.it.md](PHONEBOOK.it.md) | [#5](https://github.com/ha-vimar/ha-vimar-intercom/issues/5) |
+
 ## Limiti noti
 
 - **Audio bidirezionale solo dalla card del citofono**: il lettore video di HA non ha microfono, quindi
@@ -30,7 +54,10 @@
   un INVITE in arrivo riceve `486 Busy Here` e non genera l'evento campanello: sul campo non si
   distingue ancora dall'eco della nostra chiamata fatto dal PBX. Uno squillo subito dopo il BYE
   della targa è uno squillo normale.
-- **Rubrica**: su impianti solo‑cloud va estratta una tantum (vedi [RUBRICA.md](RUBRICA.md)); l'import automatico via cloud dipende da un token provisionato dall'account.
+- **Rubrica**: la via che funziona dipende dall'impianto (citofono in LAN, token cloud o un file
+  `rubrica.db`): vedi l'albero in [PHONEBOOK.it.md](PHONEBOOK.it.md). Il token cloud non è
+  un'impostazione dell'account: arriva nella risposta lunga dell'impianto al `GET_INIT_STATUS`, che non
+  tutti gli impianti mandano.
 
 
 ---
