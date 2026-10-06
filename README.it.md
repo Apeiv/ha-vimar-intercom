@@ -67,8 +67,9 @@ la rubrica: [Configurazione](https://github.com/ha-vimar/ha-vimar-intercom/blob/
 | [HomeKit](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/docs/HOMEKIT.it.md) | Il videocitofono nativo per la Casa di Apple |
 | [Sistemi esterni](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/docs/EXTERNAL.md) | Scrypted, Alexa, Echo Show, go2rtc, Frigate (in inglese) |
 | [Echo Show come citofono](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/docs/SCRYPTED-ALEXA.it.md) | Passo per passo: l'Echo Show guarda, chiama e parla con la targa tramite Scrypted |
-| [Rubrica](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/docs/RUBRICA.md) | Da dove viene `rubrica.db` e cosa contiene (in inglese) |
-| [Problemi e log](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/docs/TROUBLESHOOTING.it.md) | Limiti noti e come leggere i log |
+| [Come avere la rubrica](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/docs/PHONEBOOK.it.md) | Quale via funziona sul tuo impianto: citofono in LAN, token cloud, file `rubrica.db`, a mano |
+| [Rubrica, dettagli](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/docs/RUBRICA.md) | Da dove viene `rubrica.db` e cosa contiene |
+| [Problemi e log](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/docs/TROUBLESHOOTING.it.md) | Sintomo → causa → cosa fare, limiti noti, come leggere i log |
 | [Migrazione](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/docs/MIGRATION.it.md) | Passare dall'integrazione originale di noiseheroes-lab a questa |
 | [Changelog](https://github.com/ha-vimar/ha-vimar-intercom/blob/main/CHANGELOG.md) | Cosa è cambiato in ogni versione (in inglese) |
 

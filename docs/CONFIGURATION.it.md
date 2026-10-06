@@ -34,7 +34,10 @@ Impostazioni → Dispositivi e servizi → Aggiungi integrazione → **Vimar Int
 - **QR** (consigliato): incolla il testo del QR di abbinamento Vimar; l'integrazione lo decodifica
   (`qr_decoder.py`: Base64(AESkey|AES‑CBC|IV) → coppie `KEY=VALUE`) e compila id, password, domain,
   cloud/local proxy, GID, MAC, planttype.
-- **Manuale**: inserisci `sip_user`, `sip_password`, `sip_domain`, `cloud_proxy`.
+- **Manuale**: inserisci `sip_user`, `sip_password`, `sip_domain`, `cloud_proxy`. Sono i valori
+  contenuti nel QR decodificato (`ID`, `PWD`, `DOMAIN`, `CPROXY`): con il QR non si scrivono mai a
+  mano. Il dominio è quello della credenziale, non il proxy cloud: se il QR dice `DOMAIN=127.0.0.1`
+  (come su un 40515) usa il suo `CDOMAIN`.
 
 **Trovato in rete** (dalla 1.0.12, [#6](https://github.com/ha-vimar/ha-vimar-intercom/issues/6)): il Tab si annuncia via mDNS
 (`_eipvdes._tcp`, lo stesso servizio che cerca l'app VIEW) e Home Assistant lo propone tra i
@@ -96,7 +99,8 @@ Esempio, Tab 5S Up 40515 (Due Fili Plus, cloud): SGA `61000`, PICG `60001`, targ
 Gli attuatori e i valori SGA/PICG si ricavano dalla **rubrica dell'impianto** (`rubrica.db`): dal menu
 delle opzioni scegli **"Scarica la rubrica dal citofono"** (in LAN), **"Scarica la rubrica dal cloud
 Vimar"** (impianti con la risposta lunga di `GET_INIT_STATUS`) oppure **"Importa attuatori da
-rubrica.db"**, carica il file (lo trovi con l'app VIEW o via root, vedi [RUBRICA.md](RUBRICA.md)) e conferma — attuatori, SGA, PICG, targa video e targa che apre la porta vengono impostati in automatico.
+rubrica.db"**, carica il file (lo trovi con l'app VIEW o via root, vedi [RUBRICA.md](RUBRICA.md)) e conferma (quale via fa per il tuo impianto: l'albero in
+[PHONEBOOK.it.md](PHONEBOOK.it.md)) — attuatori, SGA, PICG, targa video e targa che apre la porta vengono impostati in automatico.
 In alternativa puoi inserire i valori a mano nello step "Impostazioni" (utile se conosci già l'SGA del
 tuo impianto o vuoi modificare la lista attuatori prodotta dall'import).
 

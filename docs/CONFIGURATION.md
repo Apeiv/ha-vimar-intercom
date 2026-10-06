@@ -35,7 +35,10 @@ Settings → Devices & services → Add integration → **Vimar Intercom**.
 - **QR** (recommended): paste the text of the Vimar pairing QR code. The integration decodes it
   (`qr_decoder.py`: Base64(AESkey|AES-CBC|IV) → `KEY=VALUE` pairs) and fills in id, password, domain,
   cloud/local proxy, GID, MAC and plant type.
-- **Manual**: enter `sip_user`, `sip_password`, `sip_domain` and `cloud_proxy` yourself.
+- **Manual**: enter `sip_user`, `sip_password`, `sip_domain` and `cloud_proxy` yourself. These are
+  the values inside the decoded QR (`ID`, `PWD`, `DOMAIN`, `CPROXY`), so with the QR you never type
+  them. The domain is the credential's own, not the cloud proxy: when the QR says
+  `DOMAIN=127.0.0.1` (as on a 40515) use its `CDOMAIN`.
 
 **Found on the network** (since 1.0.12, [#6](https://github.com/ha-vimar/ha-vimar-intercom/issues/6)): the Tab announces itself over mDNS
 (`_eipvdes._tcp`, the same service the VIEW app looks for), and Home Assistant shows it under
@@ -97,7 +100,8 @@ The actuator list and the SGA/PICG values come from your plant's **phonebook** (
 options menu pick **"Download the phonebook from the intercom"** (LAN), **"Download the phonebook from
 the Vimar cloud"** (plants that send the long `GET_INIT_STATUS` reply) or **"Import actuators from
 rubrica.db"**, upload the file (you can get it through the VIEW app or with root access, see
-[RUBRICA.md](RUBRICA.md)) and confirm — actuators, SGA, PICG, the video
+[RUBRICA.md](RUBRICA.md)) and confirm (which one fits your plant: the decision tree in
+[PHONEBOOK.md](PHONEBOOK.md)) — actuators, SGA, PICG, the video
 entrance panel and the panel that opens the door are then set automatically. You can also enter the values by hand in the "Settings" step, which is handy if you
 already know your plant's SGA or want to tweak the imported actuator list.
 

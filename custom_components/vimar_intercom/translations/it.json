@@ -3,21 +3,21 @@
     "step": {
       "user": {
         "title": "Vimar Intercom",
-        "description": "Aggiungi il videocitofono Vimar Elvox. Le credenziali SIP sono integrate."
+        "description": "Aggiungi il videocitofono Vimar Elvox. Le credenziali SIP sono dentro il QR di abbinamento: con il QR non serve scriverle."
       },
       "qr": {
         "title": "Scansiona il QR di abbinamento",
-        "description": "Incolla il testo del QR code di abbinamento stampato sulla scatola del citofono. In caso di errore: {error_detail}",
+        "description": "Incolla il testo del QR di abbinamento (quello mostrato dal citofono o dall'app VIEW): leggilo con un'app per QR e incolla quello che mostra, non una foto. In caso di errore: {error_detail}",
         "data": {
           "qr_text": "Testo QR"
         },
         "data_description": {
-          "qr_text": "Il contenuto testuale del QR code (es. ID=12345&PROXY=...)."
+          "qr_text": "Un'unica lunga stringa codificata (Base64), così come la mostra il lettore di QR. Contiene la password SIP: non usare decodificatori online."
         }
       },
       "manual": {
         "title": "Credenziali SIP",
-        "description": "Inserisci le credenziali SIP del tuo citofono Vimar.",
+        "description": "Solo se non puoi usare il QR: sono i valori contenuti nel QR di abbinamento decodificato (ID, PWD, DOMAIN, CPROXY).",
         "data": {
           "sip_user": "ID SIP (utente)",
           "sip_password": "Password SIP",
@@ -25,10 +25,10 @@
           "cloud_proxy": "Proxy cloud"
         },
         "data_description": {
-          "sip_user": "L'ID numerico SIP del tuo citofono.",
-          "sip_password": "La password SIP (visibile nel QR di abbinamento).",
-          "sip_domain": "Il dominio SIP del cloud Vimar (es. ipvdes.vimar.cloud).",
-          "cloud_proxy": "Il proxy SIP cloud. Default: ipvdes.vimar.cloud."
+          "sip_user": "L'ID SIP della credenziale (ID nel QR decodificato): il posto che Home Assistant occupa sul citofono.",
+          "sip_password": "La password SIP della credenziale (PWD nel QR decodificato; nel testo del QR non si legge in chiaro).",
+          "sip_domain": "Il dominio SIP della credenziale (DOMAIN nel QR decodificato; se è 127.0.0.1, come su un 40515, usa CDOMAIN). Non è il proxy cloud.",
+          "cloud_proxy": "Il proxy SIP cloud (CPROXY nel QR decodificato). Default: ipvdes.vimar.cloud."
         }
       },
       "network": {
@@ -61,7 +61,7 @@
       "required": "Questo campo è obbligatorio.",
       "invalid_ip": "Indirizzo IP non valido.",
       "invalid_device_name": "Nome non valido: da 1 a 64 caratteri stampabili, senza caratteri di controllo.",
-      "sip_registration_failed": "Registrazione SIP fallita. Verifica che l'IP del citofono sia corretto e raggiungibile da HA."
+      "sip_registration_failed": "Registrazione SIP fallita sia in UDP locale sia via cloud TLS. Controlla che l'IP del citofono sia giusto e raggiungibile da HA, e che le credenziali siano quelle del QR (dominio compreso)."
     },
     "abort": {
       "already_configured": "Il dispositivo è già configurato.",
@@ -209,7 +209,7 @@
       "invalid_url": "URL non valido: deve iniziare con http:// o https:// e avere un host.",
       "no_local_proxy": "Manca l'indirizzo del citofono: impostalo in «Impostazioni di rete e attuatori».",
       "rest_auth_failed": "Il citofono ha rifiutato le credenziali SIP, oppure non espone questa API. Nota: risponde 401 in entrambi i casi.",
-      "rest_unavailable": "Citofono non raggiungibile in HTTP sulla rete locale. Se l'impianto funziona solo via cloud, usa l'importazione da file.",
+      "rest_unavailable": "Citofono non raggiungibile in HTTP sulla rete locale. Se l'impianto funziona solo via cloud, usa «Scarica la rubrica dal cloud Vimar» o l'importazione da file.",
       "file_not_allowed": "File fuori dalle cartelle che Home Assistant può leggere: aggiungi la sua cartella ad allowlist_external_dirs o usa una cartella media.",
       "text_too_long": "Testo troppo lungo: massimo 255 caratteri.",
       "file_not_found": "File non trovato: indica il percorso completo, es. /config/media/citofono/messaggio.mp3.",

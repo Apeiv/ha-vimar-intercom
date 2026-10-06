@@ -2,6 +2,30 @@
 
 🇮🇹 *[Italiano](TROUBLESHOOTING.it.md)* · [← README](../README.md)
 
+## By symptom
+
+First check the version (Settings → Devices & services → Vimar Intercom): many of these are fixed in a
+release, given in the *What to do* column. Then turn on the debug log (see [Logging](#logging)) and
+reproduce the problem once. Not listed here? Open an issue with that log.
+
+| Symptom | Likely cause | What to do | Issue |
+|---|---|---|---|
+| Setup: "Invalid or unrecognized QR code" | What was pasted is not the text of the pairing QR code: a photo, a link, a hand-typed `ID=…` line. The text is one long encoded string | Read the code with a QR scanner app and paste exactly what it shows. The reason is after "On error:" in the form | — |
+| Setup: "SIP registration failed" on a cloud plant (Tab 5S Up 40515); the log shows a REGISTER to `…@127.0.0.1` | The QR carries `domain=127.0.0.1`; the account domain is `cdomain` | 1.0.1 or newer, set up again from the QR. With manual credentials use the `cdomain`, not `127.0.0.1` nor the cloud proxy | [#1](https://github.com/ha-vimar/ha-vimar-intercom/issues/1) |
+| Voicemail or do-not-disturb answer `200 OK` but nothing changes; the status request gets no reply | Commands sent to the wrong SGA/PICG. `55001` exists on many plants but is not always the SGA | Get the phonebook ([PHONEBOOK.md](PHONEBOOK.md)), or set SGA/PICG by hand; to find them, the `find_sga` service | [#10](https://github.com/ha-vimar/ha-vimar-intercom/issues/10), [#14](https://github.com/ha-vimar/ha-vimar-intercom/issues/14) |
+| The VIEW app shows "Configurazione appartamento modificata" | Every `GET_INIT_STATUS` sent to the real SGA raises it (seen twice; why is not known) | In `find_sga` keep the default probe (`get_nicks`), which raises no notification on the reference plant | [#10](https://github.com/ha-vimar/ha-vimar-intercom/issues/10), [#14](https://github.com/ha-vimar/ha-vimar-intercom/issues/14) |
+| The door command is accepted but the door does not open | Sent to the wrong panel or with the wrong command. On a 2FV2 the door is opened by the panel in the door actuator's row (`GID_PE`), not by the SGA | 1.0.19 or newer (the door uses the plant's own command); import the phonebook, or set *Entrance panel that opens the door* | [#10](https://github.com/ha-vimar/ha-vimar-intercom/issues/10), [#58](https://github.com/ha-vimar/ha-vimar-intercom/issues/58) |
+| `queued` / `202 Accepted` in the logs or in the *Intercom Ultimo Comando* sensor | The cloud relay accepted the command but did not confirm delivery; its answer can take ~15 s | 1.0.20 or newer: a 202 is reported as `queued`, not as done, and cloud commands wait 20 s. Check whether it happened before retrying | [#120](https://github.com/ha-vimar/ha-vimar-intercom/pull/120), [#139](https://github.com/ha-vimar/ha-vimar-intercom/pull/139), [#140](https://github.com/ha-vimar/ha-vimar-intercom/issues/140) |
+| Door and actuators say "Not registered" for hours after a network drop (cloud) | Two reconnection loops ran at the same time | 1.0.10 or newer | [#23](https://github.com/ha-vimar/ha-vimar-intercom/issues/23) |
+| Camera: `404` from `55100`, no video | The default video panel does not exist on the plant | Import the phonebook (it sets *Video entrance panel*) or set it by hand. Since 1.0.15 an empty field uses the panel that last rang with video | [#3](https://github.com/ha-vimar/ha-vimar-intercom/issues/3), [#129](https://github.com/ha-vimar/ha-vimar-intercom/issues/129) |
+| Ring clip saved but no ring photo (Tab 7S 40517, cloud) | Under investigation: the photo waited for a second keyframe and this panel may send only one | 1.0.20 or newer (photo from the first keyframe, decoder logged at debug). Still missing: add the debug log of one ring to the issue | [#129](https://github.com/ha-vimar/ha-vimar-intercom/issues/129) (open) |
+| No preview and no photo while it rings, only after answering | The plant sends no early media | Known limitation, nothing to fix on the HA side | — |
+| "AV stream: call not established after 25s" right after hanging up (local UDP) | The panel was still busy with the previous call | 1.0.17 or newer | [#41](https://github.com/ha-vimar/ha-vimar-intercom/issues/41) |
+| An open dashboard calls the panel again ~10 s after hanging up | The 5 s guard moved at every refused reconnection | 1.0.19 or newer | [#57](https://github.com/ha-vimar/ha-vimar-intercom/issues/57) |
+| An unanswered ring keeps ringing in HA for up to 90 s | The panel stops after ~30 s without sending a CANCEL | 1.0.19 or newer | [#60](https://github.com/ha-vimar/ha-vimar-intercom/issues/60) |
+| The microphone does nothing | HA's camera player has no microphone; the browser only allows it over HTTPS | Talk from `custom:vimar-intercom-card`, opened over HTTPS | — |
+| A phonebook download fails (from the intercom or from the cloud) | The Tab does not answer HTTP on the LAN (40515), or the plant sends no cloud token (40507) | Follow the tree in [PHONEBOOK.md](PHONEBOOK.md) | [#5](https://github.com/ha-vimar/ha-vimar-intercom/issues/5) |
+
 ## Known limitations
 
 - **Two-way audio only in the intercom card**: HA's own camera player has no microphone, so
@@ -28,8 +52,9 @@
   call, an incoming INVITE gets `486 Busy Here` and fires no doorbell event: on the field it can't
   yet be told apart from the PBX echoing our own call. A ring right after the panel's BYE is a
   normal ring.
-- **Phonebook**: on cloud-only plants it has to be extracted once (see [RUBRICA.md](RUBRICA.md)); the
-  automatic import over the cloud depends on a token provisioned by the account.
+- **Phonebook**: which way works depends on the plant (intercom on the LAN, cloud token, or a
+  `rubrica.db` file): see the decision tree in [PHONEBOOK.md](PHONEBOOK.md). The cloud token is not
+  an account setting: it comes in the plant's long `GET_INIT_STATUS` reply, which not every plant sends.
 
 
 ---
