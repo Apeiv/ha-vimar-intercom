@@ -326,3 +326,86 @@ def test_a_header_followed_by_a_long_run_of_spaces_stays_fast():
     start = time.perf_counter()
     lr.redact_plant(text)
     assert time.perf_counter() - start < 0.5  # the old lookahead took ~10^8 steps
+
+
+# ─── follow-up of #146: other phones' ids, public addresses in Via, the GID ──
+
+@pytest.mark.parametrize("text, hidden", [
+    ("Contact: <sip:7798765@h.invalid;transport=tls>;expires=600", "7798765"),
+    ("To: <sips:44556677@d.invalid>", "44556677"),
+    ("INVITE sip:880011@d.invalid SIP/2.0", "880011"),
+])
+def test_another_phones_id_in_a_uri_is_masked(text, hidden):
+    lr.forget_plant_values()
+    out = lr.redact_plant(text)
+    assert hidden not in out and f"…{hidden[-2:]}#" in out
+
+
+def test_another_phones_id_gets_the_same_tag_on_every_line():
+    first = lr.redact_plant("To: <sip:7798765@d.invalid>")
+    assert first == lr.redact_plant("To: <sip:7798765@d.invalid>")
+
+
+@pytest.mark.parametrize("text", ["INVITE sip:55001@d.invalid SIP/2.0", "To: <sip:55002@d.invalid>",
+                                  "SIP/2.0 200 OK", "Via: SIP/2.0/UDP h.invalid:5060", "sip:abc@d.invalid"])
+def test_panel_extensions_codes_and_ports_in_uris_stay(text):
+    assert lr.redact_plant(text) == text
+
+
+@pytest.mark.parametrize("text, masked", [
+    ("Via: SIP/2.0/TLS 9.9.9.23:5061;rport;branch=z9hG4bK1", "Via: SIP/2.0/TLS 9.x.x.23:5061;rport;branch=z9hG4bK1"),
+    ("v: SIP/2.0/UDP 8.8.4.56;rport", "v: SIP/2.0/UDP 8.x.x.56;rport"),
+    ("Route: <sip:9.9.9.23:5060;lr>", "Route: <sip:9.x.x.23:5060;lr>"),
+    ("REGISTER sips:8.8.4.56:5061 SIP/2.0", "REGISTER sips:8.x.x.56:5061 SIP/2.0"),
+    ("Via: SIP/2.0/UDP 192.168.1.23:5060", "Via: SIP/2.0/UDP 192.x.x.23:5060"),
+])
+def test_public_addresses_in_via_and_in_uris_without_a_user_are_masked(text, masked):
+    assert lr.redact_plant(text) == masked
+
+
+@pytest.mark.parametrize("text", ["Via: SIP/2.0/UDP 127.0.0.1:5070;rport", "Route: <sip:127.0.0.1:5060;lr>",
+                                  "Via: SIP/2.0/UDP 192.0.2.10:5060", "Route: <sip:198.51.100.7;lr>",
+                                  "Via: SIP/2.0/TLS 203.0.113.5:5061", "Via: SIP/2.0/UDP 0.0.0.0:5060",
+                                  "sip:300.1.2.3:5060", "sip:8.8.8.8888"])
+def test_loopback_documentation_and_non_addresses_stay_in_via_and_uris(text):
+    assert lr.redact_plant(text) == text
+
+
+@pytest.mark.parametrize("text, hidden", [
+    ('GET_INIT_STATUS_REPLY;[{"PARAM":"GID","VALUE":"731"}]', "731"),
+    ('[{"VALUE": "731", "PARAM": "GID"}]', "731"),
+    ("NEW_PHONEBOOK gid=731 ver=abc", "731"),
+    ("NEW_PHONEBOOK;0a1b2c;731", "731"),
+    ("{'apt_gid': '731', 'dnd': False}", "731"),
+    ('{"gid": "731", "rubrica_ver": "x"}', "731"),
+    ("pwd=*** gid=731 mac=x", "731"),
+    ("{'gid_appartamento': 731}", "731"),
+    ("Apartment GID: 731", "731"),
+])
+def test_the_apartment_gid_is_masked(text, hidden):
+    out = lr.redact_plant(text)
+    assert hidden not in out and "gid#" in out
+
+
+@pytest.mark.parametrize("text", ["GID_PE=55100", "ACTUATOR_RULES.GA_GID = ?", "{'gid': None}", "gid=",
+                                  "NEW_PHONEBOOK;0a1b2c", "rigid=731"])
+def test_panel_gids_and_empty_gids_stay(text):
+    assert lr.redact_plant(text) == text
+
+
+def test_hostile_text_stays_fast_through_the_follow_up_patterns():
+    import time
+    for text in ("sip:" * 4_000, "sip:1234567" * 1_400, "SIP/2.0/UDP " * 1_300, "SIP/2.0/UDP 1.2.3." * 900,
+                 "gid=" * 4_000, "'gid'" * 3_200, '{"PARAM":"GID",' * 1_000, "NEW_PHONEBOOK;" * 1_100,
+                 "sip:1.2.3.4" * 1_400):
+        text = lr.redact(text)
+        start = time.perf_counter()
+        lr.redact_plant(text)
+        assert time.perf_counter() - start < 1.0  # quadratic would take seconds
+
+
+def test_our_own_id_and_a_public_host_in_one_uri_keep_their_masks(plant):
+    """The registered id is cut before the URI-user pattern runs: same tag either way,
+    and the host after the `@` is still shortened."""
+    out = lr.redact_plant("Contact: <sip:7712345@9.9.9.23:5060>")
+    assert out == f"Contact: <sip:{lr._tag('id', '7712345')}@9.x.x.23:5060>"

@@ -42,8 +42,11 @@ can still be followed:
   `'name'`) and the display name before a `<sip:` URI;
 * a device's `urn:uuid:` instance id;
 * private IPv4 addresses, down to their first and last octet (`192.x.x.23`), and any
-  address after `received=` or as the host of a SIP URI (the home's public address, the
-  other phones' Contacts).
+  address after `received=`, as the host of a SIP URI (the home's public address, the
+  other phones' Contacts), at the hop of a `Via` or as a URI without a user (loopback,
+  0.0.0.0 and the RFC 5737 documentation blocks stay there);
+* the other phones' and devices' ids as the user of a SIP URI (`sip:7798765@…`);
+* the apartment's GID, by its shape (`"PARAM":"GID"`, `gid=`, `apt_gid`, `NEW_PHONEBOOK`).
 
 The panels' extensions (`55001`, also as a `SIP_ID`), SIP methods and codes, ports and
 timings stay: they are what a log is read for. `redact()` alone still feeds the *Last Received Message*
@@ -172,10 +175,11 @@ _PANEL_EXT_MAX = 5
 _TAG_KEY = secrets.token_bytes(16)
 
 
-def _tag(kind: str, value: str) -> str:
-    """Stable short tag. Ids keep their last two digits, to tell two of them apart."""
+def _tag(kind: str, value: str, *, keep_tail: bool = True) -> str:
+    """Stable short tag. Ids keep their last two digits, to tell two of them apart
+    (not a GID: two digits of a three-digit number would give it away)."""
     digest = hmac.new(_TAG_KEY, value.encode("utf-8"), hashlib.sha256).hexdigest()[:4]
-    tail = f"…{value[-2:]}" if value.isdigit() else ""
+    tail = f"…{value[-2:]}" if keep_tail and value.isdigit() else ""
     return f"{kind}{tail}#{digest}"
 
 
@@ -231,6 +235,27 @@ _URI_HOST = re.compile(rf"(?i)(\bsips?:[^@\s<>\"';,]{{1,64}}@)({_IPV4})")
 _PRIVATE_IP = re.compile(r"(?<![\d.])(10|100|169|172|192)\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?!\.?\d)")
 
 
+# Another phone's or device's id as the user of a SIP URI (`<sip:7798765@…>`): digits,
+# longer than a panel's extension, and the whole user, up to the `@`.
+_URI_USER = re.compile(rf"(?i)(\bsips?:)(\d{{{_PANEL_EXT_MAX + 1},20}})(?=@)")
+
+# Any address, public too, at the hop of a Via (`SIP/2.0/UDP 9.9.9.23:5060`) or as a
+# URI without a user (`<sip:9.9.9.23:5060;lr>`): the home's or the relay peer's.
+_VIA_HOST = re.compile(rf"(?i)(\bSIP/2\.0/[A-Z]{{2,4}}[ \t]+)({_IPV4})(?![\d.])")
+_URI_ADDR = re.compile(rf"(?i)(\bsips?:)({_IPV4})(?![\d.])")
+
+# Left as they are there: loopback (the Tab 5S's 127.0.0.1, the test harness), the
+# unspecified 0.0.0.0, and the documentation blocks of RFC 5737 the tests and docs use.
+_KEEP_ADDR = re.compile(r"127\.|0\.0\.0\.0$|192\.0\.2\.|198\.51\.100\.|203\.0\.113\.")
+
+
+def _mask_any_ip(m: re.Match) -> str:
+    ip = m.group(2)
+    if _KEEP_ADDR.match(ip) or max(int(o) for o in ip.split(".")) > 255:
+        return m.group(0)
+    return f"{m.group(1)}{_short_ip(ip)}"
+
+
 def _mask_ip(m: re.Match) -> str:
     first, second = int(m.group(1)), int(m.group(2))
     private = {10: True, 100: 64 <= second <= 127, 169: second == 254, 172: 16 <= second <= 31,
@@ -277,6 +302,32 @@ def _mask_field(m: re.Match) -> str:
 _DISPLAY_NAME = re.compile(r"\"([^\"\r\n]+)\"(?=\s*<sips?:)")
 
 
+# The apartment's GID: in the status answer (`{"PARAM":"GID","VALUE":"731"}`, both
+# orders), after a key named `gid`, `apt_gid`, `gid_appartamento` or `Apartment GID`
+# (`gid=731`, `'apt_gid': '731'`), and last in `NEW_PHONEBOOK;<ver>;<gid>`. Matched by
+# its shape only: a small integer, as a registered value it would hit every 731 in a log.
+# A phonebook row's `"GID": N` is masked too, even a panel's: it may be ours.
+# A panel's `GID_PE` or `GA_GID` is not a key named like these and stays.
+_GID_PARAM = re.compile(r"(?i)(\"PARAM\"\s*:\s*\"GID\"\s*,\s*\"VALUE\"\s*:\s*\"?)([^\",}\s]+)")
+_GID_VALUE = re.compile(r"(?i)(\"VALUE\"\s*:\s*\"?)([^\",}\s]+)(\"?\s*,\s*\"PARAM\"\s*:\s*\"GID\")")
+_GID_KEY = re.compile(
+    r"(?i)(?<![\w-])([\"']?(?:apt_|apartment[ _])?gid(?:_appartamento)?[\"']?[ \t]*[:=][ \t]*)"
+    r"(?:([\"'])([^\"'\r\n]{1,32})\2|([^\s\"',;&}\]]+))"
+)
+_GID_PHONEBOOK = re.compile(r"(?i)(\bNEW_PHONEBOOK;[^;\s]*;)([^;\s\"',}\]\\]+)")
+
+
+def _gid(value: str) -> str:
+    return _tag("gid", value, keep_tail=False)
+
+
+def _mask_gid_key(m: re.Match) -> str:
+    quote, value = (m.group(2), m.group(3)) if m.group(4) is None else ("", m.group(4))
+    if value.lower() in ("none", "null"):
+        return m.group(0)
+    return f"{m.group(1)}{quote}{_gid(value)}{quote}"
+
+
 def redact_plant(text: str) -> str:
     """`text` with the plant data above replaced by tags. Never raises."""
     if not text:
@@ -288,11 +339,18 @@ def redact_plant(text: str) -> str:
         out = _DISPLAY_NAME.sub(lambda m: m.group(0) if m.group(1) == MY_NAME
                                 else f'"{_tag("name", m.group(1))}"', out)
         out = _URN_UUID.sub(lambda m: f"{m.group(1)}{_tag('uuid', m.group(2))}", out)
+        out = _GID_PARAM.sub(lambda m: f"{m.group(1)}{_gid(m.group(2))}", out)
+        out = _GID_VALUE.sub(lambda m: f"{m.group(1)}{_gid(m.group(2))}{m.group(3)}", out)
+        out = _GID_KEY.sub(_mask_gid_key, out)
+        out = _GID_PHONEBOOK.sub(lambda m: f"{m.group(1)}{_gid(m.group(2))}", out)
         tags, known = _plant
         if known:
             out = known.sub(lambda m: tags[m.group(0)], out)
+        out = _URI_USER.sub(lambda m: f"{m.group(1)}{_tag('id', m.group(2))}", out)
         out = _RECEIVED.sub(lambda m: f"{m.group(1)}{_short_ip(m.group(2))}", out)
         out = _URI_HOST.sub(lambda m: f"{m.group(1)}{_short_ip(m.group(2))}", out)
+        out = _VIA_HOST.sub(_mask_any_ip, out)
+        out = _URI_ADDR.sub(_mask_any_ip, out)
         return _PRIVATE_IP.sub(_mask_ip, out)
     except Exception:  # noqa: BLE001 - mai far fallire il logging
         return MASK
