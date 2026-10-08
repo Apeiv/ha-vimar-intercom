@@ -497,6 +497,28 @@ def test_a_ring_that_ends_while_the_door_command_is_in_flight_is_opened(door, mo
     assert outcomes == ["opened"]
 
 
+def test_a_door_opened_on_the_retry_is_opened(door, monkeypatch):
+    """First send fails and may be retried, re-register, second send OK. The ring
+    ends before the retry: it was up when Apri was sent."""
+    h, outcomes = door
+    replies = iter([(False, "Timeout", None, True), (True, "OK", 200, False)])
+
+    async def _message(uri, body):
+        if sip.pending_incoming["active"]:
+            sip.pending_incoming["active"] = False
+            h._update_stats("ring_ended", "Chiamata cancellata")
+        return next(replies)
+
+    async def _register():
+        return True
+
+    monkeypatch.setattr(h, "_door_message", _message)
+    monkeypatch.setattr(sip, "do_register", _register)
+    assert asyncio.run(h._door(None, None))[0]
+    assert outcomes == ["opened"]
+    assert h.stats["door_count"] == 1
+
+
 def test_a_door_opened_with_no_ring_up_logs_nothing(door):
     h, outcomes = door
     sip.pending_incoming["active"] = False

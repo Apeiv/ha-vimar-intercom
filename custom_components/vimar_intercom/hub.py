@@ -1167,7 +1167,11 @@ class VimarIntercomHub(PlantMessages, RingMedia):
 
     def _opened_during_ring(self, ring: str | None) -> None:
         """The door opened during `ring` (None: no ring was up): the ring log says
-        Aperto, unless HA answered it (Rispondi or the away message)."""
+        Aperto, unless HA answered it (Rispondi or the away message).
+
+        If the ring ended while the command was in flight, ring_ended has already
+        counted it in missed_count. Left as is on purpose: undoing it would mean
+        knowing whether ring_ended has run yet, a lot of code for a rare one-off."""
         if ring and ring == self._ring_cid and not self._ring_taken:
             self._ring_opened = True
             self._log_outcome("opened")
