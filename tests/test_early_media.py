@@ -406,6 +406,33 @@ def test_squillo_biforcato_secondo_ramo_482_e_cancel_per_branch(rete):
     asyncio.run(run())
 
 
+@pytest.mark.parametrize("reason, msg", [
+    ('Reason: SIP;cause=200;text="Call completed elsewhere"\r\n', "Risposto altrove"),
+    ('Reason: SIP ;cause = 200\r\n', "Risposto altrove"),
+    ('Reason: SIP;cause=487;text="Request terminated"\r\n', "Chiamata cancellata"),
+    ('Reason: Q.850;cause=200\r\n', "Chiamata cancellata"),
+    ("", "Chiamata cancellata"),
+])
+def test_cancel_with_cause_200_says_someone_else_answered(rete, monkeypatch, reason, msg):
+    """#164 (40517, local UDP): a ring answered from the indoor monitor or the Vimar
+    app ends with a CANCEL carrying `Reason: SIP;cause=200` (RFC 3326, "Call completed
+    elsewhere"). It was read as an unanswered ring."""
+    eventi = []
+
+    async def _bc(t, m):
+        eventi.append((t, m))
+
+    monkeypatch.setattr(sip, "broadcast", _bc)
+
+    async def run():
+        await sip.handle_incoming_invite(INVITE)
+        cancel = CANCEL.format(b="z9hG4bKa").replace("CSeq: 1 CANCEL\r\n", "CSeq: 1 CANCEL\r\n" + reason)
+        await sip.handle_incoming_cancel(cancel)
+
+    asyncio.run(run())
+    assert eventi[-1] == ("ring_ended", msg)
+
+
 @pytest.mark.parametrize("sfide, attesi", [
     (['nonce="a"', 'nonce="a"'], [True, False]),                         # stesso nonce ripetuto: basta
     (['nonce="a"', 'nonce="b"'], [True, True]),                          # nonce nuovo: si riprova
