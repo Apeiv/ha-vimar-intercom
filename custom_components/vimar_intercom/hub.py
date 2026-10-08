@@ -245,6 +245,9 @@ class VimarIntercomHub(PlantMessages, RingMedia):
         # HA answered the last ring (Rispondi or the away message). Unlike _ring_answered
         # it lasts until the next ring: a late C;<id>;ANSWERED must not rewrite the outcome.
         self._ring_taken = False
+        # HA opened the door while the last ring was up: the 603 that silences the
+        # house afterwards is not a decline.
+        self._ring_opened = False
         self._was_ringing = False  # per il webhook di fine squillo, vedi _handle_broadcast
         # Callback per emettere eventi bus HA (registrati da __init__.py).
         # Evita di iniettare hass nell'hub, coerente con ring/state callbacks.
@@ -1036,7 +1039,7 @@ class VimarIntercomHub(PlantMessages, RingMedia):
         self._ring_declined = True
         declined = await sip.do_decline_incoming()
         self._ring_declined = bool(declined)
-        if declined:
+        if declined and not self._ring_opened:
             self._log_outcome("declined")
         self._touch()
         return (True, "Squillo rifiutato") if declined else (False, "Nessuna chiamata in arrivo")
@@ -1129,6 +1132,7 @@ class VimarIntercomHub(PlantMessages, RingMedia):
 
         if ok:
             _LOGGER.info("Door open OK: %s", code)
+            self._opened_during_ring()
             return ok, msg, code
 
         if not may_retry:
@@ -1146,6 +1150,7 @@ class VimarIntercomHub(PlantMessages, RingMedia):
                     self.stats["door_count"] += 1
                     self._touch()
                     _LOGGER.info("Door open OK on retry: %s", code2)
+                    self._opened_during_ring()
                     return ok2, msg2, code2
                 self._touch()
                 _LOGGER.error("Door retry also failed: %s %s", msg2, code2)
@@ -1156,6 +1161,13 @@ class VimarIntercomHub(PlantMessages, RingMedia):
         except Exception as e:
             _LOGGER.error("Door retry error: %s", e)
             return False, DOOR_SEND_FAILED, None
+
+    def _opened_during_ring(self) -> None:
+        """The door opened while this ring is still up: the ring log says Aperto,
+        unless HA already answered it (Rispondi or the away message)."""
+        if self._ring_cid and sip.ringing(self._ring_cid) and not self._ring_taken:
+            self._ring_opened = True
+            self._log_outcome("opened")
 
     @staticmethod
     async def _door_message(uri: str, body: str) -> tuple[bool, str, int | None, bool]:
@@ -1376,7 +1388,8 @@ class VimarIntercomHub(PlantMessages, RingMedia):
         with cause=200 and the `C;<call_id>;ANSWERED` message that follows (#164)."""
         if cid is not None and cid != self._ring_cid:
             return
-        if self._ring_answered or self._ring_taken or self._ring_declined or self._ring_elsewhere:
+        if (self._ring_answered or self._ring_taken or self._ring_declined
+                or self._ring_elsewhere or self._ring_opened):
             return
         self._ring_elsewhere = True
         _LOGGER.info("Ring answered on another device")
@@ -1470,12 +1483,13 @@ class VimarIntercomHub(PlantMessages, RingMedia):
                     self._ring_answered = False
                     self._ring_declined = False
                     self._ring_cid = sip.pending_incoming.get("cid")
-                    self._ring_elsewhere = self._ring_taken = False
+                    self._ring_elsewhere = self._ring_taken = self._ring_opened = False
                     # Foto e clip sono di questo squillo: quelli di prima non vanno in notifica
                     for k in ("last_photo", "last_photo_path", "last_photo_v", "last_clip", "last_clip_path"):
                         st[k] = None
             elif msg_type == "ring_ended":
-                if not (self._ring_answered or self._ring_declined) and st["last_ring_time"]:
+                if (not (self._ring_answered or self._ring_declined or self._ring_opened)
+                        and st["last_ring_time"]):
                     st["missed_count"] += 1  # not answered from HA, wherever else it was
                 if msg == sip.ANSWERED_ELSEWHERE:
                     self._answered_elsewhere()
