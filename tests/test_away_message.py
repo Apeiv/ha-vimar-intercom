@@ -136,6 +136,22 @@ def test_rispondi_durante_il_messaggio_prende_la_chiamata(hub, monkeypatch):
     assert "hangup" not in azioni  # la chiamata resta a chi ha risposto
 
 
+def test_un_answered_in_ritardo_dopo_il_messaggio_non_cambia_l_esito(hub, monkeypatch):
+    """call_ended azzera _ring_answered: un `C;<id>;ANSWERED` arrivato dopo la fine della
+    chiamata del messaggio di assenza cambiava l'esito «away» in «answered_elsewhere»."""
+    _fakes(hub, monkeypatch)
+    esiti = []
+    monkeypatch.setattr(hub, "_log_outcome", esiti.append)
+    monkeypatch.setitem(sip.pending_incoming, "caller_uri", "sip:55001@plant.example")
+    hub._update_stats("ring", "")
+    asyncio.run(hub._away_message("ring-1"))
+    hub._update_stats("call_started", "")
+    monkeypatch.setattr(sip, "in_call", False)  # call_ended arrives with the call already closed
+    hub._update_stats("call_ended", "")
+    hub._handle_incoming_message("C;ring-1;ANSWERED")
+    assert esiti == ["away"]
+
+
 @pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg non installato")
 def test_load_e_send_pcm_a_pacchetti_da_20ms(monkeypatch):
     path = os.path.join(tempfile.mkdtemp(), "msg.mp3")

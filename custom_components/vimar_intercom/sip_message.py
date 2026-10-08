@@ -32,6 +32,7 @@ def _parse(msg):
     via_list = []
     rr_list = []   # Record-Route: più header, l'ordine conta (route set)
     contact_list = []  # a registrar lists one Contact per binding
+    reason_list = []  # RFC 3326: one Reason header per protocol (SIP, Q.850)
     for line in lines[1:]:
         if ":" in line:
             k, v = line.split(":", 1)
@@ -42,6 +43,8 @@ def _parse(msg):
                 rr_list.append(v.strip())
             elif key == "contact":
                 contact_list.append(v.strip())
+            elif key == "reason":
+                reason_list.append(v.strip())
             hdrs[key] = v.strip()
     if via_list:
         hdrs["_via_all"] = via_list
@@ -49,7 +52,46 @@ def _parse(msg):
         hdrs["_rr_all"] = rr_list
     if contact_list:
         hdrs["_contact_all"] = contact_list
+    if reason_list:
+        hdrs["_reason_all"] = reason_list
     return (code or method), hdrs, body, first
+
+
+def _split_unquoted(text: str, sep: str) -> list[str]:
+    """`text` split on `sep` outside double quotes, each part stripped. Inside quotes a
+    backslash escapes the next character (`\\"` does not close them, RFC 3261)."""
+    parts, current, quoted, escaped = [], [], False, False
+    for char in text:
+        if escaped:
+            escaped = False
+        elif quoted and char == "\\":
+            escaped = True
+        elif char == '"':
+            quoted = not quoted
+        if char == sep and not quoted:
+            parts.append("".join(current).strip())
+            current = []
+        else:
+            current.append(char)
+    parts.append("".join(current).strip())
+    return parts
+
+
+def _reasons(hdrs) -> list[tuple[str, dict[str, str]]]:
+    """Every reason-value of the Reason headers as (protocol, params), protocol upper-case
+    and param names lower-case. A header may list several values separated by commas,
+    and a quoted `text` may hold commas and semicolons (RFC 3326)."""
+    # _parse always fills _reason_all; the plain "reason" key is for header dicts built by hand.
+    raw = hdrs.get("_reason_all") or ([hdrs["reason"]] if hdrs.get("reason") else [])
+    out = []
+    for line in raw:
+        for value in _split_unquoted(line, ","):
+            protocol, *params = _split_unquoted(value, ";")
+            if not protocol:
+                continue
+            pairs = (p.split("=", 1) for p in params if "=" in p)
+            out.append((protocol.upper(), {k.strip().lower(): v.strip() for k, v in pairs}))
+    return out
 
 
 def _split_contacts(hdrs) -> list[str]:

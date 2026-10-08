@@ -30,6 +30,7 @@ from .sip_message import (
     _host_of,
     _make_auth,
     _parse,
+    _reasons,
     _split_contacts,
     _split_stream,
     _tag,
@@ -2116,13 +2117,14 @@ async def handle_incoming_options(raw):
 
 # ring_ended message for a ring another device answered: the hub matches it.
 ANSWERED_ELSEWHERE = "Risposto altrove"
-_REASON_CAUSE_200 = re.compile(r"^\s*SIP\s*;(?:.*;)?\s*cause\s*=\s*200\b", re.IGNORECASE)
 
 
-def _answered_elsewhere(reason: str) -> bool:
+def _answered_elsewhere(hdrs) -> bool:
     """A CANCEL with `Reason: SIP;cause=200` (RFC 3326, "Call completed elsewhere"):
-    another device took the ring (indoor monitor, Vimar app; 40517 in #164)."""
-    return bool(_REASON_CAUSE_200.match(reason or ""))
+    another device took the ring (Vimar app on a 40507, indoor monitor or app on the
+    40517 in #164). Any SIP reason-value of any Reason header counts; a Q.850 cause
+    200 does not."""
+    return any(protocol == "SIP" and params.get("cause") == "200" for protocol, params in _reasons(hdrs))
 
 
 async def handle_incoming_cancel(raw):
@@ -2148,7 +2150,7 @@ async def handle_incoming_cancel(raw):
         await send(_final(pending_incoming, "487 Request Terminated"))
         await _end_ring()
         # Solo il CANCEL dello squillo in corso: un altro annullerebbe il suo timer.
-        elsewhere = _answered_elsewhere(hdrs.get("reason", ""))
+        elsewhere = _answered_elsewhere(hdrs)
         await broadcast("ring_ended", ANSWERED_ELSEWHERE if elsewhere else "Chiamata cancellata")
 
 
