@@ -483,6 +483,20 @@ def test_a_ring_opened_then_cancelled_is_not_missed(door):
     assert h.stats["missed_count"] == 0
 
 
+def test_a_ring_that_ends_while_the_door_command_is_in_flight_is_opened(door, monkeypatch):
+    """The panel can take seconds to answer: the ring was up when Apri was sent."""
+    h, outcomes = door
+
+    async def _slow(uri, body):
+        sip.pending_incoming["active"] = False
+        h._update_stats("ring_ended", "Chiamata cancellata")
+        return True, "OK", 200, False
+
+    monkeypatch.setattr(h, "_door_message", _slow)
+    assert asyncio.run(h._door(None, None))[0]
+    assert outcomes == ["opened"]
+
+
 def test_a_door_opened_with_no_ring_up_logs_nothing(door):
     h, outcomes = door
     sip.pending_incoming["active"] = False

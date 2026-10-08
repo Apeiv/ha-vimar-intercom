@@ -1117,6 +1117,9 @@ class VimarIntercomHub(PlantMessages, RingMedia):
                              door_target, body)
 
         _LOGGER.info("Door command: uri=%s body=%s (%s) registered=%s", uri, body, source, sip.registered)
+        # The ring up when the command goes out: the panel's answer (or the retry)
+        # can come after the ring has ended, and it was still opened during it.
+        ring = self._ring_cid if self._ring_cid and sip.ringing(self._ring_cid) else None
 
         ok, msg, code, may_retry = await self._door_message(uri, body)
 
@@ -1132,7 +1135,7 @@ class VimarIntercomHub(PlantMessages, RingMedia):
 
         if ok:
             _LOGGER.info("Door open OK: %s", code)
-            self._opened_during_ring()
+            self._opened_during_ring(ring)
             return ok, msg, code
 
         if not may_retry:
@@ -1150,7 +1153,7 @@ class VimarIntercomHub(PlantMessages, RingMedia):
                     self.stats["door_count"] += 1
                     self._touch()
                     _LOGGER.info("Door open OK on retry: %s", code2)
-                    self._opened_during_ring()
+                    self._opened_during_ring(ring)
                     return ok2, msg2, code2
                 self._touch()
                 _LOGGER.error("Door retry also failed: %s %s", msg2, code2)
@@ -1162,10 +1165,10 @@ class VimarIntercomHub(PlantMessages, RingMedia):
             _LOGGER.error("Door retry error: %s", e)
             return False, DOOR_SEND_FAILED, None
 
-    def _opened_during_ring(self) -> None:
-        """The door opened while this ring is still up: the ring log says Aperto,
-        unless HA already answered it (Rispondi or the away message)."""
-        if self._ring_cid and sip.ringing(self._ring_cid) and not self._ring_taken:
+    def _opened_during_ring(self, ring: str | None) -> None:
+        """The door opened during `ring` (None: no ring was up): the ring log says
+        Aperto, unless HA answered it (Rispondi or the away message)."""
+        if ring and ring == self._ring_cid and not self._ring_taken:
             self._ring_opened = True
             self._log_outcome("opened")
 
