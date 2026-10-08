@@ -86,7 +86,9 @@ squillo.
 sulla riga è il tasto della cronologia (in chiamata il tasto sta sul video): gli ultimi squilli
 (opzione `history`, predefinito 8) con foto, ora ed esito: *Risposto* (risposto da HA), *Rifiutato* (rifiutato da HA),
 *Messaggio di assenza*, *Risposto altrove* (risposto da un altro dispositivo: il monitor interno o
-l'app Vimar, quando l'impianto lo comunica), *Nessuna risposta* (nessuna risposta, per quanto ne sa HA). Un tocco sulla foto la apre in grande; uno squillo col clip ha il tasto
+l'app Vimar, quando l'impianto lo comunica), *Nessuna risposta* (nessuna risposta, per quanto ne sa HA;
+su un 40507, per esempio, uno squillo risposto sul Tab stesso finisce come uno senza risposta e compare qui, mentre
+uno risposto dall'app Vimar compare come *Risposto altrove*). Un tocco sulla foto la apre in grande; uno squillo col clip ha il tasto
 play sulla miniatura e il tocco fa partire il video al posto della foto. La foto compare circa
 un secondo dopo lo squillo e dopo `snapshot_delay` la sostituisce quella migliore; il clip a
 squillo (o chiamata) finiti. L'integrazione tiene l'elenco in `squillo.json` accanto ai file

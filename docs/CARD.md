@@ -85,7 +85,9 @@ into view, e.g. `/lovelace/camera#citofono` as the tap action of a ring notifica
 row is the history button (during a call the button is on the video): the latest rings
 (option `history`, default 8) with photo, time and outcome: *Risposto* (answered from HA), *Rifiutato* (declined from HA),
 *Messaggio di assenza* (away message), *Risposto altrove* (answered on another device: the indoor
-monitor or the Vimar app, when the plant says so), *Nessuna risposta* (not answered, as far as HA knows). Tap a photo to see it large; a ring with a clip shows a play
+monitor or the Vimar app, when the plant says so), *Nessuna risposta* (not answered, as far as HA knows;
+on a 40507, for example, a ring answered on the Tab itself ends like an unanswered one and shows here, while one
+answered in the Vimar app shows as *Risposto altrove*). Tap a photo to see it large; a ring with a clip shows a play
 icon on its thumbnail and the tap plays the video instead. The photo appears about a second
 after the ring and is replaced by a better one after `snapshot_delay`; the clip when the ring
 (or the call) ends. The integration keeps the list in `squillo.json` next to the files (last 200
