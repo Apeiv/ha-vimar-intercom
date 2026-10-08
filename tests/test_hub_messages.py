@@ -413,6 +413,22 @@ def test_a_ring_we_answered_or_declined_is_not_answered_elsewhere(rung):
     assert outcomes == []
 
 
+def test_a_late_answered_message_after_our_call_ended_changes_nothing(rung, monkeypatch):
+    """call_ended resets _ring_answered: a `C;<id>;ANSWERED` arriving after a short
+    call HA answered turned "answered" into "answered_elsewhere"."""
+    h, outcomes = rung
+
+    async def _answer():
+        return True, "ok"
+
+    monkeypatch.setattr(sip, "do_answer_incoming", _answer)
+    assert asyncio.run(h.async_answer())[0]
+    h._update_stats("call_started", "")
+    h._update_stats("call_ended", "")
+    h._handle_incoming_message("C;ring-1;ANSWERED")
+    assert outcomes == ["answered"]
+
+
 @pytest.mark.parametrize("ok, msg, outcome", [
     (True, "200 OK", "exists"),
     (False, "404 Not Found", "absent"),

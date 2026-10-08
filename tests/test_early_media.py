@@ -412,6 +412,12 @@ def test_squillo_biforcato_secondo_ramo_482_e_cancel_per_branch(rete):
     ('Reason: SIP;cause=487;text="Request terminated"\r\n', "Chiamata cancellata"),
     ('Reason: Q.850;cause=200\r\n', "Chiamata cancellata"),
     ("", "Chiamata cancellata"),
+    # RFC 3326: one Reason header can list several reason-values, and there can be several headers
+    ('Reason: SIP;cause=487, Q.850;cause=200\r\n', "Chiamata cancellata"),
+    ('Reason: Q.850;cause=16, SIP;cause=200\r\n', "Risposto altrove"),
+    ('Reason: SIP;cause=200\r\nReason: Q.850;cause=16\r\n', "Risposto altrove"),
+    ('Reason: SIP;cause=487;text="no, SIP;cause=200"\r\n', "Chiamata cancellata"),
+    ('Reason: SIP;cause=487;text="a \\", SIP;cause=200;b="\r\n', "Chiamata cancellata"),  # escaped quote
 ])
 def test_cancel_with_cause_200_says_someone_else_answered(rete, monkeypatch, reason, msg):
     """#164 (40517, local UDP): a ring answered from the indoor monitor or the Vimar

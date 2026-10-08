@@ -242,6 +242,9 @@ class VimarIntercomHub(PlantMessages, RingMedia):
         # Call-ID of the last real ring, and whether another device answered it (#164)
         self._ring_cid: str | None = None
         self._ring_elsewhere = False
+        # HA answered the last ring (Rispondi or the away message). Unlike _ring_answered
+        # it lasts until the next ring: a late C;<id>;ANSWERED must not rewrite the outcome.
+        self._ring_taken = False
         self._was_ringing = False  # per il webhook di fine squillo, vedi _handle_broadcast
         # Callback per emettere eventi bus HA (registrati da __init__.py).
         # Evita di iniettare hass nell'hub, coerente con ring/state callbacks.
@@ -1003,7 +1006,7 @@ class VimarIntercomHub(PlantMessages, RingMedia):
         else:
             ok, msg = await sip.do_answer_incoming()
         if ok:
-            self._ring_answered = True
+            self._ring_answered = self._ring_taken = True
             self.stats["last_call_direction"] = "in"
             self._log_outcome("answered")
         self._touch()
@@ -1373,7 +1376,7 @@ class VimarIntercomHub(PlantMessages, RingMedia):
         with cause=200 and the `C;<call_id>;ANSWERED` message that follows (#164)."""
         if cid is not None and cid != self._ring_cid:
             return
-        if self._ring_answered or self._ring_declined or self._ring_elsewhere:
+        if self._ring_answered or self._ring_taken or self._ring_declined or self._ring_elsewhere:
             return
         self._ring_elsewhere = True
         _LOGGER.info("Ring answered on another device")
@@ -1435,7 +1438,7 @@ class VimarIntercomHub(PlantMessages, RingMedia):
         if not ok:
             _LOGGER.warning("Messaggio di assenza: risposta fallita (%s)", msg)
             return
-        self._ring_answered = True
+        self._ring_answered = self._ring_taken = True
         self._log_outcome("away")
 
         def alive():
@@ -1467,7 +1470,7 @@ class VimarIntercomHub(PlantMessages, RingMedia):
                     self._ring_answered = False
                     self._ring_declined = False
                     self._ring_cid = sip.pending_incoming.get("cid")
-                    self._ring_elsewhere = False
+                    self._ring_elsewhere = self._ring_taken = False
                     # Foto e clip sono di questo squillo: quelli di prima non vanno in notifica
                     for k in ("last_photo", "last_photo_path", "last_photo_v", "last_clip", "last_clip_path"):
                         st[k] = None
