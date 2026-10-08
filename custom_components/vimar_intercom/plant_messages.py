@@ -50,6 +50,13 @@ class PlantMessages:
             st["mode_seq"] = st.get("mode_seq", 0) + 1
             return
 
+        # C;<call_id>;ANSWERED: the device that answered an incoming call tells the
+        # others (PROTOCOL.md, sync between devices; seen on a 40517 in #164)
+        parts = raw.split(";")
+        if len(parts) >= 3 and parts[0].upper() == "C" and parts[-1].upper() == "ANSWERED":
+            self._answered_elsewhere(";".join(parts[1:-1]))
+            return
+
         # SET_APT_PARAMS_REPLY;{"MSGID","ERRCODE"} → risposta a async_set_apt_param
         if upper.startswith("SET_APT_PARAMS_REPLY"):
             self._handle_apt_params_reply(raw)

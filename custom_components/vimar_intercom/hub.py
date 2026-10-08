@@ -239,6 +239,9 @@ class VimarIntercomHub(PlantMessages, RingMedia):
         # Niente VOICEMAIL;OFF da soli, solo su azione dell'utente.
         self._away_enabled = True
         self._ring_declined = False  # rifiutato da noi (603): non è uno squillo perso
+        # Call-ID of the last real ring, and whether another device answered it (#164)
+        self._ring_cid: str | None = None
+        self._ring_elsewhere = False
         self._was_ringing = False  # per il webhook di fine squillo, vedi _handle_broadcast
         # Callback per emettere eventi bus HA (registrati da __init__.py).
         # Evita di iniettare hass nell'hub, coerente con ring/state callbacks.
@@ -1364,6 +1367,18 @@ class VimarIntercomHub(PlantMessages, RingMedia):
         if self._was_ringing and not self.is_ringing:
             self._ring_over()
 
+    def _answered_elsewhere(self, cid: str | None = None) -> None:
+        """Another device answered the last ring (indoor monitor, Vimar app): the ring
+        log says so instead of "missed". Two signals, either one is enough: the CANCEL
+        with cause=200 and the `C;<call_id>;ANSWERED` message that follows (#164)."""
+        if cid is not None and cid != self._ring_cid:
+            return
+        if self._ring_answered or self._ring_declined or self._ring_elsewhere:
+            return
+        self._ring_elsewhere = True
+        _LOGGER.info("Ring answered on another device")
+        self._log_outcome("answered_elsewhere")
+
     def _ring_over(self) -> None:
         self._was_ringing = False
         if R.RING_END_WEBHOOK_URL:
@@ -1451,12 +1466,16 @@ class VimarIntercomHub(PlantMessages, RingMedia):
                     st["ring_count"] += 1
                     self._ring_answered = False
                     self._ring_declined = False
+                    self._ring_cid = sip.pending_incoming.get("cid")
+                    self._ring_elsewhere = False
                     # Foto e clip sono di questo squillo: quelli di prima non vanno in notifica
                     for k in ("last_photo", "last_photo_path", "last_photo_v", "last_clip", "last_clip_path"):
                         st[k] = None
             elif msg_type == "ring_ended":
                 if not (self._ring_answered or self._ring_declined) and st["last_ring_time"]:
-                    st["missed_count"] += 1
+                    st["missed_count"] += 1  # not answered from HA, wherever else it was
+                if msg == sip.ANSWERED_ELSEWHERE:
+                    self._answered_elsewhere()
             elif msg_type == "call_started":
                 self._call_started_mono = time.monotonic()
                 st["last_call_start"] = now

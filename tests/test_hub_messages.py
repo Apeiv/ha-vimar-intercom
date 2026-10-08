@@ -358,6 +358,61 @@ def test_an_unknown_message_changes_nothing(plain_hub):
     assert plain_hub.stats == before
 
 
+# ─── a ring answered on another device (#164) ───────────────────────────────
+
+@pytest.fixture
+def rung(plain_hub, monkeypatch):
+    """A real ring is up (Call-ID ring-1); the ring log outcomes are recorded."""
+    monkeypatch.setitem(sip.pending_incoming, "cid", "ring-1")
+    monkeypatch.setitem(sip.pending_incoming, "caller_uri", "sip:55001@plant.example")
+    outcomes = []
+    monkeypatch.setattr(plain_hub, "_log_outcome", outcomes.append)
+    plain_hub._update_stats("ring", "")
+    return plain_hub, outcomes
+
+
+def test_a_ring_cancelled_because_answered_elsewhere_is_logged_so(rung):
+    h, outcomes = rung
+    h._update_stats("ring_ended", "Risposto altrove")
+    assert outcomes == ["answered_elsewhere"]
+
+
+def test_a_plain_cancel_leaves_the_ring_missed(rung):
+    h, outcomes = rung
+    h._update_stats("ring_ended", "Chiamata cancellata")
+    assert outcomes == []
+
+
+def test_the_answered_message_of_this_ring_marks_it_answered_elsewhere(rung):
+    h, outcomes = rung
+    h._update_stats("ring_ended", "Chiamata cancellata")
+    h._handle_incoming_message("C;ring-1;ANSWERED")
+    assert outcomes == ["answered_elsewhere"]
+
+
+def test_both_signals_log_the_outcome_once(rung):
+    h, outcomes = rung
+    h._update_stats("ring_ended", "Risposto altrove")
+    h._handle_incoming_message("C;ring-1;ANSWERED")
+    assert outcomes == ["answered_elsewhere"]
+
+
+@pytest.mark.parametrize("body", ["C;other-call;ANSWERED", "C;ANSWERED", "C;ring-1;READ"])
+def test_an_answered_message_of_another_call_changes_nothing(rung, body):
+    h, outcomes = rung
+    h._handle_incoming_message(body)
+    assert outcomes == []
+
+
+def test_a_ring_we_answered_or_declined_is_not_answered_elsewhere(rung):
+    h, outcomes = rung
+    h._ring_answered = True
+    h._handle_incoming_message("C;ring-1;ANSWERED")
+    h._ring_answered, h._ring_declined = False, True
+    h._update_stats("ring_ended", "Risposto altrove")
+    assert outcomes == []
+
+
 @pytest.mark.parametrize("ok, msg, outcome", [
     (True, "200 OK", "exists"),
     (False, "404 Not Found", "absent"),
