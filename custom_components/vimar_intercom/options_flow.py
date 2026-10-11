@@ -360,21 +360,38 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             hub = (self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id) or {}).get("hub")
             nicks = (hub.stats.get("nicknames") or []) if hub else []
             picg = str(current.get(KEY_PICG_TARGET) or PICG_TARGET).strip()
-            if not nicks and hub and hub.registered and validate.sip_target(picg):
-                result = await hub.async_find_picg([picg], sip_timeout=20, reply_wait=10)
-                nicks = result.get("nicknames") or []
+            has_picg = any(str(n.get("role") or "").upper() == rest_client.ROLE_PICG
+                           for n in nicks)
+            if not has_picg:
+                if not hub or not hub.registered:
+                    errors["base"] = "internal_panel_unavailable"
+                elif validate.sip_target(picg):
+                    result = await hub.async_find_picg([picg], sip_timeout=20, reply_wait=10)
+                    nicks = result.get("nicknames") or []
+                    if not result.get("ok"):
+                        errors["base"] = "internal_panel_unavailable"
+                    elif not nicks and not result.get("reply_after") and not any(
+                        p.get("outcome") == "replied" for p in result.get("probes", [])
+                    ):
+                        errors["base"] = "internal_panel_no_reply"
             candidates = {str(n.get("ext") or "").strip() for n in nicks
-                          if str(n.get("role") or "").upper() == "PICG"
+                          if str(n.get("role") or "").upper() == rest_client.ROLE_PICG
                           and validate.sip_target(str(n.get("ext") or "").strip())}
             self._internal_panel_suggestion = next(iter(candidates)) if len(candidates) == 1 else ""
-            if not self._internal_panel_suggestion:
+            sga = str(current.get(KEY_SGA_TARGET) or SGA_TARGET).strip()
+            if self._internal_panel_suggestion == sga:
+                errors["base"] = "internal_panel_same_as_sga"
+            elif not self._internal_panel_suggestion and not errors:
                 errors["base"] = "internal_panel_not_found"
+        suggestion = self._internal_panel_suggestion
+        if suggestion == str(current.get(KEY_SGA_TARGET) or SGA_TARGET).strip():
+            suggestion = ""
         return self.async_show_form(
             step_id="internal_panel",
             data_schema=vol.Schema({vol.Required(
                 KEY_INTERNAL_PANEL_TARGET,
                 default=(user_input or {}).get(KEY_INTERNAL_PANEL_TARGET,
-                    self._internal_panel_suggestion or current.get(KEY_INTERNAL_PANEL_TARGET)
+                    suggestion or current.get(KEY_INTERNAL_PANEL_TARGET)
                     or INTERNAL_PANEL_TARGET),
             ): str}),
             errors=errors,

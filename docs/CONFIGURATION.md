@@ -84,7 +84,7 @@ The camera image between calls (the last ring photo) is visible to every Home As
 
 ### Finding the indoor monitor
 
-Configure → **Find indoor monitor** proposes the main indoor monitor declared in a `GET_NICKS` reply (role `PICG`). It uses previously received nicknames or requests them from the configured PICG, without scanning other addresses. It shows the current **Call Home** destination and saves the proposal only when confirmed. SGA, PICG, camera and actuator settings are preserved, and no call is placed. Without a unique declared PICG it does not guess a destination; a known address can still be entered manually. The mapping was verified on a Tab 7S Up 40517, SW 2.1.0203, over the cloud; whether the main monitor accepts calls needs checking on other plants.
+Configure → **Find indoor monitor** proposes the main indoor monitor declared in a `GET_NICKS` reply (role `PICG`). It uses previously received nicknames or requests them from the configured PICG, without scanning other addresses. It shows the current **Call Home** destination and saves the proposal only when confirmed. SGA, PICG, camera and actuator settings are preserved, and no call is placed. Without a unique declared PICG it does not guess a destination; a known address can still be entered manually. The mapping was verified on a Tab 7S Up 40517, SW 2.1.0203, over the cloud; whether the main monitor accepts calls needs checking on other plants. A PICG equal to the effective SGA is not proposed: the current Call Home destination is kept. Cached nicknames without a PICG trigger a fresh lookup. No reply and an unavailable lookup are reported separately from a reply without a unique valid PICG.
 
 ### Voicemail
 
