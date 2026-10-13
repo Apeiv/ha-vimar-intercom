@@ -839,7 +839,7 @@ def test_picg_equal_to_effective_sga_keeps_the_current_monitor(of, monkeypatch, 
 
     monkeypatch.setattr(of.vol, "Required", required)
     result = asyncio.run(flow.async_step_internal_panel())
-    assert result["errors"] == {"base": "internal_panel_same_as_sga"}
+    assert result["errors"] == {}
     assert result["description_placeholders"]["detected"] == declared
     assert defaults["internal_panel_target"] == (configured or of.INTERNAL_PANEL_TARGET)
     assert flow._entry.options["internal_panel_target"] == configured

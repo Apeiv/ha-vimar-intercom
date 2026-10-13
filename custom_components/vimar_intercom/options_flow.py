@@ -378,10 +378,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                           if str(n.get("role") or "").upper() == rest_client.ROLE_PICG
                           and validate.sip_target(str(n.get("ext") or "").strip())}
             self._internal_panel_suggestion = next(iter(candidates)) if len(candidates) == 1 else ""
-            sga = str(current.get(KEY_SGA_TARGET) or SGA_TARGET).strip()
-            if self._internal_panel_suggestion == sga:
-                errors["base"] = "internal_panel_same_as_sga"
-            elif not self._internal_panel_suggestion and not errors:
+            if not self._internal_panel_suggestion and not errors:
                 errors["base"] = "internal_panel_not_found"
         suggestion = self._internal_panel_suggestion
         if suggestion == str(current.get(KEY_SGA_TARGET) or SGA_TARGET).strip():
