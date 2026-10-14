@@ -6,6 +6,18 @@ Italian and are kept as they were written.
 
 ## [Unreleased]
 
+## [1.0.23] - 2026-10-14
+
+### Enhancements
+
+- Propose a declared PICG as the Call Home destination when it differs from the SGA, preserving the current destination otherwise and distinguishing unavailable lookups from missing replies ([#173](https://github.com/ha-vimar/ha-vimar-intercom/pull/173)).
+- Enable or disable video in outgoing intercom calls from Settings, including when the pairing QR initially disables it ([#175](https://github.com/ha-vimar/ha-vimar-intercom/pull/175)).
+
+### Bug fixes
+
+- Cloud phonebook downloads distinguish an unanswered status request from a status reply without a token, with guidance to check the PICG address ([#171](https://github.com/ha-vimar/ha-vimar-intercom/pull/171)).
+- Phonebook import confirmation displays the correct source and no longer suggests that changing the SGA overwrites an independently configured PICG ([#174](https://github.com/ha-vimar/ha-vimar-intercom/pull/174)).
+
 ## [1.0.22] - 2026-10-12
 
 > **⚠ Before you update**
