@@ -334,6 +334,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         # PICG dichiarato dal citofono stesso (get_info.php?action=nickname).
         # Resta None quando la rubrica arriva da un file caricato a mano.
         self._picg_from_rest: str | None = None
+        self._internal_panel_suggestion = ""
         self._phonebook_source = "rubrica.db"
 
     async def async_step_init(
@@ -342,8 +343,60 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         """Menu: impostazioni a mano, rubrica dal citofono, o file rubrica.db."""
         return self.async_show_menu(
             step_id="init",
-            menu_options=["settings", "homekit", "av_key", "fetch_rubrica", "fetch_rubrica_cloud",
+            menu_options=["settings", "internal_panel", "homekit", "av_key", "fetch_rubrica", "fetch_rubrica_cloud",
                           "import_rubrica"],
+        )
+
+    async def async_step_internal_panel(self, user_input: dict | None = None) -> FlowResult:
+        """Propose the declared main indoor monitor; save only after confirmation."""
+        current = {**self._entry.data, **self._entry.options}
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            target = str(user_input.get(KEY_INTERNAL_PANEL_TARGET) or "").strip()
+            if validate.sip_target(target):
+                return self.async_create_entry(
+                    title="", data={**self._entry.options, KEY_INTERNAL_PANEL_TARGET: target})
+            errors[KEY_INTERNAL_PANEL_TARGET] = "invalid_target"
+        else:
+            hub = (self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id) or {}).get("hub")
+            nicks = (hub.stats.get("nicknames") or []) if hub else []
+            picg = str(current.get(KEY_PICG_TARGET) or PICG_TARGET).strip()
+            has_picg = any(str(n.get("role") or "").upper() == rest_client.ROLE_PICG
+                           for n in nicks)
+            if not has_picg:
+                if not hub or not hub.registered:
+                    errors["base"] = "internal_panel_unavailable"
+                elif validate.sip_target(picg):
+                    result = await hub.async_find_picg([picg], sip_timeout=20, reply_wait=10)
+                    nicks = result.get("nicknames") or []
+                    if not result.get("ok"):
+                        errors["base"] = "internal_panel_unavailable"
+                    elif not nicks and not result.get("reply_after") and not any(
+                        p.get("outcome") == "replied" for p in result.get("probes", [])
+                    ):
+                        errors["base"] = "internal_panel_no_reply"
+            candidates = {str(n.get("ext") or "").strip() for n in nicks
+                          if str(n.get("role") or "").upper() == rest_client.ROLE_PICG
+                          and validate.sip_target(str(n.get("ext") or "").strip())}
+            self._internal_panel_suggestion = next(iter(candidates)) if len(candidates) == 1 else ""
+            if not self._internal_panel_suggestion and not errors:
+                errors["base"] = "internal_panel_not_found"
+        suggestion = self._internal_panel_suggestion
+        if suggestion == str(current.get(KEY_SGA_TARGET) or SGA_TARGET).strip():
+            suggestion = ""
+        return self.async_show_form(
+            step_id="internal_panel",
+            data_schema=vol.Schema({vol.Required(
+                KEY_INTERNAL_PANEL_TARGET,
+                default=(user_input or {}).get(KEY_INTERNAL_PANEL_TARGET,
+                    suggestion or current.get(KEY_INTERNAL_PANEL_TARGET)
+                    or INTERNAL_PANEL_TARGET),
+            ): str}),
+            errors=errors,
+            description_placeholders={
+                "detected": self._internal_panel_suggestion or "—",
+                "current": str(current.get(KEY_INTERNAL_PANEL_TARGET) or INTERNAL_PANEL_TARGET),
+            },
         )
 
     async def async_step_settings(
