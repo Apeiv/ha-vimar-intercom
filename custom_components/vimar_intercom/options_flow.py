@@ -335,6 +335,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         # Resta None quando la rubrica arriva da un file caricato a mano.
         self._picg_from_rest: str | None = None
         self._internal_panel_suggestion = ""
+        self._phonebook_source = "rubrica.db"
 
     async def async_step_init(
         self, user_input: dict | None = None
@@ -773,6 +774,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     self._imported = result
                     self._imported_gid = gid
                     self._picg_from_rest = picg
+                    self._phonebook_source = "Tab"
                     return await self.async_step_import_confirm()
 
         return self.async_show_form(
@@ -790,15 +792,15 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             },
         )
 
-    async def _cloud_token(self) -> tuple[str | None, str | None, str | None]:
-        """(token, rubrica_ver, GID) dall'ultima risposta a GET_INIT_STATUS dell'hub.
+    async def _cloud_token(self) -> tuple[str | None, str | None, str | None, bool]:
+        """Read the token, phonebook version, GID and whether a fresh reply arrived.
 
         Se il token manca si richiede lo stato una volta e si aspetta qualche secondo:
         la risposta arriva come MESSAGE separato. Il token non si salva da nessuna parte.
         """
         hub = (self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id) or {}).get("hub")
         if hub is None:
-            return None, None, None
+            return None, None, None, False
 
         def _read():
             st = hub.stats
@@ -806,14 +808,18 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     st.get("apt_gid"))
 
         token, ver, gid = _read()
+        received = False
         if not token and hub.registered:
+            # A SIP 200 accepts the request; only a new MESSAGE is a status reply.
+            seq = hub._init_seq
             await hub.async_request_status()
             for _ in range(10):
                 await asyncio.sleep(0.5)
                 token, ver, gid = _read()
-                if token:
+                received = hub._init_seq != seq
+                if token or received:
                     break
-        return token, ver, (str(gid) if gid not in (None, "") else None)
+        return token, ver, (str(gid) if gid not in (None, "") else None), received
 
     async def async_step_fetch_rubrica_cloud(
         self, user_input: dict | None = None
@@ -831,11 +837,11 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         cdomain = (current.get(KEY_CLOUD_DOMAIN) or "").strip()
         if not cdomain and cproxy and str(current.get(KEY_SIP_DOMAIN, "")).endswith("." + cproxy):
             cdomain = current[KEY_SIP_DOMAIN]   # entry manuale: il dominio SIP è quello cloud
-        token, ver, plant_gid = await self._cloud_token()
+        token, ver, plant_gid, received = await self._cloud_token()
         default_gid = plant_gid or str(current.get(KEY_GID) or "101")
 
         if not token:
-            errors["base"] = "no_cloud_token"
+            errors["base"] = "no_cloud_token" if received else "no_cloud_status"
         elif cloud_phonebook.check_inputs(cdomain, cproxy, token, ver):
             errors["base"] = "cloud_failed"
             self._rubrica_error = (
@@ -876,6 +882,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     self._imported = result
                     self._imported_gid = gid
                     self._picg_from_rest = None
+                    self._phonebook_source = "Vimar cloud"
                     return await self.async_step_import_confirm()
 
         return self.async_show_form(
@@ -926,6 +933,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 else:
                     self._imported = result
                     self._imported_gid = gid
+                    self._picg_from_rest = None
+                    self._phonebook_source = "rubrica.db"
                     return await self.async_step_import_confirm()
 
         return self.async_show_form(
@@ -1014,7 +1023,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         if sga and sga != current_sga:
             sga_info = (
                 f"{sga} — diverso da quello attualmente configurato ({current_sga}); "
-                "confermando verrà impostato come nuovo sga_target/picg_target."
+                "confermando verrà impostato come nuovo sga_target."
             )
         elif sga:
             sga_info = f"{sga} — coincide con quello già in uso."
@@ -1033,11 +1042,11 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             picg_info = f"{self._picg_from_rest} — dichiarato dal citofono, coincide con quello già in uso."
         elif configured_picg:
             picg_info = (
-                f"non richiesto (rubrica da file): resta quello già configurato ({configured_picg})."
+                f"non rilevato dalla fonte della rubrica: resta quello già configurato ({configured_picg})."
             )
         else:
             picg_info = (
-                f"non richiesto (rubrica da file) e non ancora configurato: verrà impostato "
+                f"non rilevato dalla fonte della rubrica e non ancora configurato: verrà impostato "
                 f"uguale all'SGA ({new_picg})."
             )
 
@@ -1080,6 +1089,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 "count": str(len(actuators)),
                 "names": ", ".join(a["name"] for a in actuators) or "—",
                 "gid": self._imported_gid,
+                "source": self._phonebook_source,
                 "sga_info": sga_info,
                 "picg_info": picg_info,
                 "camera_info": camera_info,

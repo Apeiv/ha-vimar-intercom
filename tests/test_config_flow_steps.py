@@ -498,6 +498,7 @@ def test_the_phonebook_from_the_intercom_leads_to_the_confirmation_with_its_picg
     assert result["step_id"] == "import_confirm"
     assert calls == [("download", "192.0.2.1", "60999", "rubrica"), ("parse", "101")]
     assert "61000" in result["description_placeholders"]["picg_info"]
+    assert result["description_placeholders"]["source"] == "Tab"
 
 
 def test_missing_nicknames_do_not_spoil_the_import(of, monkeypatch):
@@ -539,6 +540,7 @@ CLOUD_DATA = {**ENTRY_DATA, "cloud_proxy": "relay.example.test",
 class _Hub:
     def __init__(self, stats, registered=True, token_later=None):
         self.stats, self.registered, self.token_later = stats, registered, token_later
+        self._init_seq = 0
 
     async def async_request_status(self):
         if self.token_later:
@@ -559,9 +561,9 @@ def fast_sleep(of, monkeypatch):
     monkeypatch.setattr(of.asyncio, "sleep", sleep)
 
 
-def test_without_the_integration_loaded_there_is_no_cloud_token(of):
+def test_without_the_integration_loaded_there_is_no_cloud_status(of):
     result = asyncio.run(_cloud_flow(of, None).async_step_fetch_rubrica_cloud())
-    assert result["errors"] == {"base": "no_cloud_token"}
+    assert result["errors"] == {"base": "no_cloud_status"}
 
 
 def test_a_token_arriving_after_the_status_request_is_used(of, fast_sleep):
@@ -584,6 +586,8 @@ def test_a_manual_entry_uses_its_sip_domain_as_the_cloud_domain(of, monkeypatch)
     hub = _Hub({"init_status": {"token": "tok"}, "rubrica_ver": "abc"})
     result = asyncio.run(_cloud_flow(of, hub, data).async_step_fetch_rubrica_cloud({"rubrica_gid": "101"}))
     assert result["step_id"] == "import_confirm" and seen["cdomain"] == "plant.relay.example.test"
+    assert result["description_placeholders"]["source"] == "Vimar cloud"
+    assert "rubrica da file" not in result["description_placeholders"]["picg_info"]
 
 
 def test_missing_cloud_data_is_named(of):
@@ -645,6 +649,7 @@ def test_an_uploaded_phonebook_leads_to_the_confirmation(of, monkeypatch):
     result = asyncio.run(_options_flow(of).async_step_import_rubrica({"rubrica_file": "up1", "rubrica_gid": ""}))
     assert result["step_id"] == "import_confirm"
     assert seen == ["up1"] and parsed_paths == [("/tmp/uploads/up1.db", "101")]
+    assert result["description_placeholders"]["source"] == "rubrica.db"
 
 
 def test_an_unreadable_upload_is_refused(of, monkeypatch):
@@ -891,3 +896,14 @@ def test_invalid_configured_picg_is_not_queried(of):
                          hass_data={"vimar_intercom": {"e1": {"hub": hub}}})
     result = asyncio.run(flow.async_step_internal_panel())
     assert result["errors"] == {"base": "internal_panel_not_found"}
+
+
+def test_import_summary_keeps_sga_and_picg_changes_separate(of):
+    flow = _confirm_flow(of, {"actuators": ACTUATORS, "sga": "53011"},
+                         {"sga_target": "53010", "picg_target": "52011"})
+    form = asyncio.run(flow.async_step_import_confirm())
+    saved = asyncio.run(flow.async_step_import_confirm({}))
+    assert "sga_target/picg_target" not in form["description_placeholders"]["sga_info"]
+    assert "52011" in form["description_placeholders"]["picg_info"]
+    assert saved["data"]["sga_target"] == "53011"
+    assert saved["data"]["picg_target"] == "52011"
