@@ -79,12 +79,20 @@
       "init": {
         "title": "Vimar Intercom settings",
         "menu_options": {
+          "internal_panel": "Find indoor monitor",
           "settings": "Network and actuator settings",
           "homekit": "HomeKit",
           "av_key": "/av stream key",
           "import_rubrica": "Import actuators from rubrica.db",
           "fetch_rubrica": "Download the phonebook from the intercom",
           "fetch_rubrica_cloud": "Download the phonebook from the Vimar cloud"
+        }
+      },
+      "internal_panel": {
+        "title": "Find indoor monitor",
+        "description": "The system declares PICG {detected}. The current Call Home destination is {current}. If the declared PICG differs from the SGA, it is proposed as the indoor monitor; otherwise the current destination is kept, because the PICG may be a controller rather than a monitor. Confirm the destination or enter a known indoor monitor address. Saving does not place a call.",
+        "data": {
+          "internal_panel_target": "Indoor monitor SIP address"
         }
       },
       "settings": {
@@ -169,7 +177,7 @@
       },
       "import_confirm": {
         "title": "Confirm import",
-        "description": "Found {count} actuators for GID {gid}: {names}.\n\nDetected SGA (MAGIC_APT_INTERCOM): {sga_info}\n\nPICG detected: {picg_info}\n\nVideo entrance panel (camera) detected: {camera_info}\n\nDoor panel detected: {door_info}\n\nConfirming REPLACES the currently configured actuators and, when detected, updates sga_target/picg_target/camera_target/door_target. To cancel, close this window without confirming."
+        "description": "Phonebook source: {source}.\n\nFound {count} actuators for GID {gid}: {names}.\n\nDetected SGA (MAGIC_APT_INTERCOM): {sga_info}\n\nPICG detected: {picg_info}\n\nVideo entrance panel (camera) detected: {camera_info}\n\nDoor panel detected: {door_info}\n\nConfirming REPLACES the currently configured actuators and, when detected, updates sga_target/picg_target/camera_target/door_target. To cancel, close this window without confirming."
       },
       "fetch_rubrica": {
         "title": "Download from the intercom",
@@ -209,6 +217,9 @@
       "invalid_actuator_target": "Invalid actuator target ({actuators_error}): digits only (e.g. 55001) or AUTO.",
       "rubrica_import_failed": "Import failed. See description above for details.",
       "rubrica_no_actuators": "No actuators found for the specified GID. See description above.",
+      "internal_panel_not_found": "The nickname reply does not declare a unique valid PICG. Enter a known indoor monitor address manually.",
+      "internal_panel_no_reply": "No nickname reply arrived from the configured PICG. Some cloud plants do not answer GET_NICKS even at an existing address. This does not prove the address is wrong; enter a known indoor monitor address manually.",
+      "internal_panel_unavailable": "The nickname lookup could not run: the integration may be disconnected or another search may be in progress. Retry once it is available, or enter a known indoor monitor address manually.",
       "invalid_target": "Invalid value: digits only (e.g. 55001).",
       "invalid_url": "Invalid URL: it must start with http:// or https:// and have a host.",
       "no_local_proxy": "The intercom address is missing: set it under \"Network and actuator settings\".",
@@ -222,7 +233,8 @@
       "upload_failed": "File not saved in the messages folder: see the Home Assistant log.",
       "path_not_allowed": "Home Assistant cannot write to this folder: add it to allowlist_external_dirs or use a media folder.",
       "path_public": "Public folder: /config/www is served on /local without login. Use e.g. /config/media/citofono.",
-      "no_cloud_token": "This system did not send the phonebook token (short GET_INIT_STATUS reply, as on the 40507): use “Download the phonebook from the intercom” or “Import actuators from rubrica.db”.",
+      "no_cloud_token": "The status reply did not include a phonebook token. Use the intercom download or import rubrica.db instead.",
+      "no_cloud_status": "No status reply was received. Check that the integration is connected and that the PICG address is correct, then retry. This does not establish whether the system supports cloud phonebook downloads.",
       "cloud_auth_failed": "The Vimar cloud rejected the token.",
       "cloud_failed": "Phonebook download from the cloud failed."
     }

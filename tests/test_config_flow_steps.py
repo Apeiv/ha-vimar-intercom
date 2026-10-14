@@ -498,6 +498,7 @@ def test_the_phonebook_from_the_intercom_leads_to_the_confirmation_with_its_picg
     assert result["step_id"] == "import_confirm"
     assert calls == [("download", "192.0.2.1", "60999", "rubrica"), ("parse", "101")]
     assert "61000" in result["description_placeholders"]["picg_info"]
+    assert result["description_placeholders"]["source"] == "Tab"
 
 
 def test_missing_nicknames_do_not_spoil_the_import(of, monkeypatch):
@@ -539,6 +540,7 @@ CLOUD_DATA = {**ENTRY_DATA, "cloud_proxy": "relay.example.test",
 class _Hub:
     def __init__(self, stats, registered=True, token_later=None):
         self.stats, self.registered, self.token_later = stats, registered, token_later
+        self._init_seq = 0
 
     async def async_request_status(self):
         if self.token_later:
@@ -559,9 +561,9 @@ def fast_sleep(of, monkeypatch):
     monkeypatch.setattr(of.asyncio, "sleep", sleep)
 
 
-def test_without_the_integration_loaded_there_is_no_cloud_token(of):
+def test_without_the_integration_loaded_there_is_no_cloud_status(of):
     result = asyncio.run(_cloud_flow(of, None).async_step_fetch_rubrica_cloud())
-    assert result["errors"] == {"base": "no_cloud_token"}
+    assert result["errors"] == {"base": "no_cloud_status"}
 
 
 def test_a_token_arriving_after_the_status_request_is_used(of, fast_sleep):
@@ -584,6 +586,8 @@ def test_a_manual_entry_uses_its_sip_domain_as_the_cloud_domain(of, monkeypatch)
     hub = _Hub({"init_status": {"token": "tok"}, "rubrica_ver": "abc"})
     result = asyncio.run(_cloud_flow(of, hub, data).async_step_fetch_rubrica_cloud({"rubrica_gid": "101"}))
     assert result["step_id"] == "import_confirm" and seen["cdomain"] == "plant.relay.example.test"
+    assert result["description_placeholders"]["source"] == "Vimar cloud"
+    assert "rubrica da file" not in result["description_placeholders"]["picg_info"]
 
 
 def test_missing_cloud_data_is_named(of):
@@ -645,6 +649,7 @@ def test_an_uploaded_phonebook_leads_to_the_confirmation(of, monkeypatch):
     result = asyncio.run(_options_flow(of).async_step_import_rubrica({"rubrica_file": "up1", "rubrica_gid": ""}))
     assert result["step_id"] == "import_confirm"
     assert seen == ["up1"] and parsed_paths == [("/tmp/uploads/up1.db", "101")]
+    assert result["description_placeholders"]["source"] == "rubrica.db"
 
 
 def test_an_unreadable_upload_is_refused(of, monkeypatch):
@@ -823,3 +828,145 @@ def test_video_choice_survives_a_settings_validation_error(of, monkeypatch):
     }))
     assert result["errors"]["camera_target"] == "invalid_target"
     assert defaults["video_enabled"] is True
+
+
+# The internal monitor is proposed from declared roles, never from numbering.
+@pytest.mark.parametrize("configured", ["", "52044"])
+def test_internal_panel_detection_proposes_the_declared_picg_without_saving(of, configured):
+    hub = types.SimpleNamespace(stats={"nicknames": [
+        {"role": "PICG", "ext": "52011", "name": "Main monitor"},
+        {"role": "PIM", "ext": "52901", "name": "Mobile client"},
+    ]})
+    flow = _options_flow(of, options={"internal_panel_target": configured},
+                         hass_data={"vimar_intercom": {"e1": {"hub": hub}}})
+    result = asyncio.run(flow.async_step_internal_panel())
+    assert result["type"] == "form"
+    assert result["description_placeholders"]["detected"] == "52011"
+    assert flow._entry.options["internal_panel_target"] == configured
+    saved = asyncio.run(flow.async_step_internal_panel({"internal_panel_target": "52011"}))
+    assert saved["data"]["internal_panel_target"] == "52011"
+
+
+def test_internal_panel_confirmation_keeps_other_settings(of):
+    flow = _options_flow(of, options={"picg_target": "52011", "sga_target": "53011",
+                                     "camera_target": "54011", "homekit_accessory": True})
+    saved = asyncio.run(flow.async_step_internal_panel({"internal_panel_target": "52011"}))
+    assert saved["data"] == {**flow._entry.options, "internal_panel_target": "52011"}
+
+
+def test_internal_panel_detection_queries_only_the_configured_picg(of):
+    calls = []
+
+    async def find(targets, **kwargs):
+        calls.append(targets)
+        return {"ok": True, "nicknames": [{"role": "PICG", "ext": "52011", "name": "Main monitor"}]}
+
+    hub = types.SimpleNamespace(stats={}, registered=True, async_find_picg=find)
+    flow = _options_flow(of, options={"picg_target": "52011"},
+                         hass_data={"vimar_intercom": {"e1": {"hub": hub}}})
+    result = asyncio.run(flow.async_step_internal_panel())
+    assert calls == [["52011"]]
+    assert result["description_placeholders"]["detected"] == "52011"
+
+
+@pytest.mark.parametrize("nicks", [[], [{"role": "PIM", "ext": "52901"}],
+                                   [{"role": "PICG", "ext": "invalid"}],
+                                   [{"role": "PICG", "ext": "52011"},
+                                    {"role": "PICG", "ext": "52012"}]])
+def test_internal_panel_detection_does_not_guess_missing_or_ambiguous_roles(of, nicks):
+    hub = types.SimpleNamespace(stats={"nicknames": nicks}, registered=False)
+    flow = _options_flow(of, hass_data={"vimar_intercom": {"e1": {"hub": hub}}})
+    result = asyncio.run(flow.async_step_internal_panel())
+    expected = "internal_panel_not_found" if any(n["role"] == "PICG" for n in nicks) else "internal_panel_unavailable"
+    assert result["errors"] == {"base": expected}
+
+
+def test_internal_panel_detection_without_a_loaded_hub_reports_no_candidate(of):
+    result = asyncio.run(_options_flow(of).async_step_internal_panel())
+    assert result["errors"] == {"base": "internal_panel_unavailable"}
+
+
+def test_internal_panel_confirmation_refuses_invalid_targets(of):
+    flow = _options_flow(of)
+    result = asyncio.run(flow.async_step_internal_panel({"internal_panel_target": "not-an-extension"}))
+    assert result["errors"]["internal_panel_target"] == "invalid_target"
+
+
+@pytest.mark.parametrize("sga", ["", "53011"])
+@pytest.mark.parametrize("configured", ["", "52044"])
+def test_picg_equal_to_effective_sga_keeps_the_current_monitor(of, monkeypatch, sga, configured):
+    declared = sga or of.SGA_TARGET
+    hub = types.SimpleNamespace(stats={"nicknames": [{"role": "PICG", "ext": declared}]})
+    flow = _options_flow(of, options={"sga_target": sga, "internal_panel_target": configured},
+                         hass_data={"vimar_intercom": {"e1": {"hub": hub}}})
+    defaults = {}
+
+    def required(key, default=None, **_kw):
+        defaults[key] = default
+        return key
+
+    monkeypatch.setattr(of.vol, "Required", required)
+    result = asyncio.run(flow.async_step_internal_panel())
+    assert result["errors"] == {}
+    assert result["description_placeholders"]["detected"] == declared
+    assert defaults["internal_panel_target"] == (configured or of.INTERNAL_PANEL_TARGET)
+    assert flow._entry.options["internal_panel_target"] == configured
+
+
+@pytest.mark.parametrize("reply, expected", [
+    ({"ok": True, "nicknames": [], "probes": [{"outcome": "no_response"}]}, "internal_panel_no_reply"),
+    ({"ok": True, "nicknames": [], "probes": [{"outcome": "exists"}]}, "internal_panel_no_reply"),
+    ({"ok": False, "error": "search already running"}, "internal_panel_unavailable"),
+    ({"ok": False, "error": "not registered"}, "internal_panel_unavailable"),
+    ({"ok": True, "nicknames": [{"role": "PIM", "ext": "52901"}]}, "internal_panel_not_found"),
+    ({"ok": True, "nicknames": [], "reply_after": "52011"}, "internal_panel_not_found"),
+    ({"ok": True, "nicknames": [], "probes": [{"outcome": "replied"}]}, "internal_panel_not_found"),
+])
+def test_internal_monitor_lookup_distinguishes_no_reply_and_unavailability(of, reply, expected):
+    async def find(targets, **kwargs):
+        assert targets == ["52011"]
+        return reply
+
+    hub = types.SimpleNamespace(stats={}, registered=True, async_find_picg=find)
+    flow = _options_flow(of, options={"picg_target": "52011"},
+                         hass_data={"vimar_intercom": {"e1": {"hub": hub}}})
+    result = asyncio.run(flow.async_step_internal_panel())
+    assert result["errors"] == {"base": expected}
+    saved = asyncio.run(flow.async_step_internal_panel({"internal_panel_target": "52044"}))
+    assert saved["data"]["internal_panel_target"] == "52044"
+
+
+def test_a_cache_without_picg_triggers_a_fresh_targeted_lookup(of):
+    calls = []
+
+    async def find(targets, **kwargs):
+        calls.append(targets)
+        return {"ok": True, "nicknames": [{"role": "PICG", "ext": "52011"}]}
+
+    hub = types.SimpleNamespace(stats={"nicknames": [{"role": "PIM", "ext": "52901"}]},
+                                registered=True, async_find_picg=find)
+    flow = _options_flow(of, options={"picg_target": "52011"},
+                         hass_data={"vimar_intercom": {"e1": {"hub": hub}}})
+    result = asyncio.run(flow.async_step_internal_panel())
+    assert calls == [["52011"]]
+    assert result["errors"] == {}
+    assert result["description_placeholders"]["detected"] == "52011"
+
+
+def test_invalid_configured_picg_is_not_queried(of):
+    hub = types.SimpleNamespace(stats={}, registered=True)
+    flow = _options_flow(of, options={"picg_target": "invalid"},
+                         hass_data={"vimar_intercom": {"e1": {"hub": hub}}})
+    result = asyncio.run(flow.async_step_internal_panel())
+    assert result["errors"] == {"base": "internal_panel_not_found"}
+
+
+def test_import_summary_keeps_sga_and_picg_changes_separate(of):
+    flow = _confirm_flow(of, {"actuators": ACTUATORS, "sga": "53011"},
+                         {"sga_target": "53010", "picg_target": "52011"})
+    form = asyncio.run(flow.async_step_import_confirm())
+    saved = asyncio.run(flow.async_step_import_confirm({}))
+    assert "sga_target/picg_target" not in form["description_placeholders"]["sga_info"]
+    assert "52011" in form["description_placeholders"]["picg_info"]
+    assert saved["data"]["sga_target"] == "53011"
+    assert saved["data"]["picg_target"] == "52011"
