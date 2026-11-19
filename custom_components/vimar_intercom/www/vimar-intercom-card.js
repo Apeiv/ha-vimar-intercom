@@ -420,11 +420,16 @@ class VimarIntercomCard extends CardAudio(HTMLElement) {
       this._card.classList.remove("pop");
       this._root.insertBefore(this._card, this._pop);
       this._armCard();
+      // Audio open (or opening) = the user is in this call, whoever answered it (the notification
+      // "Answer"): closing hangs up, or the call stays up with nobody on it. Also during a status flap.
+      const mine = this._mine || !!this._ws || !!this._starting;
       this._stopAudio();
       this._stopListen();
-      const mine = this._mine;
       this._mine = false;
-      if (mine && ["calling", "in_call"].includes(this._state)) this._call("hangup", this._hangup).catch(() => {});
+      if (mine && this._state !== "idle") this._call("hangup", this._hangup).catch(() => {});
+      // Drop the notification anchor: it must not re-attach the audio when the status comes back.
+      if (this.isConnected && this._cfg.anchor && location.hash === `#${this._cfg.anchor}`)
+        history.replaceState(history.state, "", location.pathname + location.search);
       this._render();
     };
     this._err = $(".err");

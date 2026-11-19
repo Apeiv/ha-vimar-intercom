@@ -1572,6 +1572,29 @@ def test_layout_popup_x_during_a_state_flap_stays_closed(monkeypatch, engine, an
 
 
 @pytest.mark.parametrize("engine", ["chromium"], indirect=True)
+def test_layout_popup_x_hangs_up_a_call_answered_by_the_notification(monkeypatch, engine):  # noqa: F811
+    """Notification "Answer": the automation answered, the app opens on #citofono and the audio
+    attaches by itself. X must hang up: before, the popup closed but the call stayed up with the
+    audio still going both ways (the call was not "the card's")."""
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            await rig.register()
+            rig.answer(media_on=True)
+            async with Card(rig, engine, layout="popup", webcodecs=False) as c:
+                await c.tap("view")  # a live call, then a fresh page: the card did not answer it
+                await c.until("info().pill === 'In chiamata'")
+                await c.page.goto("about:blank")  # a real reload: a hash-only goto keeps the same card
+                await c.open(hash="citofono")
+                await c.until("info().pop && info().audio === 'on'")
+                rig.services.clear()
+                await c.tap("x")
+                await c.until(IDLE)
+                assert "vimar_intercom.hangup" in rig.services, rig.services
+                assert (await c.info())["audio"] == "off" and not (await c.T())["errors"]
+    run(s())
+
+
+@pytest.mark.parametrize("engine", ["chromium"], indirect=True)
 def test_layout_popup_closed_at_idle_still_opens_for_that_ring_answered(monkeypatch, engine):  # noqa: F811
     """A popup opened and closed by hand at idle dismisses nothing: the notification "Answer" for
     the last ring (idle -> in_call, same last_ring) still opens it."""
