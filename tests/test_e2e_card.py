@@ -1595,6 +1595,26 @@ def test_layout_popup_x_hangs_up_a_call_answered_by_the_notification(monkeypatch
 
 
 @pytest.mark.parametrize("engine", ["chromium"], indirect=True)
+def test_layout_popup_x_during_the_mic_prompt_does_not_answer(monkeypatch, engine):  # noqa: F811
+    """"Answer" at the ring, then X while the mic permission is still up: once granted, the card
+    neither answers nor hangs up, and no audio opens with the popup closed."""
+    async def s():
+        async with Rig(monkeypatch, http=True) as rig:
+            await rig.register()
+            async with Card(rig, engine, layout="popup", webcodecs=False) as c:
+                rig.ring()
+                await c.until("info().pop && info().talk === 'Rispondi'")
+                await c.page.evaluate("T.gumDelay = 1000")
+                await c.tap("talk")
+                await c.tap("x")
+                await c.until("!info().pop")
+                await asyncio.sleep(1.5)
+                assert not rig.services, rig.services
+                assert (await c.info())["audio"] == "off" and not (await c.T())["errors"]
+    run(s())
+
+
+@pytest.mark.parametrize("engine", ["chromium"], indirect=True)
 def test_layout_popup_closed_at_idle_still_opens_for_that_ring_answered(monkeypatch, engine):  # noqa: F811
     """A popup opened and closed by hand at idle dismisses nothing: the notification "Answer" for
     the last ring (idle -> in_call, same last_ring) still opens it."""

@@ -321,6 +321,7 @@ class VimarIntercomCard extends CardAudio(HTMLElement) {
     // durante ringing/calling — altrimenti un blocco vero (iOS) sparirebbe e riproverebbe
     // ad ogni aggiornamento di `hass`, anche senza alcun cambio di stato.
     if (!live) { this._audioBlocked = false; this._muted = false; }
+    if (state === "idle") this._popLive = false;  // call over: a later X dismisses nothing
     if (LIVE.includes(was) && !live) this._mine = false;  // chiamata finita: non più "della card"  // il muto vale una sessione dal vivo sola
 
     // `listen_on_ring`: si sente il visitatore già a video (ringing/calling/in_call in
@@ -422,11 +423,12 @@ class VimarIntercomCard extends CardAudio(HTMLElement) {
       this._armCard();
       // Audio open (or opening) = the user is in this call, whoever answered it (the notification
       // "Answer"): closing hangs up, or the call stays up with nobody on it. Also during a status flap.
-      const mine = this._mine || !!this._ws || !!this._starting;
+      const mine = this._mine || !!this._ws || !!this._starting, answered = this._mine;
       this._stopAudio();
       this._stopListen();
       this._mine = false;
-      if (mine && this._state !== "idle") this._call("hangup", this._hangup).catch(() => {});
+      // At "ringing" only after our own "Answer" (status not updated yet): "Decline" already did its job.
+      if (mine && this._state !== "idle" && (this._state !== "ringing" || answered)) this._call("hangup", this._hangup).catch(() => {});
       // Drop the notification anchor: it must not re-attach the audio when the status comes back.
       if (this.isConnected && this._cfg.anchor && location.hash === `#${this._cfg.anchor}`)
         history.replaceState(history.state, "", location.pathname + location.search);
