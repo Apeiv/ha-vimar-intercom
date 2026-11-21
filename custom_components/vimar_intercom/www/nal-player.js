@@ -200,8 +200,8 @@ class NalPlayer {
       this._stallFrom = now;
       return;
     }
-    // Only when data came in since the last frame: a silent server or a fresh socket is not a stuck decoder.
-    if (now - this._stallFrom < STALL_MS || !this._ws || this._nalAt <= this._stallFrom) return;  // !_ws: already reopening
+    // Only once this socket brought data: a fresh one that stays silent is not reopened in a loop.
+    if (now - this._stallFrom < STALL_MS || !this._ws || !this._nalAt) return;  // !_ws: already reopening
     this._stallFrom = now;
     this._ws.close();  // its late onclose is ignored: _ws is no longer it
     try { this._dec?.close(); } catch { /* already closed */ }
@@ -257,6 +257,7 @@ class NalPlayer {
     console.warn("vimar-intercom-card: video WebSocket:", why, `— riapro fra ${this._wait} s`);
     this.resets++;
     this._ws = null;
+    this._nalAt = 0;  // the next socket must bring its own data before the watchdog can close it
     this._skip = true;
     this._t = setTimeout(() => this._open(), this._wait * 1000);
   }
